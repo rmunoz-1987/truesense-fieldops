@@ -107,7 +107,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/'): return
+    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path=='/api/tech-support/reply': return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -639,6 +639,20 @@ def need_help(job_id):
     conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
     notify_tech_support(j, fn)
     return jsonify({k:j[k] for k in ('help_open','help_note','help_at','help_by','help_photo')})
+
+@app.route('/api/tech-support/reply', methods=['POST'])
+def tech_support_reply():
+    # Auth: Authorization: Bearer <HELP_WEBHOOK_KEY>. Body JSON: {"job_id": "...", "reply": "..."}
+    key=os.environ.get('HELP_WEBHOOK_KEY','')
+    got=(request.headers.get('Authorization') or '').removeprefix('Bearer ').strip()
+    if not key or not hmac.compare_digest(got, key): return jsonify({'error':'unauthorized'}),401
+    d=request.get_json(silent=True) or {}
+    job_id=str(d.get('job_id') or '').strip(); reply=str(d.get('reply') or '').strip()[:4000]
+    if not job_id or not reply: return jsonify({'error':'job_id and reply required'}),400
+    conn=get_db()
+    if not conn.execute('SELECT 1 FROM jobs WHERE id=?',(job_id,)).fetchone(): conn.close(); return jsonify({'error':'job not found'}),404
+    conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,'Tech Support',reply,now_local_str())); conn.commit(); conn.close()
+    return jsonify({'ok':True})
 
 def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
 
