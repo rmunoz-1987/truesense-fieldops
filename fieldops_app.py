@@ -112,6 +112,8 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, filename TEXT,
         photo_type TEXT, uploaded_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS clients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, address TEXT, phone TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS job_updates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -193,6 +195,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="number" id="hours" placeholder="Hours" step="0.25">
 <input type="number" id="miles" placeholder="Miles" step="0.1">
 <button class="big-btn green" id="finish">Finish Job</button>
+{% if office %}<button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button>
+<button class="big-btn" style="background:#b00020" onclick="deleteJob()">Delete Job</button>{% endif %}
 <button class="big-btn gray" onclick="showList()">Back</button>
 </div>
 <script>
@@ -224,6 +228,11 @@ if(!u.length)el.innerHTML='<div style="color:#666">No updates yet</div>'}
 async function saveUpdate(){const n=document.getElementById('update-note');if(!n.value.trim())return;
 const r=await fetch('/api/jobs/'+currentJob.id+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});
 if(r.ok){n.value='';loadUpdates()}else alert('Error')}
+async function reassignJob(){const t=prompt('New tech name',currentJob.tech||'');if(!t||!t.trim())return;
+const r=await fetch('/api/jobs/'+currentJob.id+'/reassign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tech:t.trim()})});
+if(r.ok){currentJob.tech=t.trim();alert('Reassigned to '+t.trim())}else alert('Error')}
+async function deleteJob(){if(!confirm('Delete job '+currentJob.id+'? This cannot be undone.'))return;
+const r=await fetch('/api/jobs/'+currentJob.id,{method:'DELETE'});if(r.ok){showList()}else alert('Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+id);currentJob=await r.json();
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -350,6 +359,7 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 .job-id{color:#a49f2a;font-weight:700;font-size:.8rem}a{color:#111}.muted{color:#666}
 .btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}
 .client{display:block;text-decoration:none}h2{color:#a49f2a;margin:8px 0 12px}img{width:80px;height:80px;object-fit:cover;border-radius:8px;margin:4px 4px 0 0}
+input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin:6px 0;font-size:1rem;box-sizing:border-box}
 .sec{font-weight:600;margin-top:10px;font-size:.9rem}.folder{font-weight:700;color:#a49f2a;margin:16px 0 6px}summary{cursor:pointer}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
 {% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
@@ -361,6 +371,9 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 <div class="sec">Photos ({{ j.photos|length }})</div>{% for p in j.photos %}<a href="/uploads/{{ p.filename }}" target="_blank"><img src="/uploads/{{ p.filename }}" alt="{{ p.photo_type }}"></a>{% else %}<div class="muted">None</div>{% endfor %}
 </details>{% endmacro %}
 {% if client is none %}<h2>Clients</h2><a class="btn" href="/">Back to Jobs</a>
+<form class="job" method="post" action="/clients/add"><div style="font-weight:600">Add Client</div>
+<input name="name" placeholder="Client name" required><input name="address" placeholder="Address"><input name="phone" type="tel" placeholder="Phone">
+<button class="btn" style="width:100%;border:none;font-size:1rem" type="submit">Add Client</button></form>
 {% for c in clients %}<a class="job client" href="/clients?name={{ c.customer|urlencode }}"><div style="font-weight:600">&#128193; {{ c.customer }}</div>
 <div class="muted">{{ c.address or '' }}</div><div class="muted">{{ c.jobs }} job{{ '' if c.jobs == 1 else 's' }}, {{ c.active }} active</div></a>
 {% else %}<div class="job">No clients yet</div>{% endfor %}
@@ -373,23 +386,62 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 {% endif %}
 </body></html>'''
 
+def ckey(name): return (name or '').strip().lower()
+
 def tech_has_client(conn, customer):
-    return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE customer=?',(customer,)).fetchall())
+    return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE LOWER(TRIM(customer))=?',(ckey(customer),)).fetchall())
 
 @app.route('/clients')
 def clients_page():
     conn=get_db(); name=request.args.get('name')
     if not is_office() and (name is None or not tech_has_client(conn, name)): conn.close(); return redirect('/')
     if name is None:
-        rows=conn.execute("SELECT customer, MAX(address) AS address, COUNT(*) AS jobs, SUM(status!='completed') AS active FROM jobs WHERE IFNULL(customer,'')!='' GROUP BY customer ORDER BY LOWER(customer)").fetchall()
-        conn.close(); return render_template_string(CLIENTS_HTML, client=None, clients=rows)
-    rows=conn.execute("SELECT * FROM jobs WHERE customer=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(name,)).fetchall()
+        groups={}
+        for c in conn.execute('SELECT name,address FROM clients').fetchall():
+            if ckey(c['name']): groups.setdefault(ckey(c['name']),{'customer':c['name'].strip(),'address':c['address'] or '','jobs':0,'active':0})
+        for r in conn.execute("SELECT customer,address,status FROM jobs WHERE IFNULL(TRIM(customer),'')!=''").fetchall():
+            g=groups.setdefault(ckey(r['customer']),{'customer':r['customer'].strip(),'address':'','jobs':0,'active':0})
+            g['jobs']+=1; g['active']+=r['status']!='completed'; g['address']=g['address'] or r['address'] or ''
+        conn.close(); return render_template_string(CLIENTS_HTML, client=None, clients=sorted(groups.values(),key=lambda g:g['customer'].lower()), office=True)
+    rows=conn.execute("SELECT * FROM jobs WHERE LOWER(TRIM(customer))=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(ckey(name),)).fetchall()
     jobs=[]
     for r in rows:
         d=job_dict(r); d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]; d['photos']=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(r['id'],)).fetchall()]; jobs.append(d)
+    c=conn.execute('SELECT * FROM clients WHERE LOWER(TRIM(name))=?',(ckey(name),)).fetchone()
     conn.close()
-    info={'address':next((j['address'] for j in jobs if j['address']),''),'phone':next((j['phone'] for j in jobs if j['phone']),'')}
-    return render_template_string(CLIENTS_HTML, client=name, jobs=jobs, info=info, office=is_office())
+    info={'address':(c['address'] if c and c['address'] else next((j['address'] for j in jobs if j['address']),'')),
+          'phone':(c['phone'] if c and c['phone'] else next((j['phone'] for j in jobs if j['phone']),''))}
+    return render_template_string(CLIENTS_HTML, client=(c['name'] if c else name).strip(), jobs=jobs, info=info, office=is_office())
+
+@app.route('/clients/add', methods=['POST'])
+def add_client():
+    if not is_office(): return redirect('/')
+    n=(request.form.get('name') or '').strip()
+    if n:
+        conn=get_db()
+        if not conn.execute('SELECT 1 FROM clients WHERE LOWER(TRIM(name))=?',(ckey(n),)).fetchone():
+            conn.execute('INSERT INTO clients (name,address,phone,created_at) VALUES (?,?,?,?)',(n,(request.form.get('address') or '').strip(),(request.form.get('phone') or '').strip(),datetime.utcnow().isoformat())); conn.commit()
+        conn.close()
+    return redirect('/clients')
+
+@app.route('/api/jobs/<job_id>/reassign', methods=['POST'])
+def reassign_job(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    tech=((request.get_json(silent=True) or {}).get('tech') or '').strip()
+    if not tech: return jsonify({'error':'tech required'}),400
+    conn=get_db(); n=conn.execute('UPDATE jobs SET tech=? WHERE id=?',(tech,job_id)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True,'tech':tech}) if n else ('',404))
+
+@app.route('/api/jobs/<job_id>', methods=['DELETE'])
+def delete_job(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db()
+    for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
+        try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
+        except OSError: pass
+    for t in ('photos','job_updates','invoice_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
+    n=conn.execute('DELETE FROM jobs WHERE id=?',(job_id,)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/uploads/<path:fn>')
 def uploads(fn):
