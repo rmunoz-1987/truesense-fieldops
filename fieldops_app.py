@@ -82,6 +82,7 @@ def job_dict(row):
     if not is_office(): d.pop('survey_office', None)
     else: d['survey_office'] = d.get('survey_office') or ''
     d['punch_list'] = parse_ticks(d.get('punch_list')); d['quick_notes'] = d.get('quick_notes') or ''
+    d['help_open'] = d.get('help_flag') == 'open'
     if not is_office(): d.pop('private_notes', None)
     return d
 
@@ -146,7 +147,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -223,6 +224,13 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn" onclick="addJob()">Add Job</button></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
 <div id="detail" class="hidden">
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div><div id="d-created" style="color:#666;font-size:.85rem;margin-top:6px"></div></div>
+<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
+<div id="help-meta" class="muted" style="font-size:.85rem"></div><div id="help-text" style="white-space:pre-wrap;margin:6px 0"></div><div id="help-img"></div>
+{% if office %}<button class="big-btn" style="background:#b00020" onclick="resolveHelp()">Mark Resolved</button>{% else %}<div style="color:#b00020;font-weight:600">Sent to office</div>{% endif %}</div>
+<button class="big-btn" style="background:#b00020" onclick="document.getElementById('help-form').classList.toggle('hidden')">Need Help</button>
+<div id="help-form" class="job hidden"><textarea id="help-note" rows="3" placeholder="What do you need help with?"></textarea>
+<div class="muted" style="font-size:.85rem">Photo (optional; if none, the job's latest photo is attached)</div><input type="file" id="help-photo" accept="image/*" capture="environment">
+<button class="big-btn" style="background:#b00020" onclick="sendHelp()">Send to Office</button></div>
 <a id="directions" class="big-btn" target="_blank">Directions</a>
 <a id="call" class="big-btn gray">Call Customer</a>
 <a id="history" class="big-btn gray">Client History</a>
@@ -286,7 +294,7 @@ canvas.style.touchAction='none';
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
 async function load(){const q=(document.getElementById('q').value||'').trim();const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
-const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div><button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
+const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div><button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>'}
@@ -312,6 +320,12 @@ const PHOTO_LABELS={before:'Before',during:'During',after:'After',doors:'Doors',
 function renderPhotos(){photoGroups('photos',['before','during','after']);const el=document.getElementById('survey-photos');el.innerHTML='';
 (currentJob.photos||[]).forEach(p=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(p.filename);a.target='_blank';const i=document.createElement('img');i.src=a.href;a.appendChild(i);el.appendChild(a)});
 if(!(currentJob.photos||[]).length)el.innerHTML='<div class="muted">No photos yet</div>'}
+function renderHelp(){const b=document.getElementById('help-banner');b.classList.toggle('hidden',!currentJob.help_open);if(!currentJob.help_open)return;
+document.getElementById('help-meta').textContent=(currentJob.help_by||'')+' \u00b7 '+(currentJob.help_at||'');document.getElementById('help-text').textContent=currentJob.help_note||'';
+const im=document.getElementById('help-img');im.innerHTML='';if(currentJob.help_photo){const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(currentJob.help_photo);a.target='_blank';const i=document.createElement('img');i.src=a.href;i.style.cssText='width:120px;height:120px;object-fit:cover;border-radius:8px';a.appendChild(i);im.appendChild(a)}}
+async function sendHelp(){const fd=new FormData();fd.append('note',document.getElementById('help-note').value);const f=document.getElementById('help-photo').files[0];if(f)fd.append('photo',f);
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/help',{method:'POST',body:fd});if(r.ok){Object.assign(currentJob,await r.json());document.getElementById('help-note').value='';document.getElementById('help-photo').value='';document.getElementById('help-form').classList.add('hidden');renderHelp();alert('Office has been flagged')}else alert('Error')}
+async function resolveHelp(){const r=await post('/help/resolve',{});if(r.ok){currentJob.help_open=false;renderHelp()}else alert('Error')}
 function renderBlueprints(){const el=document.getElementById('bp-list');el.innerHTML='';const b=currentJob.blueprints||[];
 b.forEach(x=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(x.filename);a.target='_blank';a.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #e5e5e5;color:#111';
 if(x.image){const i=document.createElement('img');i.src=a.href;i.style.cssText='width:56px;height:56px;object-fit:cover;border-radius:6px';a.appendChild(i)}else{const ic=document.createElement('span');ic.textContent='📄';ic.style.fontSize='1.6rem';a.appendChild(ic)}
@@ -362,7 +376,7 @@ async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();
-renderPhotos();renderBlueprints();renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+renderPhotos();renderBlueprints();renderHelp();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';document.getElementById('help-photo').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -495,7 +509,7 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); conn.close()
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
@@ -598,7 +612,7 @@ def upload_photos(job_id):
     ptype=request.form.get('type','')
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
-    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id",(job_id,)).fetchall()]; conn.close()
+    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
 
 def blueprints(conn, job_id):
@@ -607,6 +621,29 @@ def blueprints(conn, job_id):
         ext=os.path.splitext(b['filename'])[1].lower()
         out.append({'filename':b['filename'],'name':b['orig_name'] or b['filename'],'image':ext in ('.png','.jpg','.jpeg','.webp')})
     return out
+
+@app.route('/api/jobs/<job_id>/help', methods=['POST'])
+def need_help(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    note=(request.form.get('note') or '').strip()[:2000]
+    f=request.files.get('photo')
+    if f and f.filename:
+        fn=secure_filename(f"{job_id}_help_{uuid.uuid4().hex[:8]}.jpg")
+        f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,'help',datetime.utcnow().isoformat()))
+    else:
+        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
+        fn=last['filename'] if last else ''
+    conn.execute("UPDATE jobs SET help_flag='open',help_note=?,help_at=?,help_by=?,help_photo=? WHERE id=?",(note,now_local_str(),me(),fn,job_id))
+    conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
+    return jsonify({k:j[k] for k in ('help_open','help_note','help_at','help_by','help_photo')})
+
+@app.route('/api/jobs/<job_id>/help/resolve', methods=['POST'])
+def resolve_help(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); n=conn.execute("UPDATE jobs SET help_flag='' WHERE id=?",(job_id,)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>/blueprints', methods=['POST'])
 def upload_blueprints(job_id):
@@ -657,7 +694,8 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
 {% macro bplist(j) %}{% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints ({{ j.blueprints|length }})</div>{% for b in j.blueprints %}<div style="margin:4px 0"><a href="/uploads/{{ b.filename|urlencode }}" target="_blank">{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint" style="width:56px;height:56px;vertical-align:middle">{% else %}&#128196;{% endif %} {{ b.name }}</a></div>{% endfor %}{% endif %}{% endmacro %}
 {% macro photogroups(j) %}{% if j.job_type == 'Survey' %}{% for p in j.photos %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="photo"></a>{% else %}<div class="muted">None</div>{% endfor %}{% else %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if loop.index <= 3 or g %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ lbl }} ({{ g|length }})</div>{% endif %}{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endif %}{% endmacro %}
-{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.job_type != 'Survey' %} &middot; {{ j.hours }} hrs &middot; {{ j.total_miles }} mi{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
+{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> {% if office and j.help_open %}<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span> {% endif %}<span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.job_type != 'Survey' %} &middot; {{ j.hours }} hrs &middot; {{ j.total_miles }} mi{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
+{% if office and j.help_open %}<div style="border:2px solid #b00020;background:#fff5f5;border-radius:10px;padding:8px;margin-top:8px"><div style="color:#b00020;font-weight:700">&#9888; Needs Help</div><div class="muted" style="font-size:.8rem">{{ j.help_by }} &middot; {{ j.help_at }}</div><div style="white-space:pre-wrap">{{ j.help_note }}</div>{% if j.help_photo %}<a href="/uploads/{{ j.help_photo|urlencode }}" target="_blank"><img src="/uploads/{{ j.help_photo|urlencode }}" alt="help photo"></a>{% endif %}</div>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 {% if j.job_type != 'Survey' %}<div class="sec">Daily Updates ({{ j.updates|length }})</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% else %}<div class="muted">None</div>{% endfor %}{% endif %}
 <div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes or '' }}</div>{% if not j.notes %}<div class="muted">None</div>{% endif %}
@@ -723,7 +761,7 @@ def client_jobs(conn, name):
 def job_full(conn, r):
     d=job_dict(r)
     d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
-    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id",(r['id'],)).fetchall()]
+    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(r['id'],)).fetchall()]
     d['blueprints']=blueprints(conn, r['id'])
     return d
 
@@ -737,7 +775,7 @@ CAL_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewp
 <h2>Calendar</h2><a class="btn" href="/">Back to Jobs</a>
 <div style="display:flex;gap:8px"><a class="btn" href="/calendar?start={{ prev }}">&larr; Prev</a><a class="btn" href="/calendar">This Week</a><a class="btn" href="/calendar?start={{ next }}">Next &rarr;</a></div>
 {% for d in days %}<div class="day">{% if d.today %}<span class="today">{{ d.label }}</span>{% else %}{{ d.label }}{% endif %}</div>
-{% for j in d.jobs %}<a class="job" href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span><div style="font-weight:600">{{ j.title }}</div><div class="muted">{{ j.customer }} &middot; {{ j.tech or '-' }}</div></a>
+{% for j in d.jobs %}<a class="job" href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span>{% if j.help_open %} <span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div style="font-weight:600">{{ j.title }}</div><div class="muted">{{ j.customer }} &middot; {{ j.tech or '-' }}</div></a>
 {% else %}<div class="muted">No jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
 
@@ -816,7 +854,7 @@ ORDER_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 .btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}h2{color:#a49f2a;margin:8px 0}a{color:#111}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
 <h2>To Order</h2><a class="btn" href="/">Back to Jobs</a><div class="muted" style="margin-bottom:8px">Unchecked materials on open jobs ({{ total }} item{{ '' if total == 1 else 's' }})</div>
-{% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.title }}</b></a><div class="muted">{{ j.customer }} &middot; {{ j.tech or '-' }} &middot; {{ j.status_label }}</div>
+{% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.title }}</b></a>{% if j.help_open %} <span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.customer }} &middot; {{ j.tech or '-' }} &middot; {{ j.status_label }}</div>
 <ul style="margin:6px 0 0;padding-left:20px">{% for m in j.need %}<li>{{ m.text }}</li>{% endfor %}</ul></div>{% else %}<div class="job">Nothing to order</div>{% endfor %}
 </body></html>'''
 
