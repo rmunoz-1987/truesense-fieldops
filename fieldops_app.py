@@ -149,6 +149,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div class="sub">Field Ops</div>
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666">Log out</a></div>
 </div>
+{% if office %}<a href="/clients" class="big-btn gray">Clients</a>{% endif %}
 <div id="list"></div>
 {% if office %}<div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -310,6 +311,49 @@ def complete(job_id):
     conn.commit(); conn.close()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
     return jsonify({'ok':True,'invoice_draft':pkg})
+
+CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clients</title>
+<style>body{font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:12px}
+.job{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:16px;margin-bottom:12px}
+.job-id{color:#a49f2a;font-weight:700;font-size:.8rem}a{color:#111}.muted{color:#666}
+.btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}
+.client{display:block;text-decoration:none}h2{color:#a49f2a;margin:8px 0 12px}img{width:80px;height:80px;object-fit:cover;border-radius:8px;margin:4px 4px 0 0}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
+{% if client is none %}<h2>Clients</h2><a class="btn" href="/">Back to Jobs</a>
+{% for c in clients %}<a class="job client" href="/clients?name={{ c.customer|urlencode }}"><div style="font-weight:600">{{ c.customer }}</div>
+<div class="muted">{{ c.address or '' }}</div><div class="muted">{{ c.jobs }} job{{ '' if c.jobs == 1 else 's' }}, {{ c.active }} active</div></a>
+{% else %}<div class="job">No clients yet</div>{% endfor %}
+{% else %}<h2>{{ client }}</h2><a class="btn" href="/clients">Back to Clients</a>
+<div class="job">{% if info.address %}<div>{{ info.address }}</div>{% endif %}{% if info.phone %}<div><a href="tel:{{ info.phone }}">{{ info.phone }}</a></div>{% endif %}</div>
+{% for j in jobs %}<div class="job"><div class="job-id">{{ j.id }} &middot; {{ 'Completed' if j.status == 'completed' else 'Active' }}</div>
+<div style="font-weight:600">{{ j.title }}</div><div class="muted">Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}</div>
+{% if j.scope %}<div style="white-space:pre-wrap;margin-top:6px">{{ j.scope }}</div>{% endif %}
+{% if j.notes %}<div style="margin-top:6px"><b>Notes:</b> {{ j.notes }}</div>{% endif %}
+{% if j.materials %}<div><b>Materials:</b> {{ j.materials }}</div>{% endif %}
+<div style="margin-top:6px"><b>Checklist</b>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}</div>
+{% if j.photos %}<div style="margin-top:6px"><b>Photos</b><br>{% for p in j.photos %}<a href="/uploads/{{ p.filename }}" target="_blank"><img src="/uploads/{{ p.filename }}" alt="{{ p.photo_type }}"></a>{% endfor %}</div>{% endif %}
+</div>{% else %}<div class="job">No jobs</div>{% endfor %}{% endif %}
+</body></html>'''
+
+@app.route('/clients')
+def clients_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); name=request.args.get('name')
+    if name is None:
+        rows=conn.execute("SELECT customer, MAX(address) AS address, COUNT(*) AS jobs, SUM(status!='completed') AS active FROM jobs WHERE IFNULL(customer,'')!='' GROUP BY customer ORDER BY LOWER(customer)").fetchall()
+        conn.close(); return render_template_string(CLIENTS_HTML, client=None, clients=rows)
+    rows=conn.execute("SELECT * FROM jobs WHERE customer=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(name,)).fetchall()
+    jobs=[]
+    for r in rows:
+        d=job_dict(r); d['photos']=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(r['id'],)).fetchall()]; jobs.append(d)
+    conn.close()
+    info={'address':next((j['address'] for j in jobs if j['address']),''),'phone':next((j['phone'] for j in jobs if j['phone']),'')}
+    return render_template_string(CLIENTS_HTML, client=name, jobs=jobs, info=info)
+
+@app.route('/uploads/<path:fn>')
+def uploads(fn):
+    if not is_office(): return ('',403)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], secure_filename(fn))
 
 @app.route('/api/invoice-drafts')
 def list_invoice_drafts():
