@@ -498,7 +498,12 @@ def save_survey(job_id):
 def save_survey_office(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
     note=((request.get_json(silent=True) or {}).get('survey_office') or '')[:5000]
-    conn=get_db(); n=conn.execute('UPDATE jobs SET survey_office=? WHERE id=?',(note,job_id)).rowcount; conn.commit(); conn.close()
+    conn=get_db(); n=conn.execute('UPDATE jobs SET survey_office=? WHERE id=?',(note,job_id)).rowcount; conn.commit()
+    row=conn.execute('SELECT job_type,status FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if row and row['job_type']=='Survey' and row['status']=='completed':
+        conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(now_local_str(),me(),job_id)); conn.commit()
+        notify_kelly(conn, job_id, 'survey_updated')
+    conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>/punch', methods=['POST'])
@@ -584,14 +589,14 @@ def complete(job_id):
         except Exception: pass
     if row['job_type']=='Survey':
         conn.execute('UPDATE jobs SET status=?,notes=?,completed_at=? WHERE id=?',('completed',notes,now,job_id))
-        if not row['kelly_at']:
-            conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(now_local_str(),me(),job_id))
-            notify_kelly(dict(row))
+        conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(now_local_str(),me(),job_id))
+        kelly_event='survey_completed'
     else:
         conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                      ('completed',notes,materials,sig,minutes,miles,now,job_id))
     for ptype in PHOTO_TYPES: save_photos(conn, job_id, request.files.getlist(ptype), ptype, now)
     conn.commit()
+    if row['job_type']=='Survey': notify_kelly(conn, job_id, kelly_event)
     pkg=build_invoice_draft(conn, job_id, now); conn.close()
     return jsonify({'ok':True,'invoice_draft':pkg})
 
@@ -716,20 +721,33 @@ def help_photo(fn):
     if not hmac.compare_digest(request.args.get('t',''), help_photo_token(fn)): return ('',403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], fn)
 
-def notify_kelly(j):
-    # Render env vars KELLY_WEBHOOK_URL and KELLY_WEBHOOK_KEY (Kelly's Grok Bot webhook routine). Skipped if unset; kelly_at flag is set either way.
+def notify_kelly(conn, job_id, event):
+    # Render env vars KELLY_WEBHOOK_URL and KELLY_WEBHOOK_KEY (Kelly's Grok Bot webhook routine). Skipped if unset.
     url=os.environ.get('KELLY_WEBHOOK_URL',''); key=os.environ.get('KELLY_WEBHOOK_KEY','')
     if not url or not key: return
-    base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
-    body={'event':'survey_ready_for_estimate','job_id':j['id'],'title':j.get('title') or '','customer':j.get('customer') or '',
-          'address':j.get('address') or '','completed_by':me(),'print_url':f"{base}/print/job/{j['id']}"}
+    j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not j: return
+    sv=clean_survey(j['survey_form']); base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
+    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]
+    mats=[m['text'] for m in parse_materials(j['materials_list'])]
+    body={'event':event,'job_id':j['id'],'title':j['title'] or '','customer':j['customer'] or '','address':j['address'] or '',
+          'phone':j['phone'] or '','scope':j['scope'] or '','sent_by':me(),
+          'what_they_want':sv['want_desc'],
+          'materials_notes':j['survey_office'] or '','materials_list':mats,
+          'existing_conditions':{'current_system':sv['current_system'],'power':sv['power'],'network':sv['network'],'conduit':sv['conduit']},
+          'obstacles':sv['obstacles'],'obstacle_notes':sv['obstacle_notes'],
+          'site_contact':{'name':sv['contact_name'],'phone':sv['contact_phone']},
+          'client_expectations':{'timeline':sv['timeline'],'budget':sv['budget'],'decision_maker':sv['decision_maker']},
+          'notes':j['notes'] or '','quick_notes':j['quick_notes'] or '',
+          'photo_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in fns],
+          'print_url':f"{base}/print/job/{j['id']}"}
     def send():
         try:
             req=urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
                 headers={'Content-Type':'application/json','Authorization':'Bearer '+key,'X-Automation-Key':key})
             urllib.request.urlopen(req, timeout=8).read()
         except Exception as e:
-            app.logger.warning('Kelly notify failed for %s: %s', j['id'], e)
+            app.logger.warning('Kelly notify failed for %s: %s', job_id, e)
     threading.Thread(target=send, daemon=True).start()
 
 def notify_tech_support(j, fn):
