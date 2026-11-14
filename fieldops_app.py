@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
-import sqlite3, os, uuid, hmac, hashlib, json
+import sqlite3, os, uuid, hmac, hashlib, json, threading, urllib.request
 from datetime import timedelta
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -107,7 +107,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz'): return
+    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -637,7 +637,33 @@ def need_help(job_id):
         fn=last['filename'] if last else ''
     conn.execute("UPDATE jobs SET help_flag='open',help_note=?,help_at=?,help_by=?,help_photo=? WHERE id=?",(note,now_local_str(),me(),fn,job_id))
     conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
+    notify_tech_support(j, fn)
     return jsonify({k:j[k] for k in ('help_open','help_note','help_at','help_by','help_photo')})
+
+def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
+
+@app.route('/help-photo/<path:fn>')
+def help_photo(fn):
+    fn=secure_filename(fn)
+    if not hmac.compare_digest(request.args.get('t',''), help_photo_token(fn)): return ('',403)
+    return send_from_directory(app.config['UPLOAD_FOLDER'], fn)
+
+def notify_tech_support(j, fn):
+    # Render env vars HELP_WEBHOOK_URL and HELP_WEBHOOK_KEY (from the Grok Bot webhook routine). Skipped if unset.
+    url=os.environ.get('HELP_WEBHOOK_URL',''); key=os.environ.get('HELP_WEBHOOK_KEY','')
+    if not url or not key: return
+    base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
+    body={'job_id':j['id'],'title':j.get('title') or '','job_type':j.get('job_type') or '','customer':j.get('customer') or '',
+          'address':j.get('address') or '','tech':j.get('help_by') or '','note':j.get('help_note') or '',
+          'photo_url':(f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" if fn else '')}
+    def send():
+        try:
+            req=urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
+                headers={'Content-Type':'application/json','Authorization':'Bearer '+key,'X-Automation-Key':key})
+            urllib.request.urlopen(req, timeout=8).read()
+        except Exception as e:
+            app.logger.warning('Tech Support notify failed for %s: %s', j['id'], e)
+    threading.Thread(target=send, daemon=True).start()
 
 @app.route('/api/jobs/<job_id>/help/resolve', methods=['POST'])
 def resolve_help(job_id):
