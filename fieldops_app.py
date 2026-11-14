@@ -159,6 +159,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, address TEXT, phone TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS support_replies (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, note TEXT, created_at TEXT)''')
+    try: conn.execute("ALTER TABLE support_replies ADD COLUMN author TEXT DEFAULT 'Tech Support'")
+    except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS job_updates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -236,7 +238,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div style="text-align:center;font-size:1.1rem;font-weight:600;margin:4px 0 10px">Pull down to see the answer.</div>
 <div id="help-form" class="job hidden"><textarea id="help-note" rows="4" style="font-size:1.25rem" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint="send" placeholder="Say or type what you need help with"></textarea>
 <button class="big-btn" style="background:#b00020;font-size:1.3rem" onclick="sendHelp()">Send</button></div>
-<div class="job" style="border:2px solid #1565c0"><div style="font-weight:800;font-size:1.5rem;color:#1565c0">Tech Support</div><div id="support"></div></div>
+<div class="job" style="border:2px solid #1565c0"><div style="font-weight:800;font-size:1.5rem;color:#1565c0">Tech Support</div>
+<textarea id="support-note" rows="3" style="font-size:1.25rem" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint="send" placeholder="Say or type a follow-up"></textarea>
+<button class="big-btn" style="background:#1565c0;font-size:1.3rem" onclick="sendSupport()">Send Follow-up</button><div id="support"></div></div>
 <a id="directions" class="big-btn" target="_blank">Directions</a>
 <a id="call" class="big-btn gray">Call Customer</a>
 <a id="history" class="big-btn gray">Client History</a>
@@ -311,8 +315,9 @@ if(k===ymd(t))return 'Today, '+nice;if(k===ymd(tm))return 'Tomorrow, '+nice;if(k
 function renderChecklist(){document.getElementById('checklist').innerHTML=(currentJob.checklist||[]).map((c,i)=>`<label class="chk"><input type="checkbox" ${c.done?'checked':''} onchange="tick(${i},this.checked)"><span></span></label>`).join('');
 [...document.querySelectorAll('#checklist .chk span')].forEach((el,i)=>el.textContent=currentJob.checklist[i].text)}
 async function tick(i,v){currentJob.checklist[i].done=v;await fetch('/api/jobs/'+currentJob.id+'/checklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checklist:currentJob.checklist})})}
+async function sendSupport(){const n=document.getElementById('support-note');if(!n.value.trim())return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/support',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});if(r.ok){n.value='';loadSupport();alert('Sent. Pull down to see the answer.')}else alert('Error')}
 async function loadSupport(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/support');const u=r.ok?await r.json():[];const el=document.getElementById('support');el.innerHTML='';
-u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:10px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.85rem;color:#666';m.textContent=x.created_at;const t=document.createElement('div');t.style.cssText='white-space:pre-wrap;font-size:1.25rem;line-height:1.5';t.textContent=x.note;d.append(m,t);el.appendChild(d)});
+u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:10px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:1rem;font-weight:700;color:'+(x.author==='Tech Support'?'#1565c0':'#333');m.textContent=x.author+' \u00b7 '+x.created_at;const t=document.createElement('div');t.style.cssText='white-space:pre-wrap;font-size:1.25rem;line-height:1.5';t.textContent=x.note;d.append(m,t);el.appendChild(d)});
 if(!u.length)el.innerHTML='<div style="color:#666;font-size:1.1rem">No replies yet</div>'}
 async function loadUpdates(){const r=await fetch('/api/jobs/'+currentJob.id+'/updates');const u=r.ok?await r.json():[];const el=document.getElementById('updates');el.innerHTML='';
 u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.8rem;color:#666';m.textContent=x.created_at+' \u00b7 '+x.author;const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=x.note;d.append(m,t);el.appendChild(d)});
@@ -385,7 +390,7 @@ async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
-renderPhotos();renderBlueprints();renderHelp();loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -646,6 +651,8 @@ def need_help(job_id):
         fn=last['filename'] if last else ''
     conn.execute("UPDATE jobs SET help_flag='open',help_note=?,help_at=?,help_by=?,help_photo=? WHERE id=?",(note,now_local_str(),me(),fn,job_id))
     conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
+    if note:
+        conn=get_db(); conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit(); conn.close()
     notify_tech_support(j, fn)
     return jsonify({k:j[k] for k in ('help_open','help_note','help_at','help_by','help_photo')})
 
@@ -660,14 +667,21 @@ def tech_support_reply():
     if not job_id or not reply: return jsonify({'error':'job_id and reply required'}),400
     conn=get_db()
     if not conn.execute('SELECT 1 FROM jobs WHERE id=?',(job_id,)).fetchone(): conn.close(); return jsonify({'error':'job not found'}),404
-    conn.execute('INSERT INTO support_replies (job_id,note,created_at) VALUES (?,?,?)',(job_id,reply,now_local_str())); conn.commit(); conn.close()
+    conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,'Tech Support',reply,now_local_str())); conn.commit(); conn.close()
     return jsonify({'ok':True})
 
-@app.route('/api/jobs/<job_id>/support')
+@app.route('/api/jobs/<job_id>/support', methods=['GET','POST'])
 def support_list(job_id):
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
-    rows=[dict(x) for x in conn.execute('SELECT note,created_at FROM support_replies WHERE job_id=? ORDER BY id DESC',(job_id,)).fetchall()]; conn.close()
+    if request.method=='POST':
+        note=str((request.get_json(silent=True) or {}).get('note') or '').strip()[:2000]
+        if not note: conn.close(); return jsonify({'error':'note required'}),400
+        conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit()
+        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
+        j=dict(job_dict(row)); j['help_by']=me(); j['help_note']=note
+        notify_tech_support(j, last['filename'] if last else '')
+    rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
     return jsonify(rows)
 
 def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
