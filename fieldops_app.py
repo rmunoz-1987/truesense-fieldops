@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
-import sqlite3, os, uuid, hmac, hashlib
+import sqlite3, os, uuid, hmac, hashlib, json
 from datetime import timedelta
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -12,6 +12,27 @@ APP_PASSWORD = os.environ.get('APP_PASSWORD', '')
 OFFICE_NAMES = [n.strip().lower() for n in os.environ.get('OFFICE_NAMES', 'Roland').split(',') if n.strip()]
 app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + APP_PASSWORD).encode()).hexdigest()
 app.permanent_session_lifetime = timedelta(days=30)
+
+DEFAULT_CHECKLIST = ['Site walk with customer', 'Work complete per scope', 'Tested and working', 'Work area cleaned up', 'Customer walkthrough']
+
+def today_local():
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo('America/Chicago')).date()
+    except Exception:
+        return (datetime.utcnow() - timedelta(hours=6)).date()
+
+def parse_checklist(raw):
+    try:
+        items = json.loads(raw) if raw else None
+    except Exception:
+        items = None
+    if not items:
+        items = [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST]
+    return [{'text': str(i.get('text', '')), 'done': bool(i.get('done'))} for i in items if isinstance(i, dict) and i.get('text')]
+
+def job_dict(row):
+    d = dict(row); d['checklist'] = parse_checklist(d.get('checklist')); return d
 
 def me(): return (session.get('name') or '').strip()
 def is_office(): return me().lower() in OFFICE_NAMES
@@ -71,7 +92,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -86,6 +107,11 @@ def init_db():
                      ('TS-2026-0143','Camera Service Call','XYZ Retail','567 Commerce St, Houston, TX','Troubleshoot offline NVR.','assigned','Mike',now))
         conn.execute("UPDATE jobs SET phone='713-555-0142' WHERE id='TS-2026-0142'")
         conn.execute("UPDATE jobs SET phone='713-555-0143' WHERE id='TS-2026-0143'")
+        t = today_local()
+        c1 = ['Confirm door hardware and power', 'Mount maglocks', 'Mount Aiphone and card reader', 'Program users per list', 'Test every door', 'Customer walkthrough']
+        c2 = ['Check NVR power and status', 'Check PoE switch and ports', 'Replace failed camera if needed', 'Verify all cameras recording', 'Customer walkthrough']
+        conn.execute('UPDATE jobs SET checklist=?, scheduled_date=? WHERE id=?', (json.dumps([{'text': x, 'done': False} for x in c1]), t.isoformat(), 'TS-2026-0142'))
+        conn.execute('UPDATE jobs SET checklist=?, scheduled_date=? WHERE id=?', (json.dumps([{'text': x, 'done': False} for x in c2]), (t + timedelta(days=1)).isoformat(), 'TS-2026-0143'))
     conn.commit(); conn.close()
 
 init_db()
@@ -103,6 +129,9 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .big-btn.gray{background:#f0f0f0;color:var(--text)}
 .big-btn.green{background:#2d6a4f}
 .hidden{display:none}
+.chk{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:1rem}
+.chk input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
+.day{font-weight:700;color:var(--accent);margin:16px 0 6px}
 textarea,input{width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem}
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body>
@@ -120,6 +149,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="tel" id="n-phone" placeholder="Customer phone">
 <input type="text" id="n-tech" placeholder="Tech name (e.g. Mike)">
 <textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
+<div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
+<textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
 <button class="big-btn" onclick="addJob()">Add Job</button></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
 <div id="detail" class="hidden">
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div></div>
@@ -131,6 +162,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="big-btn" onclick="document.getElementById('after').click()">After Photos</div>
 <input type="file" id="after" accept="image/*" multiple capture="environment" style="display:none">
 <div id="after-preview" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+<div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div></div>
 <textarea id="notes" placeholder="Notes" rows="3"></textarea>
 <input type="text" id="materials" placeholder="Materials used">
 <div>Customer Signature</div><canvas id="sig"></canvas>
@@ -152,11 +184,21 @@ canvas.style.touchAction='none';
 ['touchstart','touchmove'].forEach(t=>canvas.addEventListener(t,e=>e.preventDefault(),{passive:false}));
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 async function load(){const r=await fetch('/api/jobs?status=assigned');const jobs=await r.json();
-document.getElementById('list').innerHTML=jobs.map(j=>`<div class="job"><div class="job-id">${j.id}</div><div style="font-weight:600">${j.title}</div><div style="color:#666">${j.customer}</div><div style="color:#666">${j.address}</div><button class="big-btn" onclick="openJob('${j.id}')">Open Job</button></div>`).join('')||'<div class="job">No jobs</div>'}
+const card=j=>`<div class="job"><div class="job-id">${j.id}</div><div style="font-weight:600">${j.title}</div><div style="color:#666">${j.customer}</div><div style="color:#666">${j.address}</div><button class="big-btn" onclick="openJob('${j.id}')">Open Job</button></div>`;
+const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
+const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
+document.getElementById('list').innerHTML=keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">No jobs</div>'}
+function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function dayLabel(k){if(!k)return 'No date';const t=new Date();const tm=new Date();tm.setDate(t.getDate()+1);
+const d=new Date(k+'T12:00:00');const nice=d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
+if(k===ymd(t))return 'Today, '+nice;if(k===ymd(tm))return 'Tomorrow, '+nice;if(k<ymd(t))return 'Overdue, '+nice;return nice}
+function renderChecklist(){document.getElementById('checklist').innerHTML=(currentJob.checklist||[]).map((c,i)=>`<label class="chk"><input type="checkbox" ${c.done?'checked':''} onchange="tick(${i},this.checked)"><span></span></label>`).join('');
+[...document.querySelectorAll('#checklist .chk span')].forEach((el,i)=>el.textContent=currentJob.checklist[i].text)}
+async function tick(i,v){currentJob.checklist[i].done=v;await fetch('/api/jobs/'+currentJob.id+'/checklist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({checklist:currentJob.checklist})})}
 async function openJob(id){const r=await fetch('/api/jobs/'+id);currentJob=await r.json();
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';
+document.getElementById('d-scope').textContent=currentJob.scope||'';renderChecklist();
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
 document.getElementById('list').classList.add('hidden');document.getElementById('office').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
@@ -167,16 +209,16 @@ document.getElementById('after').onchange=e=>preview(e.target,'after-preview');
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
 fd.append('notes',document.getElementById('notes').value);fd.append('materials',document.getElementById('materials').value);
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',document.getElementById('miles').value||0);
-fd.append('signature',canvas.toDataURL());
+fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
 [...document.getElementById('before').files].forEach(f=>fd.append('before',f));
 [...document.getElementById('after').files].forEach(f=>fd.append('after',f));
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
 if(r.ok){alert('Job finished');showList()}else alert('Error')};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
-const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope')};
+const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(r.ok){['id','title','customer','address','phone','tech','scope'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+if(r.ok){['id','title','customer','address','phone','tech','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
 </script></body></html>'''
 
@@ -190,7 +232,7 @@ def list_jobs():
     if status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
     else: rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY created_at DESC").fetchall()
     conn.close()
-    return jsonify([dict(r) for r in rows if can_see(r)])
+    return jsonify([job_dict(r) for r in rows if can_see(r)])
 
 @app.route('/api/jobs', methods=['POST'])
 def create_job():
@@ -201,8 +243,11 @@ def create_job():
     if not is_office(): conn.close(); return jsonify({'error':'office only'}),403
     if conn.execute('SELECT 1 FROM jobs WHERE id=?',(jid,)).fetchone():
         conn.close(); return jsonify({'error':'That Job ID already exists'}),409
-    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone) VALUES (?,?,?,?,?,?,?,?,?)',
-                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat(),(d.get('phone') or '').strip()))
+    lines = [x.strip() for x in (d.get('checklist') or '').splitlines() if x.strip()]
+    chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
+    sd = (d.get('scheduled_date') or '').strip() or today_local().isoformat()
+    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd))
     conn.commit(); conn.close()
     return jsonify({'ok':True,'id':jid}),201
 
@@ -211,17 +256,33 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    return jsonify(dict(row))
+    return jsonify(job_dict(row))
+
+@app.route('/api/jobs/<job_id>/checklist', methods=['POST'])
+def save_checklist(job_id):
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return ('',404)
+    if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
+    items=(request.get_json(silent=True) or {}).get('checklist') or []
+    clean=[{'text':str(i.get('text',''))[:200],'done':bool(i.get('done'))} for i in items if isinstance(i,dict) and i.get('text')]
+    conn.execute('UPDATE jobs SET checklist=? WHERE id=?',(json.dumps(clean),job_id)); conn.commit(); conn.close()
+    return jsonify({'ok':True})
 
 @app.route('/api/jobs/<job_id>/complete', methods=['POST'])
 def complete(job_id):
     notes=request.form.get('notes',''); materials=request.form.get('materials','')
     hours=float(request.form.get('hours') or 0); miles=float(request.form.get('miles') or 0)
     sig=request.form.get('signature',''); minutes=int(hours*60)
+    chk_raw=request.form.get('checklist')
     conn=get_db(); now=datetime.utcnow().isoformat()
     row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     if not row: conn.close(); return ('',404)
     if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
+    if chk_raw:
+        try:
+            items=json.loads(chk_raw)
+            conn.execute('UPDATE jobs SET checklist=? WHERE id=?',(json.dumps([{'text':str(i.get('text',''))[:200],'done':bool(i.get('done'))} for i in items if isinstance(i,dict) and i.get('text')]),job_id))
+        except Exception: pass
     conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                  ('completed',notes,materials,sig,minutes,miles,now,job_id))
     for key,ptype in [('before','before'),('after','after')]:
