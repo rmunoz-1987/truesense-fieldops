@@ -215,7 +215,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div class="sub">Field Ops</div>
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
-{% if office %}<div class="row"><a href="/clients" class="big-btn gray">Clients</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a></div>{% endif %}
+{% if office %}<a href="/clients" class="big-btn" style="font-size:1.3rem;padding:20px">Clients &amp; Surveys</a><div class="row"><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 <div id="list"></div>
 {% if office %}<div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
