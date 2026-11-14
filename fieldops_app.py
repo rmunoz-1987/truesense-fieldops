@@ -259,7 +259,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 <div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
-<button class="big-btn" id="sv-save" onclick="saveSurvey()">Save Survey</button>
+<button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
 {% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div>
 <div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
@@ -390,7 +390,7 @@ function svCall(){const ph=document.getElementById('sv-contact_phone').value.rep
 let svEditing=false;
 function renderKelly(){const done=currentJob.status==='completed'&&currentJob.job_type==='Survey';const lock=done&&!svEditing;
 document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=>e.disabled=lock);
-document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',lock);
+document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',!(done&&svEditing));
 const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
 if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done)}
@@ -401,7 +401,7 @@ let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey';document.getElementById('survey-card').classList.toggle('hidden',!sv);document.querySelectorAll('#detail .ns').forEach(e=>e.classList.toggle('hidden',sv));
-document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');const f=document.getElementById('finish');f.textContent=sv?'Mark Survey Complete':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
+document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
 async function saveQuick(){const r=await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value});alert(r.ok?'Saved':'Error')}
