@@ -8,9 +8,11 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-APP_PASSWORD = os.environ.get('APP_PASSWORD', '')
+# Each user gets a Render env var NAME_PASSWORD (e.g. ROLAND_PASSWORD, MIKE_PASSWORD); the login name is NAME.
+USERS = {k[:-len('_PASSWORD')].replace('_', ' ').strip().lower(): v for k, v in os.environ.items()
+         if k.endswith('_PASSWORD') and k != 'APP_PASSWORD' and v and k[:-len('_PASSWORD')]}
 OFFICE_NAMES = [n.strip().lower() for n in os.environ.get('OFFICE_NAMES', 'Roland').split(',') if n.strip()]
-app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + APP_PASSWORD).encode()).hexdigest()
+app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + json.dumps(sorted(USERS.items()))).encode()).hexdigest()
 app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Site walk with customer', 'Work complete per scope', 'Tested and working', 'Work area cleaned up', 'Customer walkthrough']
@@ -34,7 +36,9 @@ def parse_checklist(raw):
 def job_dict(row):
     d = dict(row); d['checklist'] = parse_checklist(d.get('checklist')); return d
 
-def me(): return (session.get('name') or '').strip()
+def me():
+    n = (session.get('name') or '').strip()
+    return n if n.lower() in USERS else ''
 def is_office(): return me().lower() in OFFICE_NAMES
 def can_see(job): return is_office() or (job['tech'] or '').strip().lower() == me().lower()
 
@@ -45,7 +49,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 .err{color:#b00020}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
 <div style="text-align:center;color:#a49f2a;font-weight:600;margin-bottom:16px">Field Ops</div>
-{% if setup %}<p>Set APP_PASSWORD in Render</p>{% else %}
+{% if setup %}<p>Add user passwords in Render, e.g. ROLAND_PASSWORD and MIKE_PASSWORD</p>{% else %}
 <form method="post" action="/login"><input name="name" placeholder="Your name" autocomplete="username" required>
 <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}<button type="submit">Log In</button></form>{% endif %}
@@ -54,8 +58,8 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 @app.before_request
 def require_login():
     if request.path in ('/login', '/healthz'): return
-    if not APP_PASSWORD:
-        return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Set APP_PASSWORD in Render'}), 503)
+    if not USERS:
+        return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
         return (jsonify({'error':'login required'}), 401) if request.path.startswith(('/api','/uploads')) else redirect('/login')
 
@@ -64,13 +68,14 @@ def healthz(): return 'ok'
 
 @app.route('/login', methods=['GET','POST'])
 def login():
-    if not APP_PASSWORD: return render_template_string(LOGIN_HTML, setup=True), 503
+    if not USERS: return render_template_string(LOGIN_HTML, setup=True), 503
     error = None
     if request.method == 'POST':
         name = (request.form.get('name') or '').strip()
         pw = request.form.get('password') or ''
-        if name and hmac.compare_digest(pw.encode(), APP_PASSWORD.encode()):
-            session.permanent = True; session['name'] = name
+        expected = USERS.get(name.lower())
+        if expected and hmac.compare_digest(pw.encode(), expected.encode()):
+            session.permanent = True; session['name'] = name.title()
             return redirect('/')
         error = 'Wrong name or password'
     return render_template_string(LOGIN_HTML, setup=False, error=error)
