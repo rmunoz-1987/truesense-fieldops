@@ -17,14 +17,31 @@ app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
-SURVEY_ITEMS = ['Existing equipment', 'Conduit paths', 'Power', 'Network', 'Photos of panels/doors', 'Measurements', 'Obstacles']
+SURVEY_TEXT = ['contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
+SURVEY_WANTS = [('access', 'Access control'), ('cameras', 'Cameras'), ('av', 'AV'), ('data', 'Data cabling'), ('fiber', 'Fiber'), ('intrusion', 'Intrusion alarm'), ('trailers', 'Mobile surveillance trailers')]
+SURVEY_OBSTACLES = ['Lift needed', 'Concrete', 'Long runs', 'Access issues']
+
+def clean_survey(raw):
+    try: d = json.loads(raw) if isinstance(raw, str) and raw else raw
+    except Exception: d = None
+    d = d if isinstance(d, dict) else {}
+    out = {k: str(d.get(k) or '').strip()[:2000] for k in SURVEY_TEXT}
+    w = d.get('wants') if isinstance(d.get('wants'), dict) else {}
+    out['wants'] = {}
+    for k, _ in SURVEY_WANTS:
+        x = w.get(k) if isinstance(w.get(k), dict) else {}
+        try: cnt = max(0, int(float(x.get('count')))) if str(x.get('count') or '').strip() else ''
+        except (TypeError, ValueError): cnt = ''
+        out['wants'][k] = {'count': cnt, 'desc': str(x.get('desc') or '').strip()[:500]}
+    ob = d.get('obstacles') if isinstance(d.get('obstacles'), list) else []
+    out['obstacles'] = [o for o in SURVEY_OBSTACLES if o in ob]
+    return out
 
 def parse_ticks(raw):
     try: items = json.loads(raw) if isinstance(raw, str) and raw else raw
     except Exception: items = []
     return [{'text': str(i.get('text', ''))[:200], 'done': bool(i.get('done'))} for i in (items if isinstance(items, list) else []) if isinstance(i, dict) and str(i.get('text', '')).strip()]
 
-def default_survey(): return json.dumps([{'text': t, 'done': False} for t in SURVEY_ITEMS])
 
 def today_local():
     try:
@@ -54,6 +71,7 @@ def parse_checklist(raw):
 STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_parts', 'Waiting on Parts'), ('completed', 'Complete')]
 STATUS_LABEL = dict(STATUSES)
 PHOTO_TYPES = ['before', 'during', 'after']
+SURVEY_PHOTO_TYPES = ['doors', 'power', 'network', 'proposed']
 
 def parse_materials(raw):
     try: items = json.loads(raw) if raw else []
@@ -66,7 +84,10 @@ def job_dict(row):
     d['status_label'] = STATUS_LABEL.get(d.get('status') or 'assigned', (d.get('status') or 'Open').replace('_', ' ').title())
     d['hours'] = round((d.get('total_minutes') or 0) / 60, 2); d['total_miles'] = d.get('total_miles') or 0
     d['job_type'] = d.get('job_type') or ''
-    d['survey_list'] = parse_ticks(d.get('survey_list')) or (parse_ticks(default_survey()) if d['job_type'] == 'Survey' else [])
+    d.pop('survey_list', None); d['survey'] = clean_survey(d.pop('survey_form', None))
+    d['survey']['contact_tel'] = ''.join(c for c in d['survey']['contact_phone'] if c.isdigit() or c == '+')
+    if not is_office(): d.pop('survey_office', None)
+    else: d['survey_office'] = d.get('survey_office') or ''
     d['punch_list'] = parse_ticks(d.get('punch_list')); d['quick_notes'] = d.get('quick_notes') or ''
     if not is_office(): d.pop('private_notes', None)
     return d
@@ -132,7 +153,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -212,7 +233,18 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <a id="history" class="big-btn gray">Client History</a>
 <a id="print" class="big-btn gray" target="_blank">Print Summary</a>
 <div class="job"><div style="font-weight:600">Job Type</div>{% if office %}<select id="jtype" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setType(this.value)"><option value="">(not set)</option>{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>{% else %}<div id="jtype-label" style="margin:6px 0"></div>{% endif %}</div>
-<div class="job hidden" id="survey-card"><div style="font-weight:600;margin-bottom:6px">Survey Checklist</div><div id="survey"></div></div>
+<div class="job hidden" id="survey-card"><div style="font-weight:600;font-size:1.05rem">Estimating Site Survey</div>
+<div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
+<div class="ptitle">Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
+<div class="ptitle">What They Want</div>{% for k,l in wants %}<div class="muted" style="font-size:.85rem;margin-top:6px">{{ l }}</div><div class="row"><input type="number" min="0" inputmode="numeric" id="sv-w-{{ k }}-count" placeholder="Qty" style="flex:0 0 80px"><input type="text" id="sv-w-{{ k }}-desc" placeholder="Short description"></div>{% endfor %}
+<div class="ptitle">Photos</div><div class="row"><div class="big-btn" onclick="document.getElementById('doors').click()">Doors</div><div class="big-btn" onclick="document.getElementById('power').click()">Power</div></div>
+<div class="row"><div class="big-btn" onclick="document.getElementById('network').click()">Network</div><div class="big-btn" onclick="document.getElementById('proposed').click()">Proposed Locations</div></div>
+{% for t in ['doors','power','network','proposed'] %}<input type="file" id="{{ t }}" accept="image/*" multiple capture="environment" style="display:none">{% endfor %}<div id="survey-photos"></div>
+<div class="ptitle">Obstacles / Notes</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
+<textarea id="sv-obstacle_notes" rows="3" placeholder="Other obstacles / notes"></textarea>
+<div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
+{% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
+<button class="big-btn" onclick="saveSurvey()">Save Survey</button></div>
 <div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
 <div class="job"><div style="font-weight:600;margin-bottom:6px">Photos</div>
 <div class="row"><div class="big-btn" onclick="document.getElementById('before').click()">Before</div><div class="big-btn" onclick="document.getElementById('during').click()">During</div><div class="big-btn" onclick="document.getElementById('after').click()">After</div></div>
@@ -280,12 +312,14 @@ const r=await fetch('/api/jobs/'+currentJob.id+'/reassign',{method:'POST',header
 if(r.ok){currentJob.tech=t.trim();alert('Reassigned to '+t.trim())}else alert('Error')}
 async function deleteJob(){if(!confirm('Delete job '+currentJob.id+'? This cannot be undone.'))return;
 const r=await fetch('/api/jobs/'+currentJob.id,{method:'DELETE'});if(r.ok){showList()}else alert('Error')}
-function renderPhotos(){const el=document.getElementById('photos');el.innerHTML='';const ph=currentJob.photos||[];
-['before','during','after'].forEach(t=>{const g=ph.filter(p=>p.photo_type===t);const h=document.createElement('div');h.className='ptitle';h.textContent=t[0].toUpperCase()+t.slice(1)+' ('+g.length+')';el.appendChild(h);
+const PHOTO_LABELS={before:'Before',during:'During',after:'After',doors:'Doors',power:'Power',network:'Network',proposed:'Proposed locations'};
+function renderPhotos(){photoGroups('photos',['before','during','after']);photoGroups('survey-photos',['doors','power','network','proposed'])}
+function photoGroups(elId,types){const el=document.getElementById(elId);el.innerHTML='';const ph=currentJob.photos||[];
+types.forEach(t=>{const g=ph.filter(p=>p.photo_type===t);const h=document.createElement('div');h.className='ptitle';h.textContent=PHOTO_LABELS[t]+' ('+g.length+')';el.appendChild(h);
 const w=document.createElement('div');w.className='thumbs';g.forEach(p=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(p.filename);a.target='_blank';const i=document.createElement('img');i.src=a.href;a.appendChild(i);w.appendChild(a)});el.appendChild(w)})}
 async function uploadPhotos(t){const inp=document.getElementById(t);if(!inp.files.length)return;const fd=new FormData();fd.append('type',t);[...inp.files].forEach(f=>fd.append('photos',f));
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/photos',{method:'POST',body:fd});inp.value='';if(r.ok){currentJob.photos=(await r.json()).photos;renderPhotos()}else alert('Photo upload failed')}
-['before','during','after'].forEach(t=>document.getElementById(t).onchange=()=>uploadPhotos(t));
+['before','during','after','doors','power','network','proposed'].forEach(t=>document.getElementById(t).onchange=()=>uploadPhotos(t));
 function renderMats(){const el=document.getElementById('matlist');el.innerHTML='';const m=currentJob.materials_list||[];
 m.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';const c=document.createElement('input');c.type='checkbox';c.checked=x.used;c.onchange=()=>{x.used=c.checked;saveMats()};
 const s=document.createElement('span');s.textContent=x.text;const b=document.createElement('button');b.type='button';b.textContent='\u00d7';b.onclick=e=>{e.preventDefault();m.splice(i,1);saveMats();renderMats()};l.append(c,s,b);el.appendChild(l)});
@@ -305,17 +339,26 @@ items.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';
 const s=document.createElement('span');s.textContent=x.text;l.append(c,s);if(removable){const b=document.createElement('button');b.type='button';b.textContent='\u00d7';b.onclick=e=>{e.preventDefault();items.splice(i,1);save();renderTicks(elId,items,save,removable)};l.appendChild(b)}el.appendChild(l)});
 if(!items.length)el.innerHTML='<div class="muted">None yet</div>'}
 function post(path,body){return fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
-const saveSurvey=()=>post('/survey',{survey_list:currentJob.survey_list}),savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
+const savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
+const SV_TEXT=['contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'],SV_WANTS={{ wants|map('first')|list|tojson }};
+function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
+function fillSurvey(){const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
+SV_WANTS.forEach(k=>{const w=(s.wants||{})[k]||{};document.getElementById('sv-w-'+k+'-count').value=w.count===''||w.count==null?'':w.count;document.getElementById('sv-w-'+k+'-desc').value=w.desc||''});
+document.querySelectorAll('.sv-ob').forEach(c=>c.checked=(s.obstacles||[]).includes(c.value));const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
+async function saveSurvey(){const s={wants:{},obstacles:[...document.querySelectorAll('.sv-ob')].filter(c=>c.checked).map(c=>c.value)};SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
+SV_WANTS.forEach(k=>s.wants[k]={count:document.getElementById('sv-w-'+k+'-count').value,desc:document.getElementById('sv-w-'+k+'-desc').value});
+let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
+if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();alert('Survey saved')}else alert('Error')}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
-document.getElementById('survey-card').classList.toggle('hidden',t!=='Survey');renderTicks('survey',currentJob.survey_list||[],saveSurvey,false)}
-async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;currentJob.survey_list=d.survey_list;renderType()}else alert('Error')}
+document.getElementById('survey-card').classList.toggle('hidden',t!=='Survey')}
+async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
 async function saveQuick(){const r=await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value});alert(r.ok?'Saved':'Error')}
 async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}});if(r.ok){currentJob.tech={{ name|tojson }};const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech;alert('Assigned to you')}else alert('Error')}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();
-renderPhotos();renderMats();renderTotals();renderType();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+renderPhotos();renderMats();renderTotals();renderType();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -343,7 +386,7 @@ const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 @app.route('/')
 def index():
     techs=[(k.title(),k.title()) for k in sorted(USERS) if k not in OFFICE_NAMES]+[(k.title(),k.title()+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
-    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES)
+    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, wants=SURVEY_WANTS, obstacles=SURVEY_OBSTACLES)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -369,8 +412,8 @@ def create_job():
     chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
     sd = (d.get('scheduled_date') or '').strip() or today_local().isoformat()
     jt = (d.get('job_type') or '').strip(); jt = jt if jt in JOB_TYPES else 'Install'
-    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type,survey_list) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt,default_survey() if jt=='Survey' else None))
+    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
     conn.commit(); conn.close()
     return jsonify({'ok':True,'id':jid}),201
 
@@ -380,9 +423,8 @@ def set_job_type(job_id):
     jt=((request.get_json(silent=True) or {}).get('job_type') or '').strip()
     if jt not in JOB_TYPES: return jsonify({'error':'bad type'}),400
     conn=get_db(); n=conn.execute('UPDATE jobs SET job_type=? WHERE id=?',(jt,job_id)).rowcount
-    if n and jt=='Survey': conn.execute("UPDATE jobs SET survey_list=? WHERE id=? AND IFNULL(survey_list,'') IN ('','[]')",(default_survey(),job_id))
-    conn.commit(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
-    return (jsonify({'ok':True,'job_type':jt,'survey_list':job_dict(row)['survey_list']}) if n else ('',404))
+    conn.commit(); conn.close()
+    return (jsonify({'ok':True,'job_type':jt}) if n else ('',404))
 
 def save_ticks(job_id, col, key):
     conn=get_db(); row,err=own_job(conn, job_id)
@@ -392,7 +434,19 @@ def save_ticks(job_id, col, key):
     return jsonify({'ok':True,key:items})
 
 @app.route('/api/jobs/<job_id>/survey', methods=['POST'])
-def save_survey(job_id): return save_ticks(job_id, 'survey_list', 'survey_list')
+def save_survey(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    form=clean_survey((request.get_json(silent=True) or {}).get('survey'))
+    conn.execute('UPDATE jobs SET survey_form=? WHERE id=?',(json.dumps(form),job_id)); conn.commit(); conn.close()
+    return jsonify({'ok':True})
+
+@app.route('/api/jobs/<job_id>/survey-office', methods=['POST'])
+def save_survey_office(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    note=((request.get_json(silent=True) or {}).get('survey_office') or '')[:5000]
+    conn=get_db(); n=conn.execute('UPDATE jobs SET survey_office=? WHERE id=?',(note,job_id)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>/punch', methods=['POST'])
 def save_punch(job_id): return save_ticks(job_id, 'punch_list', 'punch_list')
@@ -423,9 +477,9 @@ def copy_job(job_id):
     except ValueError: sd=today_local().isoformat()
     untick=lambda raw,k: json.dumps([{'text':i['text'],k:False} for i in raw])
     src_d=job_dict(src)
-    conn.execute('INSERT INTO jobs (id,title,customer,address,phone,scope,tech,job_type,status,checklist,survey_list,materials_list,created_at,scheduled_date,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    conn.execute('INSERT INTO jobs (id,title,customer,address,phone,scope,tech,job_type,status,checklist,materials_list,created_at,scheduled_date,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                  (nid,src['title'],src['customer'],src['address'],src['phone'],src['scope'],src['tech'],src['job_type'],'assigned',
-                  untick(src_d['checklist'],'done'),untick(src_d['survey_list'],'done') if src_d['survey_list'] else None,untick(src_d['materials_list'],'used'),
+                  untick(src_d['checklist'],'done'),untick(src_d['materials_list'],'used'),
                   datetime.utcnow().isoformat(),sd,me()))
     conn.commit(); conn.close()
     return jsonify({'ok':True,'id':nid}),201
@@ -533,7 +587,7 @@ def upload_photos(job_id):
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
     ptype=request.form.get('type','')
-    if ptype not in PHOTO_TYPES: conn.close(); return jsonify({'error':'type must be before, during or after'}),400
+    if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
     photos=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
@@ -568,12 +622,18 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin:6px 0;font-size:1rem;box-sizing:border-box}
 .sec{font-weight:600;margin-top:10px;font-size:.9rem}.badge{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;background:#f0f0f0;color:#333}.folder{font-weight:700;color:#a49f2a;margin:16px 0 6px}summary{cursor:pointer}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
-{% macro photogroups(j) %}{% for t in ['before','during','after'] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ t|capitalize }} ({{ g|length }})</div>{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endmacro %}
+{% macro photogroups(j) %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if loop.index <= 3 or g %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ lbl }} ({{ g|length }})</div>{% endif %}{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endmacro %}
 {% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }} &middot; {{ j.hours }} hrs &middot; {{ j.total_miles }} mi{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 <div class="sec">Daily Updates ({{ j.updates|length }})</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% else %}<div class="muted">None</div>{% endfor %}
 <div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes or '' }}</div>{% if not j.notes %}<div class="muted">None</div>{% endif %}
-{% if j.survey_list %}<div class="sec">Survey Checklist ({{ j.survey_list|selectattr('done')|list|length }}/{{ j.survey_list|length }})</div>{% for c in j.survey_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
+{% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
+<div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
+<div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
+<div style="margin-top:4px"><b>What they want:</b></div>{% set ns = namespace(any=false) %}{% for k,l in [('access','Access control'),('cameras','Cameras'),('av','AV'),('data','Data cabling'),('fiber','Fiber'),('intrusion','Intrusion alarm'),('trailers','Mobile surveillance trailers')] %}{% set w = s.wants[k] %}{% if w.count != '' or w.desc %}{% set ns.any = true %}<div>&bull; {{ l }}{% if w.count != '' %}: {{ w.count }}{% endif %}{% if w.desc %} &mdash; {{ w.desc }}{% endif %}</div>{% endif %}{% endfor %}{% if not ns.any %}<div class="muted">None entered</div>{% endif %}
+<div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
+<div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
+{% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
 {% if office and j.punch_list %}<div class="sec">Internal Punch List ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
@@ -677,14 +737,20 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <div>Hours: {{ j.hours }} &middot; Miles: {{ j.total_miles }}</div>
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 {% if j.notes %}<div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}
-{% if j.survey_list %}<div class="sec">Survey Checklist ({{ j.survey_list|selectattr('done')|list|length }}/{{ j.survey_list|length }})</div>{% for c in j.survey_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
+{% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
+<div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
+<div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
+<div style="margin-top:4px"><b>What they want:</b></div>{% set ns = namespace(any=false) %}{% for k,l in [('access','Access control'),('cameras','Cameras'),('av','AV'),('data','Data cabling'),('fiber','Fiber'),('intrusion','Intrusion alarm'),('trailers','Mobile surveillance trailers')] %}{% set w = s.wants[k] %}{% if w.count != '' or w.desc %}{% set ns.any = true %}<div>&bull; {{ l }}{% if w.count != '' %}: {{ w.count }}{% endif %}{% if w.desc %} &mdash; {{ w.desc }}{% endif %}</div>{% endif %}{% endfor %}{% if not ns.any %}<div class="muted">None entered</div>{% endif %}
+<div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
+<div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
+{% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
 {% if office and j.punch_list %}<div class="sec">Internal Punch List ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
 {% if j.materials_list or j.materials %}<div class="sec">Materials</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}
 <div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
 {% if j.updates %}<div class="sec">Daily Updates</div>{% for u in j.updates %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> {{ u.note }}</div>{% endfor %}{% endif %}
-{% for t in ['before','during','after'] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ t|capitalize }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
+{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ lbl }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
 {% if j.signature and j.signature.startswith('data:image/') %}<div class="sec">Customer Signature</div><img src="{{ j.signature }}" alt="signature" style="width:240px;height:auto;object-fit:contain;border:1px solid #ddd">{% endif %}
 </div>{% else %}<div class="muted">No jobs</div>{% endfor %}
 </body></html>'''
