@@ -54,7 +54,10 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 textarea,input{width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem}
 canvas{border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body>
-<div class="header"><h1>True Sense Security</h1><div class="sub">Field Ops</div></div>
+<div class="header">
+  <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
+  <div class="sub">Field Ops</div>
+</div>
 <div id="list"></div>
 <div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
