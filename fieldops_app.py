@@ -92,7 +92,7 @@ def me():
 def is_office(): return me().lower() in OFFICE_NAMES
 def can_see(job): return is_office() or (job['tech'] or '').strip().lower() == me().lower()
 
-LOGIN_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>True Sense Field</title>
+LOGIN_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Field Ops"><title>True Sense Field</title>
 <style>body{font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:420px;margin:auto;padding:24px}
 input{width:100%;padding:14px;border:1px solid #e5e5e5;border-radius:10px;margin:8px 0;font-size:1rem;box-sizing:border-box}
 button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-radius:10px;font-size:1.05rem;font-weight:600}
@@ -187,7 +187,7 @@ def init_db():
 
 init_db()
 
-HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>True Sense Field</title>
+HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Field Ops"><title>True Sense Field</title>
 <style>
 :root{--bg:#fcfcfc;--card:#fff;--accent:#a49f2a;--text:#111;--muted:#666;--border:#e5e5e5}
 body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:var(--text);padding:12px;max-width:480px;margin:auto}
@@ -213,7 +213,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="header">
   <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
   <div class="sub">Field Ops</div>
-  <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666">Log out</a></div>
+  <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 {% if office %}<div class="row"><a href="/clients" class="big-btn gray">Clients</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
@@ -250,7 +250,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <a id="print" class="big-btn gray" target="_blank">Print Summary</a>
 <div class="job"><div style="font-weight:600">Job Type</div>{% if office %}<select id="jtype" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setType(this.value)"><option value="">(not set)</option>{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>{% else %}<div id="jtype-label" style="margin:6px 0"></div>{% endif %}</div>
 <div class="job hidden" id="survey-card"><div style="font-weight:800;font-size:1.4rem">Site Survey for Estimate</div>
-<div class="ptitle" style="font-size:1.2rem">1. Photos</div><div class="big-btn" onclick="document.getElementById('survey').click()">Add Photos</div>
+<div class="ptitle" style="font-size:1.2rem">1. Photos</div><div class="big-btn" id="sv-add" onclick="document.getElementById('survey').click()">Add Photos</div>
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
 <div class="ptitle" style="font-size:1.2rem">3. Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
@@ -259,8 +259,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 <div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
-<button class="big-btn" onclick="saveSurvey()">Save Survey</button>
-{% if office %}<div id="kelly-box"><button id="kelly-btn" class="big-btn" style="background:#6a1b9a;font-size:1.3rem" onclick="sendKelly()">Send to Kelly</button><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div>
+<button class="big-btn" id="sv-save" onclick="saveSurvey()">Save Survey</button>
+{% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button>{% endif %}
+{% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div>
 <div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
 <div class="job hidden" id="bp-card"><div style="font-weight:600;margin-bottom:6px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
@@ -386,17 +387,21 @@ function post(path,body){return fetch('/api/jobs/'+encodeURIComponent(currentJob
 const savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
 const SV_TEXT=['want_desc','contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'];
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
-function renderKelly(){const b=document.getElementById('kelly-btn');if(!b)return;const n=document.getElementById('kelly-note');const done=currentJob.status==='completed';
-b.classList.toggle('hidden',!done||!!currentJob.kelly_at);n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:(done?'':'Complete the survey to send it to Kelly');}
-async function sendKelly(){const r=await post('/send-kelly',{});if(r.ok){Object.assign(currentJob,await r.json());renderKelly()}else alert('Error')}
-function fillSurvey(){renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
+let svEditing=false;
+function renderKelly(){const done=currentJob.status==='completed'&&currentJob.job_type==='Survey';const lock=done&&!svEditing;
+document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=>e.disabled=lock);
+document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',lock);
+const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);
+const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
+if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done)}
+function fillSurvey(){svEditing=false;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
 document.querySelectorAll('.sv-ob').forEach(c=>c.checked=(s.obstacles||[]).includes(c.value));const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
 async function saveSurvey(quiet){const s={obstacles:[...document.querySelectorAll('.sv-ob')].filter(c=>c.checked).map(c=>c.value)};SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
-if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet)alert('Survey saved')}else alert('Error');return ok}
+if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey';document.getElementById('survey-card').classList.toggle('hidden',!sv);document.querySelectorAll('#detail .ns').forEach(e=>e.classList.toggle('hidden',sv));
-document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');document.getElementById('finish').textContent=sv?'Mark Survey Complete':'Finish Job';if(!sv)resize()}
+document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');const f=document.getElementById('finish');f.textContent=sv?'Mark Survey Complete':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
 async function saveQuick(){const r=await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value});alert(r.ok?'Saved':'Error')}
@@ -404,7 +409,7 @@ async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
-renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('notes').value=currentJob.notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -416,7 +421,7 @@ document.getElementById('list').classList.add('hidden');document.getElementById(
 function showList(){history.replaceState(null,'','/');document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');document.getElementById('search-box').classList.remove('hidden');document.getElementById('office').classList.remove('hidden');load()}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
 fd.append('notes',document.getElementById('notes').value);
-if(currentJob.job_type==='Survey'){if(!(await saveSurvey(true)))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});if(r.ok){alert('Survey complete. Notes and photos are saved here.');openJob(currentJob.id)}else alert('Error');return}
+if(currentJob.job_type==='Survey'){if(!(await saveSurvey(true)))return;if(!(await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value})).ok){alert('Error');return}const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});if(r.ok){alert('Survey complete. Kelly has been told it is ready for an estimate.');openJob(currentJob.id)}else alert('Error');return}
 fd.append('materials',document.getElementById('materials').value);
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',document.getElementById('miles').value||0);
 fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
@@ -485,18 +490,10 @@ def save_ticks(job_id, col, key):
 def save_survey(job_id):
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
+    if row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     form=clean_survey((request.get_json(silent=True) or {}).get('survey'))
     conn.execute('UPDATE jobs SET survey_form=? WHERE id=?',(json.dumps(form),job_id)); conn.commit(); conn.close()
     return jsonify({'ok':True})
-
-@app.route('/api/jobs/<job_id>/send-kelly', methods=['POST'])
-def send_kelly(job_id):
-    if not is_office(): return jsonify({'error':'office only'}),403
-    conn=get_db(); row=conn.execute('SELECT job_type,status FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not row: conn.close(); return ('',404)
-    if row['job_type']!='Survey' or row['status']!='completed': conn.close(); return jsonify({'error':'completed surveys only'}),400
-    at=now_local_str(); conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(at,me(),job_id)); conn.commit(); conn.close()
-    return jsonify({'kelly_at':at,'kelly_by':me()})
 
 @app.route('/api/jobs/<job_id>/survey-office', methods=['POST'])
 def save_survey_office(job_id):
@@ -588,6 +585,9 @@ def complete(job_id):
         except Exception: pass
     if row['job_type']=='Survey':
         conn.execute('UPDATE jobs SET status=?,notes=?,completed_at=? WHERE id=?',('completed',notes,now,job_id))
+        if not row['kelly_at']:
+            conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(now_local_str(),me(),job_id))
+            notify_kelly(dict(row))
     else:
         conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                      ('completed',notes,materials,sig,minutes,miles,now,job_id))
@@ -648,6 +648,7 @@ def upload_photos(job_id):
     if err: conn.close(); return err
     ptype=request.form.get('type','')
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
+    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
     photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
@@ -715,6 +716,22 @@ def help_photo(fn):
     fn=secure_filename(fn)
     if not hmac.compare_digest(request.args.get('t',''), help_photo_token(fn)): return ('',403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], fn)
+
+def notify_kelly(j):
+    # Render env vars KELLY_WEBHOOK_URL and KELLY_WEBHOOK_KEY (Kelly's Grok Bot webhook routine). Skipped if unset; kelly_at flag is set either way.
+    url=os.environ.get('KELLY_WEBHOOK_URL',''); key=os.environ.get('KELLY_WEBHOOK_KEY','')
+    if not url or not key: return
+    base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
+    body={'event':'survey_ready_for_estimate','job_id':j['id'],'title':j.get('title') or '','customer':j.get('customer') or '',
+          'address':j.get('address') or '','completed_by':me(),'print_url':f"{base}/print/job/{j['id']}"}
+    def send():
+        try:
+            req=urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
+                headers={'Content-Type':'application/json','Authorization':'Bearer '+key,'X-Automation-Key':key})
+            urllib.request.urlopen(req, timeout=8).read()
+        except Exception as e:
+            app.logger.warning('Kelly notify failed for %s: %s', j['id'], e)
+    threading.Thread(target=send, daemon=True).start()
 
 def notify_tech_support(j, fn):
     # Render env vars HELP_WEBHOOK_URL and HELP_WEBHOOK_KEY (from the Grok Bot webhook routine). Skipped if unset.
