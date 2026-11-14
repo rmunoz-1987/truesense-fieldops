@@ -42,8 +42,22 @@ def parse_checklist(raw):
     have = {i['text'] for i in out}
     return out + [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST if t not in have]
 
+STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_parts', 'Waiting on Parts'), ('completed', 'Complete')]
+STATUS_LABEL = dict(STATUSES)
+PHOTO_TYPES = ['before', 'during', 'after']
+
+def parse_materials(raw):
+    try: items = json.loads(raw) if raw else []
+    except Exception: items = []
+    return [{'text': str(i.get('text', ''))[:200], 'used': bool(i.get('used'))} for i in (items if isinstance(items, list) else []) if isinstance(i, dict) and str(i.get('text', '')).strip()]
+
 def job_dict(row):
-    d = dict(row); d['checklist'] = parse_checklist(d.get('checklist')); return d
+    d = dict(row); d['checklist'] = parse_checklist(d.get('checklist'))
+    d['materials_list'] = parse_materials(d.get('materials_list'))
+    d['status_label'] = STATUS_LABEL.get(d.get('status') or 'assigned', (d.get('status') or 'Open').replace('_', ' ').title())
+    d['hours'] = round((d.get('total_minutes') or 0) / 60, 2); d['total_miles'] = d.get('total_miles') or 0
+    if not is_office(): d.pop('private_notes', None)
+    return d
 
 def me():
     n = (session.get('name') or '').strip()
@@ -106,7 +120,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -152,6 +166,10 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .chk{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:1rem}
 .chk input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
 .day{font-weight:700;color:var(--accent);margin:16px 0 6px}
+.badge{display:inline-block;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;background:#f0f0f0;color:#333;margin-left:6px}
+.row{display:flex;gap:8px}.row>*{flex:1}.muted{color:#666}.ptitle{font-weight:600;font-size:.9rem;margin-top:8px}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap}.thumbs img{width:70px;height:70px;object-fit:cover;border-radius:8px}
+.mat{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)}.mat input{width:24px;height:24px;margin:0;accent-color:var(--accent)}.mat span{flex:1}.mat button{background:none;border:none;color:#b00020;font-size:1.2rem}
 textarea,input{width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem}
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body>
@@ -160,7 +178,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div class="sub">Field Ops</div>
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666">Log out</a></div>
 </div>
-{% if office %}<a href="/clients" class="big-btn gray">Clients</a>{% endif %}
+{% if office %}<div class="row"><a href="/clients" class="big-btn gray">Clients</a><a href="/calendar" class="big-btn gray">Calendar</a></div>{% endif %}
+<div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 <div id="list"></div>
 {% if office %}<div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -178,12 +197,21 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <a id="directions" class="big-btn" target="_blank">Directions</a>
 <a id="call" class="big-btn gray">Call Customer</a>
 <a id="history" class="big-btn gray">Client History</a>
-<div class="big-btn" onclick="document.getElementById('before').click()">Before Photos</div>
+<a id="print" class="big-btn gray" target="_blank">Print Summary</a>
+<div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
+<div class="job"><div style="font-weight:600;margin-bottom:6px">Photos</div>
+<div class="row"><div class="big-btn" onclick="document.getElementById('before').click()">Before</div><div class="big-btn" onclick="document.getElementById('during').click()">During</div><div class="big-btn" onclick="document.getElementById('after').click()">After</div></div>
 <input type="file" id="before" accept="image/*" multiple capture="environment" style="display:none">
-<div id="before-preview" style="display:flex;gap:8px;flex-wrap:wrap"></div>
-<div class="big-btn" onclick="document.getElementById('after').click()">After Photos</div>
+<input type="file" id="during" accept="image/*" multiple capture="environment" style="display:none">
 <input type="file" id="after" accept="image/*" multiple capture="environment" style="display:none">
-<div id="after-preview" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+<div id="photos"></div></div>
+<div class="job"><div style="font-weight:600;margin-bottom:6px">Materials</div><div id="matlist"></div>
+<div class="row" style="align-items:center"><input type="text" id="mat-new" placeholder="Add material (e.g. 2x Maglock)" onkeydown="if(event.key==='Enter')addMat()"><button class="big-btn" style="flex:0 0 70px" onclick="addMat()">Add</button></div></div>
+<div class="job"><div style="font-weight:600">Time &amp; Miles</div><div id="totals" style="font-size:1.1rem;margin:6px 0"></div>
+<div class="row"><input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal"><input type="number" id="miles" placeholder="Miles" step="0.1" inputmode="decimal"></div>
+<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div></div>
+{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
+<textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}
 <div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div></div>
 <div class="job"><div style="font-weight:600;margin-bottom:6px">Daily Updates</div><div id="updates"></div>
 <textarea id="update-note" placeholder="Today's progress, issues, materials needed" rows="3"></textarea>
@@ -192,8 +220,6 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="text" id="materials" placeholder="Materials used">
 <div>Customer Signature</div><canvas id="sig"></canvas>
 <button class="big-btn gray" onclick="clearSig()" style="padding:12px">Clear Signature</button>
-<input type="number" id="hours" placeholder="Hours" step="0.25">
-<input type="number" id="miles" placeholder="Miles" step="0.1">
 <button class="big-btn green" id="finish">Finish Job</button>
 {% if office %}<select id="r-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in techs %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
 <button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button>
@@ -211,11 +237,12 @@ canvas.style.touchAction='none';
 ['pointerup','pointercancel','pointerleave'].forEach(t=>canvas.addEventListener(t,e=>{e.preventDefault();drawing=false}));
 ['touchstart','touchmove'].forEach(t=>canvas.addEventListener(t,e=>e.preventDefault(),{passive:false}));
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
-async function load(){const r=await fetch('/api/jobs?status=assigned');const jobs=await r.json();
-const card=j=>`<div class="job"><div class="job-id">${j.id}</div><div style="font-weight:600">${j.title}</div><div style="color:#666">${j.customer}</div><div style="color:#666">${j.address}</div><button class="big-btn" onclick="openJob('${j.id}')">Open Job</button></div>`;
+function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
+async function load(){const q=(document.getElementById('q').value||'').trim();const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
+const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div><button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
-document.getElementById('list').innerHTML=keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">No jobs</div>'}
+document.getElementById('list').innerHTML=keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>'}
 function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function dayLabel(k){if(!k)return 'No date';const t=new Date();const tm=new Date();tm.setDate(t.getDate()+1);
 const d=new Date(k+'T12:00:00');const nice=d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
@@ -234,24 +261,41 @@ const r=await fetch('/api/jobs/'+currentJob.id+'/reassign',{method:'POST',header
 if(r.ok){currentJob.tech=t.trim();alert('Reassigned to '+t.trim())}else alert('Error')}
 async function deleteJob(){if(!confirm('Delete job '+currentJob.id+'? This cannot be undone.'))return;
 const r=await fetch('/api/jobs/'+currentJob.id,{method:'DELETE'});if(r.ok){showList()}else alert('Error')}
-async function openJob(id){const r=await fetch('/api/jobs/'+id);currentJob=await r.json();
+function renderPhotos(){const el=document.getElementById('photos');el.innerHTML='';const ph=currentJob.photos||[];
+['before','during','after'].forEach(t=>{const g=ph.filter(p=>p.photo_type===t);const h=document.createElement('div');h.className='ptitle';h.textContent=t[0].toUpperCase()+t.slice(1)+' ('+g.length+')';el.appendChild(h);
+const w=document.createElement('div');w.className='thumbs';g.forEach(p=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(p.filename);a.target='_blank';const i=document.createElement('img');i.src=a.href;a.appendChild(i);w.appendChild(a)});el.appendChild(w)})}
+async function uploadPhotos(t){const inp=document.getElementById(t);if(!inp.files.length)return;const fd=new FormData();fd.append('type',t);[...inp.files].forEach(f=>fd.append('photos',f));
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/photos',{method:'POST',body:fd});inp.value='';if(r.ok){currentJob.photos=(await r.json()).photos;renderPhotos()}else alert('Photo upload failed')}
+['before','during','after'].forEach(t=>document.getElementById(t).onchange=()=>uploadPhotos(t));
+function renderMats(){const el=document.getElementById('matlist');el.innerHTML='';const m=currentJob.materials_list||[];
+m.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';const c=document.createElement('input');c.type='checkbox';c.checked=x.used;c.onchange=()=>{x.used=c.checked;saveMats()};
+const s=document.createElement('span');s.textContent=x.text;const b=document.createElement('button');b.type='button';b.textContent='\u00d7';b.onclick=e=>{e.preventDefault();m.splice(i,1);saveMats();renderMats()};l.append(c,s,b);el.appendChild(l)});
+if(!m.length)el.innerHTML='<div class="muted">No materials yet. Check items off as you use them.</div>'}
+async function saveMats(){await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({materials:currentJob.materials_list})})}
+function addMat(){const n=document.getElementById('mat-new');const t=n.value.trim();if(!t)return;(currentJob.materials_list=currentJob.materials_list||[]).push({text:t,used:false});n.value='';renderMats();saveMats()}
+function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs \u00b7 '+(currentJob.total_miles||0)+' miles'}
+async function saveTime(mode){const h=document.getElementById('hours'),m=document.getElementById('miles');if(!h.value&&!m.value)return;
+const body={mode:mode,hours:h.value||(mode==='set'?currentJob.hours:0),miles:m.value||(mode==='set'?currentJob.total_miles:0)};
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;h.value='';m.value='';renderTotals()}else alert('Error')}
+async function setStatus(v){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:v})});
+if(r.ok){currentJob.status=v}else{alert('Error');document.getElementById('status').value=currentJob.status}}
+async function savePrivate(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/private-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_notes:document.getElementById('private-notes').value})});alert(r.ok?'Saved':'Error')}
+async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();
+renderPhotos();renderMats();renderTotals();document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
 document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
-document.getElementById('list').classList.add('hidden');document.getElementById('office').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
-function showList(){document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');document.getElementById('office').classList.remove('hidden');load()}
-function preview(inp,el){document.getElementById(el).innerHTML='';[...inp.files].forEach(f=>{const i=document.createElement('img');i.src=URL.createObjectURL(f);i.style.width='70px';i.style.height='70px';i.style.objectFit='cover';i.style.borderRadius='8px';document.getElementById(el).appendChild(i)})}
-document.getElementById('before').onchange=e=>preview(e.target,'before-preview');
-document.getElementById('after').onchange=e=>preview(e.target,'after-preview');
+document.getElementById('list').classList.add('hidden');document.getElementById('search-box').classList.add('hidden');document.getElementById('office').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
+function showList(){document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');document.getElementById('search-box').classList.remove('hidden');document.getElementById('office').classList.remove('hidden');load()}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
 fd.append('notes',document.getElementById('notes').value);fd.append('materials',document.getElementById('materials').value);
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',document.getElementById('miles').value||0);
 fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
-[...document.getElementById('before').files].forEach(f=>fd.append('before',f));
-[...document.getElementById('after').files].forEach(f=>fd.append('after',f));
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
 if(r.ok){alert('Job finished');showList()}else alert('Error')};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
@@ -260,16 +304,19 @@ if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
+const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
 
 @app.route('/')
-def index(): return render_template_string(HTML, name=me(), office=is_office(), techs=sorted(k.title() for k in USERS if k not in OFFICE_NAMES))
+def index(): return render_template_string(HTML, name=me(), office=is_office(), techs=sorted(k.title() for k in USERS if k not in OFFICE_NAMES), statuses=STATUSES)
 
 @app.route('/api/jobs')
 def list_jobs():
-    status=request.args.get('status','assigned')
+    status=request.args.get('status','assigned'); q=(request.args.get('q') or '').strip().lower()
     conn=get_db()
-    if status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
+    if q:
+        rows=conn.execute("SELECT * FROM jobs WHERE INSTR(LOWER(IFNULL(customer,'')),?)>0 OR INSTR(LOWER(IFNULL(address,'')),?)>0 OR INSTR(LOWER(id),?)>0 ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(q,q,q)).fetchall()
+    elif status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
     else: rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY created_at DESC").fetchall()
     conn.close()
     return jsonify([job_dict(r) for r in rows if can_see(r)])
@@ -296,7 +343,8 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    return jsonify(job_dict(row))
+    conn=get_db(); photos=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(job_id,)).fetchall()]; conn.close()
+    return jsonify(dict(job_dict(row),photos=photos))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
 def job_updates(job_id):
@@ -337,22 +385,87 @@ def complete(job_id):
         except Exception: pass
     conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                  ('completed',notes,materials,sig,minutes,miles,now,job_id))
-    for key,ptype in [('before','before'),('after','after')]:
-        for f in request.files.getlist(key):
-            if f and f.filename:
-                fn=f"{job_id}_{ptype}_{uuid.uuid4().hex[:8]}.jpg"
-                f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
-                conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,ptype,now))
+    for ptype in PHOTO_TYPES: save_photos(conn, job_id, request.files.getlist(ptype), ptype, now)
     conn.commit()
+    pkg=build_invoice_draft(conn, job_id, now); conn.close()
+    return jsonify({'ok':True,'invoice_draft':pkg})
+
+def build_invoice_draft(conn, job_id, now):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     photos=[{'filename':p['filename'],'type':p['photo_type']} for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=?',(job_id,)).fetchall()]
     pkg={'job_id':job_id,'customer':j['customer'],'phone':j['phone'],'address':j['address'],'title':j['title'],'scope':j['scope'],
-         'tech':j['tech'],'materials':j['materials'] or '','hours':round((j['total_minutes'] or 0)/60,2),'miles':j['total_miles'] or 0,
+         'tech':j['tech'],'materials':j['materials'] or '','materials_list':parse_materials(j['materials_list']),'hours':round((j['total_minutes'] or 0)/60,2),'miles':j['total_miles'] or 0,
          'notes':j['notes'] or '','photos':photos,'completed_at':j['completed_at'],'status':'ready_for_review (not sent)'}
     conn.execute('INSERT OR REPLACE INTO invoice_drafts (job_id,package,status,created_at) VALUES (?,?,?,?)',(job_id,json.dumps(pkg),'ready_for_review',now))
-    conn.commit(); conn.close()
+    conn.commit()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
-    return jsonify({'ok':True,'invoice_draft':pkg})
+    return pkg
+
+def own_job(conn, job_id):
+    row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: return None, ('',404)
+    if not can_see(row): return None, (jsonify({'error':'not your job'}),403)
+    return row, None
+
+def save_photos(conn, job_id, files, ptype, now):
+    for f in files:
+        if f and f.filename:
+            fn=f"{job_id}_{ptype}_{uuid.uuid4().hex[:8]}.jpg"
+            f.save(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(fn)))
+            conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,secure_filename(fn),ptype,now))
+
+@app.route('/api/jobs/<job_id>/materials', methods=['POST'])
+def save_materials(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    items=parse_materials(json.dumps((request.get_json(silent=True) or {}).get('materials') or []))
+    conn.execute('UPDATE jobs SET materials_list=? WHERE id=?',(json.dumps(items),job_id)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'materials_list':items})
+
+@app.route('/api/jobs/<job_id>/time', methods=['POST'])
+def save_time(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    d=request.get_json(silent=True) or {}
+    try: hours=float(d.get('hours') or 0); miles=float(d.get('miles') or 0)
+    except (TypeError, ValueError): conn.close(); return jsonify({'error':'numbers only'}),400
+    if d.get('mode')=='set':
+        conn.execute('UPDATE jobs SET total_minutes=?,total_miles=? WHERE id=?',(max(0,int(round(hours*60))),max(0.0,miles),job_id))
+    else:
+        conn.execute('UPDATE jobs SET total_minutes=MAX(0,IFNULL(total_minutes,0)+?),total_miles=MAX(0,IFNULL(total_miles,0)+?) WHERE id=?',(int(round(hours*60)),miles,job_id))
+    conn.commit(); j=conn.execute('SELECT total_minutes,total_miles FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
+    return jsonify({'ok':True,'hours':round((j['total_minutes'] or 0)/60,2),'total_miles':j['total_miles'] or 0})
+
+@app.route('/api/jobs/<job_id>/photos', methods=['POST'])
+def upload_photos(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    ptype=request.form.get('type','')
+    if ptype not in PHOTO_TYPES: conn.close(); return jsonify({'error':'type must be before, during or after'}),400
+    save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
+    photos=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(job_id,)).fetchall()]; conn.close()
+    return jsonify({'ok':True,'photos':photos})
+
+@app.route('/api/jobs/<job_id>/status', methods=['POST'])
+def set_status(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    st=((request.get_json(silent=True) or {}).get('status') or '').strip()
+    if st not in STATUS_LABEL: conn.close(); return jsonify({'error':'bad status'}),400
+    now=datetime.utcnow().isoformat()
+    if st=='completed':
+        conn.execute('UPDATE jobs SET status=?,completed_at=COALESCE(completed_at,?) WHERE id=?',(st,now,job_id)); conn.commit()
+        if row['status']!='completed': build_invoice_draft(conn, job_id, now)
+    else:
+        conn.execute('UPDATE jobs SET status=?,completed_at=NULL WHERE id=?',(st,job_id)); conn.commit()
+    conn.close(); return jsonify({'ok':True,'status':st,'status_label':STATUS_LABEL[st]})
+
+@app.route('/api/jobs/<job_id>/private-notes', methods=['POST'])
+def save_private_notes(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    note=((request.get_json(silent=True) or {}).get('private_notes') or '')[:5000]
+    conn=get_db(); n=conn.execute('UPDATE jobs SET private_notes=? WHERE id=?',(note,job_id)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Clients</title>
 <style>body{font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:12px}
@@ -361,15 +474,17 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 .btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}
 .client{display:block;text-decoration:none}h2{color:#a49f2a;margin:8px 0 12px}img{width:80px;height:80px;object-fit:cover;border-radius:8px;margin:4px 4px 0 0}
 input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin:6px 0;font-size:1rem;box-sizing:border-box}
-.sec{font-weight:600;margin-top:10px;font-size:.9rem}.folder{font-weight:700;color:#a49f2a;margin:16px 0 6px}summary{cursor:pointer}</style></head><body>
+.sec{font-weight:600;margin-top:10px;font-size:.9rem}.badge{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;background:#f0f0f0;color:#333}.folder{font-weight:700;color:#a49f2a;margin:16px 0 6px}summary{cursor:pointer}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
-{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
+{% macro photogroups(j) %}{% for t in ['before','during','after'] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ t|capitalize }} ({{ g|length }})</div>{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endmacro %}
+{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span> <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }} &middot; {{ j.hours }} hrs &middot; {{ j.total_miles }} mi{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 <div class="sec">Daily Updates ({{ j.updates|length }})</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% else %}<div class="muted">None</div>{% endfor %}
 <div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes or '' }}</div>{% if not j.notes %}<div class="muted">None</div>{% endif %}
-{% if j.materials %}<div class="sec">Materials</div><div>{{ j.materials }}</div>{% endif %}
+{% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
+{% if j.materials or j.materials_list %}<div class="sec">Materials</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}
 <div class="sec">Checklist ({{ j.checklist|selectattr('done')|list|length }}/{{ j.checklist|length }})</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
-<div class="sec">Photos ({{ j.photos|length }})</div>{% for p in j.photos %}<a href="/uploads/{{ p.filename }}" target="_blank"><img src="/uploads/{{ p.filename }}" alt="{{ p.photo_type }}"></a>{% else %}<div class="muted">None</div>{% endfor %}
+<div class="sec">Photos ({{ j.photos|length }})</div>{{ photogroups(j) }}
 </details>{% endmacro %}
 {% if client is none %}<h2>Clients</h2><a class="btn" href="/">Back to Jobs</a>
 <form class="job" method="post" action="/clients/add"><div style="font-weight:600">Add Client</div>
@@ -381,7 +496,9 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 {% else %}<h2>&#128193; {{ client }}</h2>{% if office %}<a class="btn" href="/clients">Back to Clients</a>{% else %}<a class="btn" href="/">Back to Jobs</a><div class="muted" style="margin-bottom:8px">Read-only client history</div>{% endif %}
 {% set active = jobs|rejectattr('status','equalto','completed')|list %}{% set done = jobs|selectattr('status','equalto','completed')|list %}
 <div class="job">{% if info.address %}<div>{{ info.address }}</div>{% endif %}{% if info.phone %}<div><a href="tel:{{ info.phone }}">{{ info.phone }}</a></div>{% endif %}
-<div class="muted" style="margin-top:4px">{{ active|length }} active &middot; {{ done|length }} completed</div></div>
+<div class="muted" style="margin-top:4px">{{ active|length }} active &middot; {{ done|length }} completed</div>
+<div style="margin-top:4px;font-weight:600">Total: {{ (jobs|sum(attribute='hours'))|round(2) }} hrs &middot; {{ (jobs|sum(attribute='total_miles'))|round(1) }} miles</div></div>
+<a class="btn" href="/print/client?name={{ client|urlencode }}" target="_blank">Print Summary</a>
 <div class="folder">Active Jobs</div>{% for j in active %}{{ jobcard(j, true) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
 <div class="folder">Completed Jobs</div>{% for j in done %}{{ jobcard(j, false) }}{% else %}<div class="muted">None</div>{% endfor %}
 {% endif %}
@@ -404,15 +521,94 @@ def clients_page():
             g=groups.setdefault(ckey(r['customer']),{'customer':r['customer'].strip(),'address':'','jobs':0,'active':0})
             g['jobs']+=1; g['active']+=r['status']!='completed'; g['address']=g['address'] or r['address'] or ''
         conn.close(); return render_template_string(CLIENTS_HTML, client=None, clients=sorted(groups.values(),key=lambda g:g['customer'].lower()), office=True)
-    rows=conn.execute("SELECT * FROM jobs WHERE LOWER(TRIM(customer))=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(ckey(name),)).fetchall()
-    jobs=[]
-    for r in rows:
-        d=job_dict(r); d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]; d['photos']=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(r['id'],)).fetchall()]; jobs.append(d)
+    jobs=client_jobs(conn, name)
     c=conn.execute('SELECT * FROM clients WHERE LOWER(TRIM(name))=?',(ckey(name),)).fetchone()
     conn.close()
     info={'address':(c['address'] if c and c['address'] else next((j['address'] for j in jobs if j['address']),'')),
           'phone':(c['phone'] if c and c['phone'] else next((j['phone'] for j in jobs if j['phone']),''))}
     return render_template_string(CLIENTS_HTML, client=(c['name'] if c else name).strip(), jobs=jobs, info=info, office=is_office())
+
+def client_jobs(conn, name):
+    rows=conn.execute("SELECT * FROM jobs WHERE LOWER(TRIM(customer))=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(ckey(name),)).fetchall()
+    return [job_full(conn, r) for r in rows]
+
+def job_full(conn, r):
+    d=job_dict(r)
+    d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
+    d['photos']=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(r['id'],)).fetchall()]
+    return d
+
+CAL_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Calendar</title>
+<style>body{font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:12px}
+.job{display:block;background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-bottom:8px;text-decoration:none;color:#111}
+.job-id{color:#a49f2a;font-weight:700;font-size:.8rem}.muted{color:#666}.day{font-weight:700;color:#a49f2a;margin:16px 0 6px}.today{background:#a49f2a;color:#fff;padding:2px 8px;border-radius:8px}
+.btn{display:block;flex:1;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}
+.badge{font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;background:#f0f0f0;color:#333}h2{color:#a49f2a;margin:8px 0}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<h2>Calendar</h2><a class="btn" href="/">Back to Jobs</a>
+<div style="display:flex;gap:8px"><a class="btn" href="/calendar?start={{ prev }}">&larr; Prev</a><a class="btn" href="/calendar">This Week</a><a class="btn" href="/calendar?start={{ next }}">Next &rarr;</a></div>
+{% for d in days %}<div class="day">{% if d.today %}<span class="today">{{ d.label }}</span>{% else %}{{ d.label }}{% endif %}</div>
+{% for j in d.jobs %}<a class="job" href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <span class="badge">{{ j.status_label }}</span><div style="font-weight:600">{{ j.title }}</div><div class="muted">{{ j.customer }} &middot; {{ j.tech or '-' }}</div></a>
+{% else %}<div class="muted">No jobs</div>{% endfor %}{% endfor %}
+</body></html>'''
+
+@app.route('/calendar')
+def calendar_page():
+    if not is_office(): return redirect('/')
+    t=today_local()
+    try: start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
+    except ValueError: start=t
+    start=start-timedelta(days=start.weekday())
+    end=start+timedelta(days=6)
+    conn=get_db(); rows=conn.execute('SELECT * FROM jobs WHERE scheduled_date BETWEEN ? AND ? ORDER BY scheduled_date, created_at',(start.isoformat(),end.isoformat())).fetchall(); conn.close()
+    days=[]
+    for i in range(7):
+        d=start+timedelta(days=i)
+        days.append({'label':d.strftime('%a, %b ')+str(d.day),'today':d==t,'jobs':[job_dict(r) for r in rows if r['scheduled_date']==d.isoformat()]})
+    return render_template_string(CAL_HTML, days=days, prev=(start-timedelta(days=7)).isoformat(), next=(start+timedelta(days=7)).isoformat())
+
+PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ heading }}</title>
+<style>body{font-family:-apple-system,sans-serif;color:#111;max-width:760px;margin:auto;padding:16px}h1{font-size:1.3rem;margin:8px 0}h2{font-size:1.1rem;color:#a49f2a;margin:20px 0 4px;border-bottom:2px solid #a49f2a}
+.sec{font-weight:700;margin-top:10px}.muted{color:#666}img{width:120px;height:120px;object-fit:cover;margin:4px 4px 0 0;border-radius:6px}
+.btn{display:block;width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-radius:10px;font-size:1.05rem;font-weight:600;margin:8px 0}
+.job{page-break-inside:avoid;margin-bottom:16px}@media print{.noprint{display:none}}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block">
+<button class="btn noprint" onclick="window.print()">Print</button>
+<h1>{{ heading }}</h1>{% if info %}<div>{{ info.address }}</div><div>{{ info.phone }}</div>{% endif %}
+<div class="muted">{{ jobs|length }} job{{ '' if jobs|length == 1 else 's' }} &middot; Total {{ (jobs|sum(attribute='hours'))|round(2) }} hrs &middot; {{ (jobs|sum(attribute='total_miles'))|round(1) }} miles &middot; Printed {{ printed }}</div>
+{% for j in jobs %}<div class="job"><h2>{{ j.id }} &middot; {{ j.title }}</h2>
+<div>Status: <b>{{ j.status_label }}</b> &middot; Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; Scheduled {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}</div>
+<div>{{ j.customer }} &middot; {{ j.address }}{% if j.phone %} &middot; {{ j.phone }}{% endif %}</div>
+<div>Hours: {{ j.hours }} &middot; Miles: {{ j.total_miles }}</div>
+{% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
+{% if j.notes %}<div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}
+{% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
+{% if j.materials_list or j.materials %}<div class="sec">Materials</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}
+<div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
+{% if j.updates %}<div class="sec">Daily Updates</div>{% for u in j.updates %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> {{ u.note }}</div>{% endfor %}{% endif %}
+{% for t in ['before','during','after'] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ t|capitalize }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
+{% if j.signature and j.signature.startswith('data:image/') %}<div class="sec">Customer Signature</div><img src="{{ j.signature }}" alt="signature" style="width:240px;height:auto;object-fit:contain;border:1px solid #ddd">{% endif %}
+</div>{% else %}<div class="muted">No jobs</div>{% endfor %}
+</body></html>'''
+
+@app.route('/print/job/<job_id>')
+def print_job(job_id):
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return ('Not found',404)
+    if not can_see(row): conn.close(); return ('Not your job',403)
+    j=job_full(conn,row); conn.close()
+    return render_template_string(PRINT_HTML, heading='Job Summary: '+job_id, jobs=[j], info=None, office=is_office(), printed=now_local_str())
+
+@app.route('/print/client')
+def print_client():
+    name=request.args.get('name') or ''
+    conn=get_db()
+    if not ckey(name) or not (is_office() or tech_has_client(conn, name)): conn.close(); return ('Not allowed',403)
+    jobs=client_jobs(conn, name)
+    c=conn.execute('SELECT * FROM clients WHERE LOWER(TRIM(name))=?',(ckey(name),)).fetchone(); conn.close()
+    info={'address':(c['address'] if c and c['address'] else next((j['address'] for j in jobs if j['address']),'')),
+          'phone':(c['phone'] if c and c['phone'] else next((j['phone'] for j in jobs if j['phone']),''))}
+    return render_template_string(PRINT_HTML, heading='Client Summary: '+((c['name'] if c else name).strip()), jobs=jobs, info=info, office=is_office(), printed=now_local_str())
 
 @app.route('/clients/add', methods=['POST'])
 def add_client():
