@@ -234,7 +234,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div><div id="d-created" style="color:#666;font-size:.85rem;margin-top:6px"></div></div>
 {% if office %}<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
 <div id="help-meta" class="muted" style="font-size:.85rem"></div><div id="help-text" style="white-space:pre-wrap;margin:6px 0"></div><div id="help-img"></div>
-<button class="big-btn" style="background:#b00020" onclick="resolveHelp()">Mark Resolved</button></div>{% endif %}
+</div>{% endif %}
 <button class="big-btn" style="background:#b00020;font-size:1.5rem;padding:22px" onclick="document.getElementById('help-form').classList.toggle('hidden');document.getElementById('help-note').focus()">Need Help</button>
 <div style="text-align:center;font-size:1.1rem;font-weight:600;margin:4px 0 10px">Pull down to see the answer.</div>
 <div id="help-form" class="job hidden"><textarea id="help-note" rows="4" style="font-size:1.25rem" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint="send" placeholder="Say or type what you need help with"></textarea>
@@ -347,7 +347,6 @@ document.getElementById('help-meta').textContent=(currentJob.help_by||'')+' \u00
 const im=document.getElementById('help-img');im.innerHTML='';if(currentJob.help_photo){const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(currentJob.help_photo);a.target='_blank';const i=document.createElement('img');i.src=a.href;i.style.cssText='width:120px;height:120px;object-fit:cover;border-radius:8px';a.appendChild(i);im.appendChild(a)}}
 async function sendHelp(){const fd=new FormData();fd.append('note',document.getElementById('help-note').value);
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/help',{method:'POST',body:fd});if(r.ok){Object.assign(currentJob,await r.json());document.getElementById('help-note').value='';document.getElementById('help-form').classList.add('hidden');renderHelp();alert('Sent. Pull down to see the answer.')}else alert('Error')}
-async function resolveHelp(){const r=await post('/help/resolve',{});if(r.ok){currentJob.help_open=false;renderHelp()}else alert('Error')}
 function renderBlueprints(){const el=document.getElementById('bp-list');el.innerHTML='';const b=currentJob.blueprints||[];
 b.forEach(x=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(x.filename);a.target='_blank';a.style.cssText='display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #e5e5e5;color:#111';
 if(x.image){const i=document.createElement('img');i.src=a.href;i.style.cssText='width:56px;height:56px;object-fit:cover;border-radius:6px';a.appendChild(i)}else{const ic=document.createElement('span');ic.textContent='📄';ic.style.fontSize='1.6rem';a.appendChild(ic)}
@@ -726,11 +725,6 @@ def support_resolve(job_id):
     conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,'Resolved','Issue resolved by '+me(),now_local_str())); conn.commit(); conn.close()
     return jsonify({'ok':True})
 
-@app.route('/api/jobs/<job_id>/help/resolve', methods=['POST'])
-def resolve_help(job_id):
-    if not is_office(): return jsonify({'error':'office only'}),403
-    conn=get_db(); n=conn.execute("UPDATE jobs SET help_flag='' WHERE id=?",(job_id,)).rowcount; conn.commit(); conn.close()
-    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>/blueprints', methods=['POST'])
 def upload_blueprints(job_id):
