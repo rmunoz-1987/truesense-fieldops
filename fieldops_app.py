@@ -17,7 +17,7 @@ app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
-SURVEY_TEXT = ['contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
+SURVEY_TEXT = ['want_desc', 'contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
 SURVEY_OBSTACLES = ['Lift needed', 'Concrete', 'Long runs', 'Access issues']
 
 def clean_survey(raw):
@@ -147,7 +147,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -249,16 +249,18 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <a id="history" class="big-btn gray">Client History</a>
 <a id="print" class="big-btn gray" target="_blank">Print Summary</a>
 <div class="job"><div style="font-weight:600">Job Type</div>{% if office %}<select id="jtype" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setType(this.value)"><option value="">(not set)</option>{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>{% else %}<div id="jtype-label" style="margin:6px 0"></div>{% endif %}</div>
-<div class="job hidden" id="survey-card"><div style="font-weight:600;font-size:1.05rem">Estimating Site Survey</div>
-<div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
-<div class="ptitle">Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
-<div class="ptitle">Photos</div><div class="big-btn" onclick="document.getElementById('survey').click()">Add Photos</div>
+<div class="job hidden" id="survey-card"><div style="font-weight:800;font-size:1.4rem">Site Survey for Estimate</div>
+<div class="ptitle" style="font-size:1.2rem">1. Photos</div><div class="big-btn" onclick="document.getElementById('survey').click()">Add Photos</div>
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
-<div class="ptitle">Obstacles / Notes</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
+<div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
+<div class="ptitle" style="font-size:1.2rem">3. Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
+<div class="ptitle" style="font-size:1.2rem">4. Obstacles</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
 <textarea id="sv-obstacle_notes" rows="3" placeholder="Other obstacles / notes"></textarea>
+<div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 <div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
-<button class="big-btn" onclick="saveSurvey()">Save Survey</button></div>
+<button class="big-btn" onclick="saveSurvey()">Save Survey</button>
+{% if office %}<div id="kelly-box"><button id="kelly-btn" class="big-btn" style="background:#6a1b9a;font-size:1.3rem" onclick="sendKelly()">Send to Kelly</button><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div>
 <div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
 <div class="job hidden" id="bp-card"><div style="font-weight:600;margin-bottom:6px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
@@ -373,7 +375,7 @@ const body={mode:mode,hours:h.value||(mode==='set'?currentJob.hours:0),miles:m.v
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;h.value='';m.value='';renderTotals()}else alert('Error')}
 async function setStatus(v){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:v})});
-if(r.ok){currentJob.status=v}else{alert('Error');document.getElementById('status').value=currentJob.status}}
+if(r.ok){currentJob.status=v;renderKelly()}else{alert('Error');document.getElementById('status').value=currentJob.status}}
 async function savePrivate(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/private-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_notes:document.getElementById('private-notes').value})});alert(r.ok?'Saved':'Error')}
 function renderTicks(elId,items,save,removable){const el=document.getElementById(elId);el.innerHTML='';
 items.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';const c=document.createElement('input');c.type='checkbox';c.checked=x.done;c.onchange=()=>{x.done=c.checked;save()};
@@ -381,9 +383,12 @@ const s=document.createElement('span');s.textContent=x.text;l.append(c,s);if(rem
 if(!items.length)el.innerHTML='<div class="muted">None yet</div>'}
 function post(path,body){return fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 const savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
-const SV_TEXT=['contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'];
+const SV_TEXT=['want_desc','contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'];
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
-function fillSurvey(){const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
+function renderKelly(){const b=document.getElementById('kelly-btn');if(!b)return;const n=document.getElementById('kelly-note');const done=currentJob.status==='completed';
+b.classList.toggle('hidden',!done||!!currentJob.kelly_at);n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:(done?'':'Complete the survey to send it to Kelly');}
+async function sendKelly(){const r=await post('/send-kelly',{});if(r.ok){Object.assign(currentJob,await r.json());renderKelly()}else alert('Error')}
+function fillSurvey(){renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
 document.querySelectorAll('.sv-ob').forEach(c=>c.checked=(s.obstacles||[]).includes(c.value));const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
 async function saveSurvey(){const s={obstacles:[...document.querySelectorAll('.sv-ob')].filter(c=>c.checked).map(c=>c.value)};SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
@@ -482,6 +487,15 @@ def save_survey(job_id):
     form=clean_survey((request.get_json(silent=True) or {}).get('survey'))
     conn.execute('UPDATE jobs SET survey_form=? WHERE id=?',(json.dumps(form),job_id)); conn.commit(); conn.close()
     return jsonify({'ok':True})
+
+@app.route('/api/jobs/<job_id>/send-kelly', methods=['POST'])
+def send_kelly(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); row=conn.execute('SELECT job_type,status FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return ('',404)
+    if row['job_type']!='Survey' or row['status']!='completed': conn.close(); return jsonify({'error':'completed surveys only'}),400
+    at=now_local_str(); conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(at,me(),job_id)); conn.commit(); conn.close()
+    return jsonify({'kelly_at':at,'kelly_by':me()})
 
 @app.route('/api/jobs/<job_id>/survey-office', methods=['POST'])
 def save_survey_office(job_id):
@@ -783,6 +797,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes or '' }}</div>{% if not j.notes %}<div class="muted">None</div>{% endif %}
 {% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
+{% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
 <div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
 <div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
@@ -894,6 +909,7 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% if j.notes %}<div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}
 {% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
+{% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
 <div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
 <div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
