@@ -54,8 +54,15 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 textarea,input{width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem}
 canvas{border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body>
-<div class="header"><h1>True Sense</h1><div class="sub">Field Ops</div></div>
+<div class="header"><h1>True Sense Security</h1><div class="sub">Field Ops</div></div>
 <div id="list"></div>
+<div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
+<input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
+<input type="text" id="n-title" placeholder="Title">
+<input type="text" id="n-customer" placeholder="Customer">
+<input type="text" id="n-address" placeholder="Address">
+<textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
+<button class="big-btn" onclick="addJob()">Add Job</button></div>
 <div id="detail" class="hidden">
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div></div>
 <a id="directions" class="big-btn" target="_blank">Directions</a>
@@ -90,8 +97,8 @@ document.getElementById('d-id').textContent=currentJob.id;document.getElementByI
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
 document.getElementById('d-scope').textContent=currentJob.scope||'';
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
-document.getElementById('list').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
-function showList(){document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');load()}
+document.getElementById('list').classList.add('hidden');document.getElementById('office').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
+function showList(){document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');document.getElementById('office').classList.remove('hidden');load()}
 function preview(inp,el){document.getElementById(el).innerHTML='';[...inp.files].forEach(f=>{const i=document.createElement('img');i.src=URL.createObjectURL(f);i.style.width='70px';i.style.height='70px';i.style.objectFit='cover';i.style.borderRadius='8px';document.getElementById(el).appendChild(i)})}
 document.getElementById('before').onchange=e=>preview(e.target,'before-preview');
 document.getElementById('after').onchange=e=>preview(e.target,'after-preview');
@@ -103,6 +110,11 @@ fd.append('signature',canvas.toDataURL());
 [...document.getElementById('after').files].forEach(f=>fd.append('after',f));
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
 if(r.ok){alert('Job finished');showList()}else alert('Error')};
+async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
+const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),scope:v('scope')};
+if(!body.id||!body.title){alert('Job ID and title are required');return}
+const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+if(r.ok){['id','title','customer','address','scope'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
 </script></body></html>'''
 
@@ -114,6 +126,19 @@ def list_jobs():
     status=request.args.get('status','assigned')
     conn=get_db(); rows=conn.execute('SELECT * FROM jobs WHERE status=? ORDER BY created_at DESC',(status,)).fetchall(); conn.close()
     return jsonify([dict(r) for r in rows])
+
+@app.route('/api/jobs', methods=['POST'])
+def create_job():
+    d=request.get_json(silent=True) or request.form
+    jid=(d.get('id') or '').strip(); title=(d.get('title') or '').strip()
+    if not jid or not title: return jsonify({'error':'Job ID and title are required'}),400
+    conn=get_db()
+    if conn.execute('SELECT 1 FROM jobs WHERE id=?',(jid,)).fetchone():
+        conn.close(); return jsonify({'error':'That Job ID already exists'}),409
+    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at) VALUES (?,?,?,?,?,?,?,?)',
+                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat()))
+    conn.commit(); conn.close()
+    return jsonify({'ok':True,'id':jid}),201
 
 @app.route('/api/jobs/<job_id>')
 def get_job(job_id):
