@@ -159,8 +159,9 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, address TEXT, phone TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS support_replies (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, note TEXT, created_at TEXT)''')
-    try: conn.execute("ALTER TABLE support_replies ADD COLUMN author TEXT DEFAULT 'Tech Support'")
-    except: pass
+    for col in ["author TEXT DEFAULT 'Tech Support'", "kind TEXT"]:
+        try: conn.execute(f"ALTER TABLE support_replies ADD COLUMN {col}")
+        except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS job_updates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -320,11 +321,11 @@ async function sendSupport(){const n=document.getElementById('support-note');if(
 async function resolveSupport(){if(!confirm('Mark this issue resolved?'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/support/resolve',{method:'POST'});if(r.ok){currentJob.help_open=false;renderHelp();loadSupport()}else alert('Error')}
 async function loadSupport(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/support');const u=r.ok?await r.json():[];const el=document.getElementById('support');el.innerHTML='';
 const entry=x=>{const d=document.createElement('div');d.style.cssText='padding:10px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:1rem;font-weight:700;color:'+(x.author==='Tech Support'?'#1565c0':'#333');m.textContent=x.author+' \u00b7 '+x.created_at;const t=document.createElement('div');t.style.cssText='white-space:pre-wrap;font-size:1.25rem;line-height:1.5';t.textContent=x.note;d.append(m,t);return d};
-const threads=[];let cur=[];u.slice().reverse().forEach(x=>{if(x.author==='Resolved'){threads.push({items:cur,done:x});cur=[]}else cur.push(x)});
+const threads=[];let cur=[];u.slice().reverse().forEach(x=>{if(x.author==='Resolved'){threads.push({items:cur,done:x});cur=[]}else{if(x.kind==='help'&&cur.length){threads.push({items:cur,done:null});cur=[]}cur.push(x)}});
 cur.slice().reverse().forEach(x=>el.appendChild(entry(x)));
 if(!cur.length)el.innerHTML='<div style="color:#666;font-size:1.1rem;padding:6px 0">No open help request</div>';
 threads.reverse().forEach(th=>{const det=document.createElement('details');det.style.cssText='margin-top:6px;background:#e8f5e9;border-radius:8px;padding:6px 8px';const sm=document.createElement('summary');sm.style.cssText='font-size:.9rem;color:#2e7d32;cursor:pointer';
-const first=th.items.find(x=>x.author!=='Tech Support');let desc=(first?first.note:'').replace(/\s+/g,' ');if(desc.length>40)desc=desc.slice(0,40)+'\u2026';sm.textContent='Resolved \u00b7 '+(desc||'help request')+' \u00b7 '+th.done.created_at;det.appendChild(sm);
+const first=th.items.find(x=>x.author!=='Tech Support');let desc=(first?first.note:'').replace(/\s+/g,' ');if(desc.length>40)desc=desc.slice(0,40)+'\u2026';sm.textContent=(th.done?'Resolved':'Earlier')+' \u00b7 '+(desc||'help request')+' \u00b7 '+(th.done?th.done.created_at:th.items[th.items.length-1].created_at);if(!th.done){det.style.background='#f0f0f0';sm.style.color='#555'}det.appendChild(sm);
 th.items.slice().reverse().forEach(x=>det.appendChild(entry(x)));el.appendChild(det)})}
 async function loadUpdates(){const r=await fetch('/api/jobs/'+currentJob.id+'/updates');const u=r.ok?await r.json():[];const el=document.getElementById('updates');el.innerHTML='';
 u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.8rem;color:#666';m.textContent=x.created_at+' \u00b7 '+x.author;const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=x.note;d.append(m,t);el.appendChild(d)});
@@ -658,8 +659,7 @@ def need_help(job_id):
         fn=last['filename'] if last else ''
     conn.execute("UPDATE jobs SET help_flag='open',help_note=?,help_at=?,help_by=?,help_photo=? WHERE id=?",(note,now_local_str(),me(),fn,job_id))
     conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
-    if note:
-        conn=get_db(); conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit(); conn.close()
+    conn=get_db(); conn.execute("INSERT INTO support_replies (job_id,author,note,created_at,kind) VALUES (?,?,?,?,'help')",(job_id,me(),note or 'Need Help',now_local_str())); conn.commit(); conn.close()
     notify_tech_support(j, fn)
     return jsonify({k:j[k] for k in ('help_open','help_note','help_at','help_by','help_photo')})
 
@@ -688,7 +688,7 @@ def support_list(job_id):
         last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
         j=dict(job_dict(row)); j['help_by']=me(); j['help_note']=note
         notify_tech_support(j, last['filename'] if last else '')
-    rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
+    rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at,IFNULL(kind,'') AS kind FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
     return jsonify(rows)
 
 def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
