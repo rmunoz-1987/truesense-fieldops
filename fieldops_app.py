@@ -166,6 +166,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div></div>
 <a id="directions" class="big-btn" target="_blank">Directions</a>
 <a id="call" class="big-btn gray">Call Customer</a>
+<a id="history" class="big-btn gray">Client History</a>
 <div class="big-btn" onclick="document.getElementById('before').click()">Before Photos</div>
 <input type="file" id="before" accept="image/*" multiple capture="environment" style="display:none">
 <div id="before-preview" style="display:flex;gap:8px;flex-wrap:wrap"></div>
@@ -210,6 +211,7 @@ document.getElementById('d-id').textContent=currentJob.id;document.getElementByI
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
 document.getElementById('d-scope').textContent=currentJob.scope||'';renderChecklist();
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
+document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
 document.getElementById('list').classList.add('hidden');document.getElementById('office').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');clearSig()}
 function showList(){document.getElementById('detail').classList.add('hidden');document.getElementById('list').classList.remove('hidden');document.getElementById('office').classList.remove('hidden');load()}
@@ -323,7 +325,7 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 {% for c in clients %}<a class="job client" href="/clients?name={{ c.customer|urlencode }}"><div style="font-weight:600">{{ c.customer }}</div>
 <div class="muted">{{ c.address or '' }}</div><div class="muted">{{ c.jobs }} job{{ '' if c.jobs == 1 else 's' }}, {{ c.active }} active</div></a>
 {% else %}<div class="job">No clients yet</div>{% endfor %}
-{% else %}<h2>{{ client }}</h2><a class="btn" href="/clients">Back to Clients</a>
+{% else %}<h2>{{ client }}</h2>{% if office %}<a class="btn" href="/clients">Back to Clients</a>{% else %}<a class="btn" href="/">Back to Jobs</a><div class="muted" style="margin-bottom:8px">Read-only client history</div>{% endif %}
 <div class="job">{% if info.address %}<div>{{ info.address }}</div>{% endif %}{% if info.phone %}<div><a href="tel:{{ info.phone }}">{{ info.phone }}</a></div>{% endif %}</div>
 {% for j in jobs %}<div class="job"><div class="job-id">{{ j.id }} &middot; {{ 'Completed' if j.status == 'completed' else 'Active' }}</div>
 <div style="font-weight:600">{{ j.title }}</div><div class="muted">Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}</div>
@@ -335,10 +337,13 @@ CLIENTS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="v
 </div>{% else %}<div class="job">No jobs</div>{% endfor %}{% endif %}
 </body></html>'''
 
+def tech_has_client(conn, customer):
+    return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE customer=?',(customer,)).fetchall())
+
 @app.route('/clients')
 def clients_page():
-    if not is_office(): return redirect('/')
     conn=get_db(); name=request.args.get('name')
+    if not is_office() and (name is None or not tech_has_client(conn, name)): conn.close(); return redirect('/')
     if name is None:
         rows=conn.execute("SELECT customer, MAX(address) AS address, COUNT(*) AS jobs, SUM(status!='completed') AS active FROM jobs WHERE IFNULL(customer,'')!='' GROUP BY customer ORDER BY LOWER(customer)").fetchall()
         conn.close(); return render_template_string(CLIENTS_HTML, client=None, clients=rows)
@@ -348,11 +353,14 @@ def clients_page():
         d=job_dict(r); d['photos']=[dict(p) for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=? ORDER BY id',(r['id'],)).fetchall()]; jobs.append(d)
     conn.close()
     info={'address':next((j['address'] for j in jobs if j['address']),''),'phone':next((j['phone'] for j in jobs if j['phone']),'')}
-    return render_template_string(CLIENTS_HTML, client=name, jobs=jobs, info=info)
+    return render_template_string(CLIENTS_HTML, client=name, jobs=jobs, info=info, office=is_office())
 
 @app.route('/uploads/<path:fn>')
 def uploads(fn):
-    if not is_office(): return ('',403)
+    if not is_office():
+        conn=get_db(); r=conn.execute('SELECT j.customer FROM photos p JOIN jobs j ON j.id=p.job_id WHERE p.filename=?',(fn,)).fetchone()
+        ok=bool(r) and tech_has_client(conn, r['customer']); conn.close()
+        if not ok: return ('',403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], secure_filename(fn))
 
 @app.route('/api/invoice-drafts')
