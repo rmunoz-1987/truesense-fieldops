@@ -168,7 +168,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="text" id="n-customer" placeholder="Customer">
 <input type="text" id="n-address" placeholder="Address">
 <input type="tel" id="n-phone" placeholder="Customer phone">
-<input type="text" id="n-tech" placeholder="Tech name (e.g. Mike)">
+<select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in techs %}<option value="{{ t }}">{{ t }}</option>{% else %}<option value="">No techs set in Render</option>{% endfor %}</select>
 <textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
 <div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
 <textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
@@ -195,7 +195,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="number" id="hours" placeholder="Hours" step="0.25">
 <input type="number" id="miles" placeholder="Miles" step="0.1">
 <button class="big-btn green" id="finish">Finish Job</button>
-{% if office %}<button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button>
+{% if office %}<select id="r-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in techs %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+<button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button>
 <button class="big-btn" style="background:#b00020" onclick="deleteJob()">Delete Job</button>{% endif %}
 <button class="big-btn gray" onclick="showList()">Back</button>
 </div>
@@ -228,7 +229,7 @@ if(!u.length)el.innerHTML='<div style="color:#666">No updates yet</div>'}
 async function saveUpdate(){const n=document.getElementById('update-note');if(!n.value.trim())return;
 const r=await fetch('/api/jobs/'+currentJob.id+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});
 if(r.ok){n.value='';loadUpdates()}else alert('Error')}
-async function reassignJob(){const t=prompt('New tech name',currentJob.tech||'');if(!t||!t.trim())return;
+async function reassignJob(){const t=document.getElementById('r-tech').value;if(!t||!t.trim())return;
 const r=await fetch('/api/jobs/'+currentJob.id+'/reassign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tech:t.trim()})});
 if(r.ok){currentJob.tech=t.trim();alert('Reassigned to '+t.trim())}else alert('Error')}
 async function deleteJob(){if(!confirm('Delete job '+currentJob.id+'? This cannot be undone.'))return;
@@ -236,7 +237,7 @@ const r=await fetch('/api/jobs/'+currentJob.id,{method:'DELETE'});if(r.ok){showL
 async function openJob(id){const r=await fetch('/api/jobs/'+id);currentJob=await r.json();
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -257,12 +258,12 @@ async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
 const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(r.ok){['id','title','customer','address','phone','tech','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+if(r.ok){['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
 </script></body></html>'''
 
 @app.route('/')
-def index(): return render_template_string(HTML, name=me(), office=is_office())
+def index(): return render_template_string(HTML, name=me(), office=is_office(), techs=sorted(k.title() for k in USERS if k not in OFFICE_NAMES))
 
 @app.route('/api/jobs')
 def list_jobs():
