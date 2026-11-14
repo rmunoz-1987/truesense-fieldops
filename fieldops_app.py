@@ -684,6 +684,8 @@ def support_list(job_id):
     if request.method=='POST':
         note=str((request.get_json(silent=True) or {}).get('note') or '').strip()[:2000]
         if not note: conn.close(); return jsonify({'error':'note required'}),400
+        lastrow=conn.execute('SELECT author FROM support_replies WHERE job_id=? ORDER BY id DESC LIMIT 1',(job_id,)).fetchone()
+        if not lastrow or lastrow['author']=='Resolved': conn.close(); return jsonify({'error':'No open thread. Use Need Help to start a new one.'}),409
         conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit()
         last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
         j=dict(job_dict(row)); j['help_by']=me(); j['help_note']=note
