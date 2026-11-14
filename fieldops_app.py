@@ -98,6 +98,8 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, filename TEXT,
         photo_type TEXT, uploaded_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
+        job_id TEXT PRIMARY KEY, package TEXT, status TEXT DEFAULT 'ready_for_review', created_at TEXT)''')
     count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
     if count == 0:
         now = datetime.utcnow().isoformat()
@@ -291,8 +293,29 @@ def complete(job_id):
                 fn=f"{job_id}_{ptype}_{uuid.uuid4().hex[:8]}.jpg"
                 f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
                 conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,ptype,now))
+    conn.commit()
+    j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    photos=[{'filename':p['filename'],'type':p['photo_type']} for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=?',(job_id,)).fetchall()]
+    pkg={'job_id':job_id,'customer':j['customer'],'phone':j['phone'],'address':j['address'],'title':j['title'],'scope':j['scope'],
+         'tech':j['tech'],'materials':j['materials'] or '','hours':round((j['total_minutes'] or 0)/60,2),'miles':j['total_miles'] or 0,
+         'notes':j['notes'] or '','photos':photos,'completed_at':j['completed_at'],'status':'ready_for_review (not sent)'}
+    conn.execute('INSERT OR REPLACE INTO invoice_drafts (job_id,package,status,created_at) VALUES (?,?,?,?)',(job_id,json.dumps(pkg),'ready_for_review',now))
     conn.commit(); conn.close()
-    return jsonify({'ok':True})
+    app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
+    return jsonify({'ok':True,'invoice_draft':pkg})
+
+@app.route('/api/invoice-drafts')
+def list_invoice_drafts():
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); rows=conn.execute('SELECT * FROM invoice_drafts ORDER BY created_at DESC').fetchall(); conn.close()
+    return jsonify([dict(json.loads(r['package']),draft_status=r['status'],draft_created_at=r['created_at']) for r in rows])
+
+@app.route('/api/jobs/<job_id>/invoice-draft')
+def get_invoice_draft(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); r=conn.execute('SELECT * FROM invoice_drafts WHERE job_id=?',(job_id,)).fetchone(); conn.close()
+    if not r: return ('',404)
+    return jsonify(dict(json.loads(r['package']),draft_status=r['status'],draft_created_at=r['created_at']))
 
 if __name__=='__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
