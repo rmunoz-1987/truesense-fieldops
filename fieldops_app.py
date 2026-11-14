@@ -15,7 +15,7 @@ OFFICE_NAMES = [n.strip().lower() for n in os.environ.get('OFFICE_NAMES', 'Rolan
 app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + json.dumps(sorted(USERS.items()))).encode()).hexdigest()
 app.permanent_session_lifetime = timedelta(days=30)
 
-DEFAULT_CHECKLIST = ['Site walk with customer', 'Work complete per scope', 'Tested and working', 'Work area cleaned up', 'Customer walkthrough']
+DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 
 def today_local():
     try:
@@ -31,7 +31,9 @@ def parse_checklist(raw):
         items = None
     if not items:
         items = [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST]
-    return [{'text': str(i.get('text', '')), 'done': bool(i.get('done'))} for i in items if isinstance(i, dict) and i.get('text')]
+    out = [{'text': str(i.get('text', '')), 'done': bool(i.get('done'))} for i in items if isinstance(i, dict) and i.get('text')]
+    have = {i['text'] for i in out}
+    return out + [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST if t not in have]
 
 def job_dict(row):
     d = dict(row); d['checklist'] = parse_checklist(d.get('checklist')); return d
