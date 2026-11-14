@@ -1,9 +1,33 @@
-from flask import Flask, request, jsonify, send_from_directory, render_template_string
-import sqlite3, os, uuid
-from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect, g
+import sqlite3, os, uuid, hashlib, hmac, time
+from datetime import datetime, timedelta
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+
+# ---- Users and login (no secrets in code; everything comes from env) ----
+# FIELDOPS_USERS="Name:role:password;Name:role:password"  role = office | tech
+def parse_users(raw):
+    users = {}
+    for part in (raw or '').split(';'):
+        bits = [b.strip() for b in part.split(':', 2)]
+        if len(bits) != 3: continue
+        name, role, pw = bits
+        role = role.lower()
+        if name and pw and role in ('office', 'tech'):
+            users[name.lower()] = {'name': name, 'role': role, 'password': pw}
+    return users
+
+_USERS_RAW = os.environ.get('FIELDOPS_USERS', '')
+USERS = parse_users(_USERS_RAW)
+app.secret_key = os.environ.get('FIELDOPS_SECRET_KEY') or (
+    hashlib.sha256(('fieldops-session:' + _USERS_RAW).encode()).hexdigest() if USERS else os.urandom(32).hex())
+app.config.update(
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=bool(os.environ.get('RENDER')),
+)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -38,6 +62,92 @@ def init_db():
 
 init_db()
 
+# ---- Access control ----
+SETUP_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Setup required</title></head>
+<body style="font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:24px;text-align:center">
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<div style="color:#a49f2a;font-weight:600;margin-bottom:24px">Field Ops</div>
+<p>Setup required: add FIELDOPS_USERS in Render, Environment</p></body></html>"""
+
+LOGIN_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>True Sense Field Ops - Sign in</title>
+<style>body{font-family:-apple-system,sans-serif;background:#fcfcfc;color:#111;max-width:420px;margin:auto;padding:24px}
+input{width:100%;box-sizing:border-box;padding:14px;border:1px solid #e5e5e5;border-radius:10px;margin:8px 0;font-size:1rem}
+button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-radius:10px;font-size:1.05rem;font-weight:600;margin-top:8px}
+.err{color:#b00020;margin:8px 0}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<div style="color:#a49f2a;font-weight:600;margin-bottom:24px;text-align:center">Field Ops</div>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<form method="post" action="/login">
+<input name="name" placeholder="Name" autocomplete="username" autocapitalize="none" required value="{{ name }}">
+<input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+<button type="submit">Sign in</button></form></body></html>"""
+
+_failed = {}  # ip -> [timestamps] simple brute-force throttle
+def _client_ip():
+    return (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
+
+def current_user():
+    u = USERS.get((session.get('u') or '').lower())
+    return u
+
+def is_office():
+    u = getattr(g, 'user', None)
+    return bool(u and u['role'] == 'office')
+
+def api_token_ok():
+    token = os.environ.get('FIELDOPS_API_TOKEN', '')
+    auth = request.headers.get('Authorization', '')
+    if not token or not auth.startswith('Bearer '): return False
+    return hmac.compare_digest(auth[7:].strip().encode(), token.encode())
+
+OPEN_ENDPOINTS = {'healthz', 'login', 'logout'}
+
+@app.before_request
+def require_login():
+    g.user = None; g.token = False
+    if request.endpoint == 'healthz': return
+    api = request.path.startswith('/api/') or request.path.startswith('/uploads/')
+    if not USERS:
+        if api: return jsonify({'error': 'Setup required: add FIELDOPS_USERS in Render, Environment'}), 503
+        return SETUP_HTML, 503
+    if request.endpoint in OPEN_ENDPOINTS: return
+    g.user = current_user()
+    if g.user: return
+    if request.path.startswith('/api/invoice-queue') and api_token_ok():
+        g.token = True; return
+    if api: return jsonify({'error': 'login required'}), 401
+    return redirect('/login')
+
+@app.route('/healthz')
+def healthz(): return jsonify({'ok': True, 'configured': bool(USERS)})
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'GET':
+        if current_user(): return redirect('/')
+        return render_template_string(LOGIN_HTML, error=None, name='')
+    ip = _client_ip(); now = time.time()
+    recent = [t for t in _failed.get(ip, []) if now - t < 900]
+    name = (request.form.get('name') or '').strip()
+    if len(recent) >= 10:
+        return render_template_string(LOGIN_HTML, error='Too many tries. Wait 15 minutes.', name=name), 429
+    pw = request.form.get('password') or ''
+    u = USERS.get(name.lower())
+    ok = hmac.compare_digest(pw.encode(), (u['password'] if u else 'x' * 24).encode()) and u is not None
+    if not ok:
+        recent.append(now); _failed[ip] = recent
+        return render_template_string(LOGIN_HTML, error='Wrong name or password.', name=name), 401
+    _failed.pop(ip, None)
+    session.clear(); session.permanent = True; session['u'] = name.lower()
+    return redirect('/')
+
+@app.route('/logout', methods=['GET', 'POST'])
+def logout():
+    session.clear(); return redirect('/login')
+
+@app.route('/api/me')
+def me(): return jsonify({'name': g.user['name'], 'role': g.user['role']})
+
 HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>True Sense Field</title>
 <style>
 :root{--bg:#fcfcfc;--card:#fff;--accent:#a49f2a;--text:#111;--muted:#666;--border:#e5e5e5}
@@ -52,11 +162,12 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .big-btn.green{background:#2d6a4f}
 .hidden{display:none}
 textarea,input{width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem}
-canvas{border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
+canvas#sig{display:block;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px;box-sizing:border-box;touch-action:none;-ms-touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;overscroll-behavior:contain}
 </style></head><body>
 <div class="header">
   <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
   <div class="sub">Field Ops</div>
+  <div id="who" style="font-size:.85rem;color:#666;margin-top:4px"></div>
 </div>
 <div id="list"></div>
 <div id="office" class="job"><div style="font-weight:600;margin-bottom:4px">Add New Job (Office)</div>
@@ -86,13 +197,27 @@ canvas{border:2px dashed var(--border);border-radius:10px;background:#fafafa;wid
 <button class="big-btn gray" onclick="showList()">Back</button>
 </div>
 <script>
-let currentJob=null; const canvas=document.getElementById('sig'); const ctx=canvas.getContext('2d'); let drawing=false;
-function resize(){const r=canvas.getBoundingClientRect();canvas.width=r.width;canvas.height=160;ctx.strokeStyle='#111';ctx.lineWidth=2;ctx.lineCap='round'}
-resize(); window.addEventListener('resize',resize);
-canvas.onpointerdown=e=>{drawing=true;ctx.beginPath();ctx.moveTo(e.offsetX,e.offsetY)};
-canvas.onpointermove=e=>{if(drawing){ctx.lineTo(e.offsetX,e.offsetY);ctx.stroke()}};
-canvas.onpointerup=()=>drawing=false;
-function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
+let currentJob=null;
+// ---- Signature pad: touch on the canvas only draws, never scrolls ----
+const canvas=document.getElementById('sig'); const ctx=canvas.getContext('2d');
+let drawing=false, sigDrawn=false, last=null, sigW=0;
+function sizeSig(force){const r=canvas.getBoundingClientRect();if(!r.width)return;
+ if(!force&&Math.round(r.width)===sigW)return; sigW=Math.round(r.width);
+ const dpr=window.devicePixelRatio||1;canvas.width=Math.round(r.width*dpr);canvas.height=Math.round(r.height*dpr);
+ ctx.setTransform(dpr,0,0,dpr,0,0);ctx.strokeStyle='#111';ctx.fillStyle='#111';ctx.lineWidth=2.5;ctx.lineCap='round';ctx.lineJoin='round';sigDrawn=false}
+function pt(e){const r=canvas.getBoundingClientRect();const dpr=window.devicePixelRatio||1;
+ return {x:(e.clientX-r.left)*(canvas.width/dpr)/r.width, y:(e.clientY-r.top)*(canvas.height/dpr)/r.height}}
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();try{canvas.setPointerCapture(e.pointerId)}catch(_){}
+ drawing=true;last=pt(e);ctx.beginPath();ctx.arc(last.x,last.y,1.25,0,Math.PI*2);ctx.fill();sigDrawn=true});
+canvas.addEventListener('pointermove',e=>{if(!drawing)return;e.preventDefault();
+ const evs=e.getCoalescedEvents?e.getCoalescedEvents():[e];
+ for(const ev of (evs.length?evs:[e])){const p=pt(ev);ctx.beginPath();ctx.moveTo(last.x,last.y);ctx.lineTo(p.x,p.y);ctx.stroke();last=p}
+ sigDrawn=true});
+function endSig(e){if(!drawing)return;drawing=false;try{canvas.releasePointerCapture(e.pointerId)}catch(_){}}
+canvas.addEventListener('pointerup',endSig);canvas.addEventListener('pointercancel',endSig);
+['touchstart','touchmove','touchend'].forEach(t=>canvas.addEventListener(t,e=>{if(e.cancelable)e.preventDefault()},{passive:false}));
+window.addEventListener('resize',()=>sizeSig(false));
+function clearSig(){sizeSig(true);ctx.clearRect(0,0,canvas.width,canvas.height);sigDrawn=false}
 async function load(){const r=await fetch('/api/jobs?status=assigned');const jobs=await r.json();
 document.getElementById('list').innerHTML=jobs.map(j=>`<div class="job"><div class="job-id">${j.id}</div><div style="font-weight:600">${j.title}</div><div style="color:#666">${j.customer}</div><div style="color:#666">${j.address}</div><button class="big-btn" onclick="openJob('${j.id}')">Open Job</button></div>`).join('')||'<div class="job">No jobs</div>'}
 async function openJob(id){const r=await fetch('/api/jobs/'+id);currentJob=await r.json();
@@ -108,7 +233,7 @@ document.getElementById('after').onchange=e=>preview(e.target,'after-preview');
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
 fd.append('notes',document.getElementById('notes').value);fd.append('materials',document.getElementById('materials').value);
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',document.getElementById('miles').value||0);
-fd.append('signature',canvas.toDataURL());
+if(sigDrawn)fd.append('signature',canvas.toDataURL('image/png'));
 [...document.getElementById('before').files].forEach(f=>fd.append('before',f));
 [...document.getElementById('after').files].forEach(f=>fd.append('after',f));
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
@@ -118,6 +243,7 @@ const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('addres
 if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){['id','title','customer','address','scope'].forEach(k=>document.getElementById('n-'+k).value='');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+fetch('/api/me').then(r=>r.json()).then(u=>{document.getElementById('who').innerHTML='Signed in as '+u.name+' &middot; <a href="/logout" style="color:#a49f2a">Log out</a>';if(u.role!=='office')document.getElementById('office').classList.add('hidden')});
 load();
 </script></body></html>'''
 
@@ -132,6 +258,7 @@ def list_jobs():
 
 @app.route('/api/jobs', methods=['POST'])
 def create_job():
+    if not is_office(): return jsonify({'error':'office only'}),403
     d=request.get_json(silent=True) or request.form
     jid=(d.get('id') or '').strip(); title=(d.get('title') or '').strip()
     if not jid or not title: return jsonify({'error':'Job ID and title are required'}),400
@@ -152,9 +279,11 @@ def get_job(job_id):
 def complete(job_id):
     notes=request.form.get('notes',''); materials=request.form.get('materials','')
     hours=float(request.form.get('hours') or 0); miles=float(request.form.get('miles') or 0)
-    sig=request.form.get('signature',''); minutes=int(hours*60)
+    sig=request.form.get('signature','')
+    if not sig.startswith('data:image/png;base64,') or len(sig)>2_000_000: sig=None
+    minutes=int(hours*60)
     conn=get_db(); now=datetime.utcnow().isoformat()
-    conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
+    conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=COALESCE(?,signature),total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                  ('completed',notes,materials,sig,minutes,miles,now,job_id))
     for key,ptype in [('before','before'),('after','after')]:
         for f in request.files.getlist(key):
