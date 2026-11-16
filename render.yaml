@@ -8,3 +8,14 @@ services:
     startCommand: python fieldops_app.py
     autoDeployTrigger: commit
     healthCheckPath: /healthz
+    disk:
+      name: fieldops-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: DB_PATH
+        value: /var/data/fieldops.db
+      - key: UPLOAD_FOLDER
+        value: /var/data/uploads
