@@ -17,6 +17,20 @@ app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
+# Built-in checklist templates: (name, job type, steps). Seeded once by name; office edits and deletes are kept.
+BUILTIN_TEMPLATES = [
+    ('Site Survey', 'Survey', ['Meet the client contact and get their name and phone', 'Photo of the main entry and the building outside', 'Find the MDF and IDF rooms and take photos', 'Mark where power outlets are for new gear', 'Mark where network switches and open ports are', 'Note ceiling type and height in each area', 'Note wall and mounting surfaces (drywall, block, brick, metal)', 'Plan cable paths and note hard spots (firewalls, long runs, lifts)', 'Photo and list existing equipment (cameras, panels, NVR, intercom)', 'Ask what the client wants and any deadline', 'Put every device on the plan markup', 'Take photos of each device spot']),
+    ('General Install', 'Install', ['Check the plan and scope with the client', 'Confirm power and network are ready', 'Mount devices per the plan', 'Pull and terminate cables', 'Label cables and devices', 'Test every device', 'Program and set up the system', 'Update the as-built with any changes', 'Take after photos', 'Show the client how it works']),
+    ('Camera Install', 'Install', ['Check the camera plan and spots with the client', 'Mount cameras', 'Pull and terminate cable', 'Test each cable', 'Confirm PoE power at each camera', 'Add every camera to the NVR', 'Aim and focus each camera', 'Set recording and check retention days', 'Set up the remote view app on the client phone', 'Label cameras and cables', 'Update the as-built', 'Take photos of each camera view']),
+    ('Access Control Install', 'Install', ['Check door hardware and frames on every door', 'Confirm lock type and lock power needed', 'Install locks or strikes', 'Install readers', 'Install REX and door position switches', 'Wire the panel and power supply', 'Tie in to the fire alarm if required', 'Enroll credentials for all users', 'Set door schedules', 'Test every door: badge, REX, door held, forced', 'Update the as-built', 'Train the client on the software']),
+    ('Intercom Install', 'Install', ['Check the intercom plan with the client', 'Mount door stations', 'Mount inside stations or set up the app', 'Pull and terminate cable', 'Wire the door release to the lock', 'Set up call groups and names', 'Test audio and video at each station', 'Test door release from each station', 'Label cables and stations', 'Update the as-built', 'Show the client how to answer and open the door']),
+    ('Structured Cabling Install', 'Install', ['Check the drop plan with the client', 'Pull cables', 'Terminate jacks and patch panel', 'Label both ends of every cable', 'Test and certify every cable', 'Save the test results', 'Dress and tie cables neatly', 'Dress the patch panel', 'Firestop every wall penetration', 'Update the as-built with drop numbers', 'Take photos of the rack and patch panel']),
+    ('Fiber Install', 'Install', ['Check the fiber path and counts with the client', 'Pull fiber in innerduct where needed', 'Leave a service loop at each end', 'Mount fiber enclosures', 'Splice or terminate fiber', 'Clean and inspect every connector', 'Test each strand (light meter or OTDR)', 'Save the test results', 'Label both ends', 'Firestop every penetration', 'Update the as-built', 'Take photos of the enclosures']),
+    ('AV Install', 'Install', ['Check the AV plan and TV or speaker spots with the client', 'Confirm power and backing in walls', 'Mount TVs, displays, and speakers', 'Pull and terminate HDMI, speaker, and data cable', 'Install and wire the rack or equipment', 'Set up sources and inputs', 'Set volume levels and test sound in each zone', 'Test picture on every display', 'Set up remotes or control app', 'Label cables', 'Update the as-built', 'Show the client how to use it']),
+    ('Service Call', 'Service', ['Talk to the client about the problem', 'Take before photos', 'Make the problem happen again', 'Check power', 'Check network and cables', 'Fix the problem', 'Test that it works now', 'Take after photos', 'Write notes on what was done', 'List the parts used', 'Get the client to sign off']),
+    ('Office Task', 'Office Task', ['Read the task notes', 'Do the task', 'Write what was done in the notes', 'Mark it done']),
+]
+DEFAULT_TEMPLATE = {'Install': 'General Install', 'Service': 'Service Call', 'Survey': 'Site Survey', 'Office Task': 'Office Task'}
 SURVEY_TEXT = ['site_conditions', 'want_desc', 'contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
 SURVEY_OFFICE_ONLY = ['timeline', 'budget', 'decision_maker']
 SURVEY_OBSTACLES = ['Lift needed', 'Concrete', 'Long runs', 'Access issues']
@@ -521,6 +535,13 @@ def init_db():
         job_id TEXT, sub TEXT, minutes INTEGER DEFAULT 0, PRIMARY KEY (job_id, sub))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
+    r=conn.execute("SELECT value FROM settings WHERE key='tpl_seeded'").fetchone(); seeded=set(json.loads(r['value'])) if r else set()
+    have={(x['name'] or '').strip().lower() for x in conn.execute('SELECT name FROM checklist_templates').fetchall()}
+    for name, jt, items in BUILTIN_TEMPLATES:
+        if name not in seeded and name.lower() not in have:
+            conn.execute('INSERT INTO checklist_templates (name,job_type,items,created_at) VALUES (?,?,?,?)',(name,jt,json.dumps(items),datetime.utcnow().isoformat()))
+        seeded.add(name)
+    conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('tpl_seeded',?)",(json.dumps(sorted(seeded)),))
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
         job_id TEXT PRIMARY KEY, package TEXT, status TEXT DEFAULT 'ready_for_review', created_at TEXT)''')
     count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
@@ -724,8 +745,11 @@ const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" o
 function setF(f){F=F===f?'':f;load()}
 const TPLS={{ tpls|tojson }};
 function tplOpts(){const t=document.getElementById('n-type').value,s=document.getElementById('n-tpl');if(!s)return;s.innerHTML='';const o=new Option('Checklist: none (type your own below)','');s.add(o);
-TPLS.filter(x=>!x.job_type||x.job_type===t).forEach(x=>s.add(new Option('Checklist: '+x.name,String(x.id))))}
-function tplPick(){const id=document.getElementById('n-tpl').value;const x=TPLS.find(k=>String(k.id)===id);if(x)document.getElementById('n-checklist').value=x.items.join('\\n')}
+TPLS.filter(x=>!x.job_type||x.job_type===t).forEach(x=>s.add(new Option('Checklist: '+x.name,String(x.id))));
+const c=document.getElementById('n-checklist');const d=TPLS.find(x=>x.name.toLowerCase()===(DEF_TPL[t]||'').toLowerCase()&&(!x.job_type||x.job_type===t));
+if(d&&(!c.value.trim()||c.value===tplLast)){s.value=String(d.id);tplPick()}else if(c.value===tplLast){c.value='';tplLast=''}}
+const DEF_TPL={{ def_tpl|tojson }};let tplLast='';
+function tplPick(){const id=document.getElementById('n-tpl').value;const x=TPLS.find(k=>String(k.id)===id);if(x){const c=document.getElementById('n-checklist');c.value=x.items.join('\\n');tplLast=c.value}}
 function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
 if(OFFICE&&!q)return loadDash();
@@ -995,7 +1019,7 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','omw','survey','log','follow','hub','finish'],more:[]},
+const LAYOUT={Survey:{show:['help','links','type','omw','survey','check','log','follow','hub','finish'],more:[]},
 Install:{show:['help','review','links','type','omw','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
 Service:{show:['help','review','links','type','omw','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
@@ -1010,7 +1034,7 @@ document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementB
 document.getElementById('log-title').textContent={Survey:'Notes',Service:'Problem & What Was Done','Office Task':'Notes'}[t]||'Notes & Updates';
 document.getElementById('mat-title').textContent=t==='Service'?'Parts Used':'Materials';document.getElementById('mat-new').placeholder=t==='Service'?'Add part (e.g. 1x 4TB hard drive)':'Add material (e.g. 2x Maglock)';
 document.getElementById('mat-legacy').textContent=currentJob.materials?'Earlier note: '+currentJob.materials:'';
-document.getElementById('punch-wrap').classList.toggle('hidden',t==='Office Task');
+document.getElementById('punch-wrap').classList.toggle('hidden',t==='Office Task'||t==='Survey');
 const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':t==='Office Task'?'Done':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');mapSummary();renderDevices();if(!sv&&t!=='Office Task')resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
@@ -1057,7 +1081,7 @@ def index():
     agr=None
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    return render_template_string(HTML, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
+    return render_template_string(HTML, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -1083,9 +1107,13 @@ def create_job():
     if conn.execute('SELECT 1 FROM jobs WHERE id=?',(jid,)).fetchone():
         conn.close(); return jsonify({'error':'That Job ID already exists'}),409
     lines = [x.strip() for x in (d.get('checklist') or '').splitlines() if x.strip()]
-    chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
     sd = (d.get('scheduled_date') or '').strip() or today_local().isoformat()
     jt = (d.get('job_type') or '').strip(); jt = jt if jt in JOB_TYPES else 'Install'
+    if not lines:
+        t = conn.execute('SELECT items FROM checklist_templates WHERE LOWER(name)=? ORDER BY id LIMIT 1',(DEFAULT_TEMPLATE.get(jt,'').lower(),)).fetchone()
+        try: lines = [x for x in json.loads(t['items']) if str(x).strip()] if t else []
+        except Exception: lines = []
+    chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
     tech = nice_name(d.get('tech')) or default_sub()
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
     conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
