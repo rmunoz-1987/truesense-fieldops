@@ -114,6 +114,11 @@ def parse_devices(raw):
                     'height': str(i.get('height') or '').strip()[:50], 'cable': str(i.get('cable') or '').strip()[:100],
                     'installed': bool(i.get('installed')), 'mac': str(i.get('mac') or '').strip()[:60], 'ip': str(i.get('ip') or '').strip()[:45],
                     'port': str(i.get('port') or '').strip()[:40], 'clabel': str(i.get('clabel') or '').strip()[:60], 'photo': secure_filename(str(i.get('photo') or ''))[:100]})
+        if i['type'] in ('Dome Cam', 'Bullet Cam', 'PTZ Cam'):
+            for k, lo, hi in (('dir', 0, 359), ('fov', 10, 360), ('range', 2, 100)):
+                if i.get(k) not in (None, ''):
+                    v = _num(i.get(k), lo, hi, None)
+                    if v is not None: out[-1][k] = round(v) if k != 'range' else round(v, 1)
     return out
 
 def number_devices(devs):
@@ -850,6 +855,8 @@ body.office #home .job{border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04),0
 .pal{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0}.pal button{padding:12px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-size:.95rem;font-weight:600;color:var(--text)}.pal button.on{border-color:var(--text);background:#fbfaf0}
 .pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
 .plan{position:relative;margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}.plan img{width:100%;height:auto;display:block}
+.dpin{position:absolute;width:34px;height:34px;margin:-17px 0 0 -17px;cursor:pointer;z-index:2}.dpin .dsym{display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}.dpin b{position:absolute;left:36px;top:50%;transform:translateY(-50%);font-size:.8rem;line-height:1;background:#fff;color:#111;border:1.5px solid currentColor;border-radius:6px;padding:2px 4px;white-space:nowrap}.dpin.sel .dsym{outline:3px solid #111;border-radius:50%}.dpin.lf b{left:auto;right:36px}
+.plan .cov{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1}.pal button svg{vertical-align:middle;margin-right:4px}.cam-ctl{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:6px 0}.cam-ctl button{padding:12px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}
 .pin{position:absolute;transform:translate(-50%,-50%);min-width:32px;padding:0 4px;height:32px;line-height:28px;font-size:.85rem;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box}.pin.sel{outline:3px solid #111}
 #mp{position:fixed;inset:0;background:#fff;z-index:40;overflow:auto;padding:10px}#mp.hidden{display:none}#mp-map{height:55vh;border-radius:10px}
 .mp-tools{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.mp-tools button,.mp-b button{padding:14px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:1rem;color:var(--text)}.mp-tools button.on{border-color:var(--text);background:#fbfaf0}
@@ -1289,6 +1296,19 @@ if((s.obstacles||[]).length)out.push('Obstacles: '+s.obstacles.join(', '));if(s.
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
 let svEditing=false;
 const DEVS={{ dev_types|tojson }};let devType='',devSel=null,devMove=null;
+const DEV_SYM={{ DEV_SYM|tojson }},CAM_DEF={{ CAM_DEF|tojson }},CAM_RANGE={{ CAM_RANGE|tojson }};
+function devSvg(t,col,solid,size){size=size||34;const bg=solid?col:'#fff',fg=solid?'#fff':col;return '<svg class="dsym" viewBox="0 0 24 24" width="'+size+'" height="'+size+'" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="'+bg+'" stroke="'+(solid?'#fff':col)+'" stroke-width="1.6"'+(solid?'':' stroke-dasharray="3 2"')+'/><g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="'+fg+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(DEV_SYM[t]||'<circle cx="12" cy="12" r="3"/>')+'</g></svg>'}
+function camView(d){return {dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE}}
+function conePath(cx,cy,r,dir,fov){if(fov>=360)return 'M'+cx+' '+cy+'m-'+r+' 0a'+r+' '+r+' 0 1 0 '+2*r+' 0a'+r+' '+r+' 0 1 0 -'+2*r+' 0z';const a1=(dir-fov/2)*Math.PI/180,a2=(dir+fov/2)*Math.PI/180;
+return 'M'+cx+' '+cy+'L'+(cx+r*Math.sin(a1)).toFixed(1)+' '+(cy-r*Math.cos(a1)).toFixed(1)+'A'+r+' '+r+' 0 '+(fov>180?1:0)+' 1 '+(cx+r*Math.sin(a2)).toFixed(1)+' '+(cy-r*Math.cos(a2)).toFixed(1)+'Z'}
+function covOn(){return localStorage.getItem('fo_cov')!=='0'}
+function covToggle(){localStorage.setItem('fo_cov',covOn()?'0':'1');renderDevices()}
+function drawCones(box,fn,devs){const img=box.querySelector('img');const go=()=>{box.querySelectorAll('.cov').forEach(e=>e.remove());if(!covOn())return;const W=img.naturalWidth||1000,H=img.naturalHeight||1000;
+const p=devs.filter(d=>d.plan===fn&&CAM_DEF[d.type]).map(d=>{const v=camView(d),col=devColor(d.type);return '<path d="'+conePath(d.x*W/100,d.y*H/100,v.range*W/100,v.dir,v.fov)+'" fill="'+col+'" fill-opacity="'+(devSel===d.id?.24:.14)+'" stroke="'+col+'" stroke-opacity=".75" stroke-width="2" vector-effect="non-scaling-stroke"'+(d.type==='PTZ Cam'?' stroke-dasharray="6 4"':'')+'/>'}).join('');
+if(!p)return;box.insertAdjacentHTML('afterbegin','<svg class="cov" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">'+p+'</svg>')};if(img.complete&&img.naturalWidth)go();else img.addEventListener('load',go,{once:true})}
+function camCh(k,dv){const d=currentJob.devices.find(x=>x.id===devSel);if(!d)return;const v=camView(d);
+if(k==='dir')d.dir=((v.dir+dv)%360+360)%360;else if(k==='fov')d.fov=dv==='360'?360:Math.max(10,Math.min(360,v.fov+dv));else if(k==='range')d.range=Math.max(2,Math.min(100,+(v.range+dv).toFixed(1)));
+d.dir=d.dir??v.dir;d.fov=d.fov||v.fov;d.range=d.range||v.range;renderDevices();clearTimeout(window.camT);window.camT=setTimeout(saveDevices,500)}
 function devLock(){return currentJob.job_type==='Survey'&&currentJob.status==='completed'&&!svEditing}
 function isAB(){return currentJob.job_type!=='Survey'}
 function devColor(t){const d=DEVS.find(x=>x[0]===t);return d?d[2]:'#333'}
@@ -1297,15 +1317,17 @@ function renderDevices(){if(!currentJob||currentJob.job_type==='Office Task')ret
 if(lock){devType='';devMove=null}
 document.getElementById('plan-add').classList.toggle('hidden',lock);
 const pal=document.getElementById('dev-palette');pal.classList.toggle('hidden',lock||!plans.length);pal.innerHTML='';
-DEVS.forEach(([n,p,c])=>{const b=document.createElement('button');b.className=devType===n?'on':'';const i=document.createElement('i');i.style.background=c;i.textContent=p;b.append(i,n);b.onclick=()=>{devType=devType===n?'':n;devMove=null;renderDevices()};pal.appendChild(b)});
+DEVS.forEach(([n,p,c])=>{const b=document.createElement('button');b.className=devType===n?'on':'';b.innerHTML=devSvg(n,c,true,24);b.append(n);b.onclick=()=>{devType=devType===n?'':n;devMove=null;renderDevices()};pal.appendChild(b)});
 document.getElementById('dev-hint').textContent=lock||!plans.length?'':devMove?'Tap the new spot on the plan':devType?'Tap the plan to drop a '+devType:'Pick a device, then tap the plan';
 const w=document.getElementById('plans');w.innerHTML='';
 plans.forEach((fn,pi)=>{const box=document.createElement('div');box.className='plan';const img=document.createElement('img');img.src='/uploads/'+encodeURIComponent(fn);img.alt='floor plan';box.appendChild(img);
-devs.filter(d=>d.plan===fn).forEach(d=>{const pin=document.createElement('div');pin.className='pin'+(devSel===d.id?' sel':'');pin.style.left=d.x+'%';pin.style.top=d.y+'%';pin.style.background=devColor(d.type);if(ab&&!d.installed){pin.style.background='#fff';pin.style.color=devColor(d.type);pin.style.borderColor=devColor(d.type)}pin.textContent=d.label||devPrefix(d.type);
+devs.filter(d=>d.plan===fn).forEach(d=>{const pin=document.createElement('div');pin.className='dpin'+(devSel===d.id?' sel':'')+(d.x>82?' lf':'');pin.style.left=d.x+'%';pin.style.top=d.y+'%';pin.style.color=devColor(d.type);pin.title=d.type;pin.innerHTML=devSvg(d.type,devColor(d.type),!(ab&&!d.installed))+'<b>'+esc(d.label||devPrefix(d.type))+'</b>';
 pin.onclick=e=>{e.stopPropagation();if(devMove)return planTap(e,fn,box);devSel=d.id;devType='';renderDevices();document.getElementById('dev-edit').scrollIntoView({behavior:'smooth',block:'center'})};box.appendChild(pin)});
-box.onclick=e=>planTap(e,fn,box);w.appendChild(box);
+drawCones(box,fn,devs);box.onclick=e=>planTap(e,fn,box);w.appendChild(box);
 if(!lock){const rb=document.createElement('button');rb.className='big-btn gray';rb.textContent='Remove Plan '+(pi+1);rb.onclick=()=>removePlan(fn);w.appendChild(rb)}});
 const d=devs.find(x=>x.id===devSel);const ed=document.getElementById('dev-edit');ed.classList.toggle('hidden',!d);
+let cc=document.getElementById('cam-ctl');if(!cc){cc=document.createElement('div');cc.id='cam-ctl';document.getElementById('dv-title').after(cc)}cc.innerHTML='';
+if(d&&CAM_DEF[d.type]){const v=camView(d),cmp=['N','NE','E','SE','S','SW','W','NW'][Math.round(v.dir/45)%8];cc.innerHTML='<div class="muted" style="margin:4px 0">Facing '+cmp+' ('+v.dir+'\u00b0), view '+v.fov+'\u00b0, range '+v.range+'</div>'+(lock?'':'<div class="cam-ctl"><button onclick="camCh(&quot;dir&quot;,-15)">&#8634; Turn left</button><button onclick="camCh(&quot;dir&quot;,15)">Turn right &#8635;</button><button onclick="camCh(&quot;fov&quot;,&quot;360&quot;)">360&deg;</button><button onclick="camCh(&quot;fov&quot;,-10)">Narrower</button><button onclick="camCh(&quot;fov&quot;,10)">Wider</button><button onclick="camCh(&quot;range&quot;,-3)">Shorter</button><button onclick="camCh(&quot;range&quot;,3)">Longer</button></div>')}
 if(d){document.getElementById('dv-title').textContent=d.label+' \u00b7 '+d.type;['note','height','cable'].forEach(k=>{const el=document.getElementById('dv-'+k);el.value=d[k]||'';el.disabled=lock});document.getElementById('dv-btns').classList.toggle('hidden',lock);
 document.querySelectorAll('#dev-edit .ab-only').forEach(e=>e.classList.toggle('hidden',!ab));
 if(ab){['mac','ip','port','clabel'].forEach(k=>document.getElementById('dv-'+k).value=d[k]||'');document.getElementById('dv-installed').checked=!!d.installed;
@@ -1314,7 +1336,8 @@ document.getElementById('dv-photo-btn').textContent=d.photo?'Replace Device Phot
 const cp=document.getElementById('ab-copy');cp.innerHTML='';if(ab&&!lock&&!plans.length)(currentJob.survey_plan_sources||[]).forEach(x=>{const b=document.createElement('button');b.className='big-btn';b.style.background='#6a1b9a';b.textContent='Copy Survey Plan ('+x.id+')';b.onclick=()=>copyPlan(x.id);cp.appendChild(b)});
 const cnt={};devs.forEach(x=>cnt[x.type]=(cnt[x.type]||0)+1);const c=document.getElementById('dev-counts');c.innerHTML='';
 if(devs.length){const h=document.createElement('div');h.className='ptitle';h.textContent='Device Count ('+devs.length+' total'+(ab?', '+devs.filter(x=>x.installed).length+' installed':'')+')';c.appendChild(h);
-DEVS.forEach(([n,p,col])=>{if(!cnt[n])return;const r=document.createElement('div');r.style.cssText='font-size:1.15rem;padding:6px 0;border-bottom:1px solid #e5e5e5';const i=document.createElement('span');i.className='pin';i.style.cssText='position:static;transform:none;margin-right:8px;background:'+col;i.textContent=p;const inst=devs.filter(x=>x.type===n&&x.installed).length;r.append(i,n+' x'+cnt[n]+(ab?' ('+inst+' installed, '+(cnt[n]-inst)+' planned)':''));c.appendChild(r)})}
+if(devs.some(x=>CAM_DEF[x.type])){const t=document.createElement('button');t.className='big-btn gray';t.textContent='Show coverage: '+(covOn()?'On':'Off');t.onclick=covToggle;c.appendChild(t)}
+DEVS.forEach(([n,p,col])=>{if(!cnt[n])return;const r=document.createElement('div');r.style.cssText='font-size:1.15rem;padding:6px 0;border-bottom:1px solid #e5e5e5;display:flex;align-items:center;gap:8px';const i=document.createElement('span');i.innerHTML=devSvg(n,col,true,28);i.style.lineHeight='0';const inst=devs.filter(x=>x.type===n&&x.installed).length;r.append(i,n+' x'+cnt[n]+(ab?' ('+inst+' installed, '+(cnt[n]-inst)+' planned)':''));c.appendChild(r)})}
 else if(plans.length)c.innerHTML='<div class="muted">No devices yet</div>'}
 function planTap(e,fn,box){if(devLock())return;const r=box.querySelector('img').getBoundingClientRect();const x=(e.clientX-r.left)/r.width*100,y=(e.clientY-r.top)/r.height*100;if(x<0||x>100||y<0||y>100)return;
 if(devMove){const d=currentJob.devices.find(k=>k.id===devMove);devMove=null;if(d){d.x=x;d.y=y;d.plan=fn}saveDevices();return}
@@ -1384,7 +1407,7 @@ document.querySelectorAll('#mp-tools button[data-m]').forEach(b=>{b.classList.to
 const gh=m.geo&&m.geo.lat!=null;document.getElementById('mp-find').classList.toggle('hidden',lock);document.getElementById('mp-usesite').classList.toggle('hidden',lock||gh);
 if(gh){const at=(m.geo.q==='My location'?'Site (set by location): ':'')+(currentJob.address||m.geo.q||'Job site');L.marker([m.geo.lat,m.geo.lng],{zIndexOffset:-500,icon:L.divIcon({className:'',html:'<span class="mp-addr"></span>',iconSize:[0,0],iconAnchor:[0,0]})}).addTo(mpLay).bindPopup(esc(at)+(m.geo.q&&m.geo.q!==currentJob.address&&m.geo.q!=='My location'?'<br><span style="color:#666">Found by: '+esc(m.geo.q)+'</span>':'')).getElement().querySelector('.mp-addr').textContent=at}
 m.cameras.forEach((c,i)=>{const col=MCOL[i%MCOL.length];L.polygon(cone(c),{color:col,weight:2,fillOpacity:.3,interactive:false}).addTo(mpLay);
-const mk=L.marker([c.lat,c.lng],{draggable:!lock,icon:L.divIcon({className:'',html:'<span class="pin" style="position:static;transform:none;display:inline-block;background:'+col+';color:#111">'+esc(c.label||'C')+'</span>',iconSize:[36,36],iconAnchor:[18,18]})}).addTo(mpLay);
+const mk=L.marker([c.lat,c.lng],{draggable:!lock,icon:L.divIcon({className:'',html:'<div class="dpin" style="position:static;margin:0;color:'+col+'">'+devSvg('Dome Cam',col,true,34)+'<b>'+esc(c.label||'C')+'</b></div>',iconSize:[34,34],iconAnchor:[17,17]})}).addTo(mpLay);
 mk.on('click',()=>{if(mpM)return;mpSel={k:'cam',id:c.id};mapRender()});mk.on('dragend',ev=>{const q=ev.target.getLatLng();c.lat=q.lat;c.lng=q.lng;mapSave()})});
 m.runs.forEach(r=>{const ln=L.polyline(r.pts,{color:'#ffea00',weight:(mpSel&&mpSel.id===r.id)?7:4}).addTo(mpLay);ln.on('click',ev=>{L.DomEvent.stopPropagation(ev);if(mpM)return;mpSel={k:'run',id:r.id};mapRender()});segLabels(r.pts)});
 if(mpRun&&mpRun.pts.length){L.polyline(mpRun.pts,{color:'#00e5ff',weight:4,dashArray:'8 6'}).addTo(mpLay);mpRun.pts.forEach(q=>L.circleMarker(q,{radius:6,color:'#00e5ff',fillOpacity:1,interactive:false}).addTo(mpLay));segLabels(mpRun.pts)}
@@ -2292,6 +2315,89 @@ def tech_has_client(conn, customer):
 
 from markupsafe import escape as _esc, Markup
 def h(v): return str(_esc('' if v is None else v))
+# ---------- Device symbols (vector, drawn in code) and camera coverage ----------
+DEV_SYM = {
+ 'Dome Cam':'<path d="M5 14a7 7 0 0 1 14 0z"/><path d="M3.5 14h17"/><circle cx="12" cy="11.5" r="1.6"/>',
+ 'Bullet Cam':'<path d="M3.5 8.5h11v6h-11z"/><path d="M14.5 9.5l5-2.5v9l-5-2.5"/><path d="M7 14.5V19h4"/>',
+ 'PTZ Cam':'<circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1.3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+ 'Card Reader':'<rect x="7" y="3" width="10" height="18" rx="1.5"/><path d="M9.5 7h5"/><circle cx="12" cy="14" r="2"/>',
+ 'Door Contact':'<rect x="3.5" y="7" width="7" height="10" rx="1"/><rect x="13.5" y="7" width="7" height="10" rx="1"/><path d="M10.5 12h3"/>',
+ 'Motion':'<path d="M7.5 5.5a9 9 0 0 0 0 13M16.5 5.5a9 9 0 0 1 0 13M10 8.5a4.5 4.5 0 0 0 0 7M14 8.5a4.5 4.5 0 0 1 0 7"/><circle cx="12" cy="12" r="1.2"/>',
+ 'Keypad':'<rect x="6" y="3" width="12" height="18" rx="1.5"/><path d="M9.5 8h.01M12 8h.01M14.5 8h.01M9.5 11.5h.01M12 11.5h.01M14.5 11.5h.01M9.5 15h.01M12 15h.01M14.5 15h.01" stroke-width="2.6"/>',
+ 'Panel':'<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M7.5 8.5h9M7.5 12h9M7.5 15.5h5"/>',
+ 'NVR':'<rect x="2.5" y="8" width="19" height="8" rx="1"/><path d="M6 12h.01M9 12h.01" stroke-width="2.6"/><path d="M13 12h5.5"/>',
+ 'Intercom':'<rect x="6.5" y="2.5" width="11" height="19" rx="1.5"/><path d="M9.5 6.5h5M9.5 9h5M9.5 11.5h5"/><circle cx="12" cy="16.5" r="1.8"/>',
+ 'WAP':'<path d="M4 10a11 11 0 0 1 16 0M7 13.2a6.5 6.5 0 0 1 10 0M10 16.3a2.5 2.5 0 0 1 4 0"/><path d="M12 19.5h.01" stroke-width="3"/>',
+ 'Data Drop':'<path d="M12 4l8.5 15h-17z"/><path d="M12 10v4.5"/>',
+ 'Speaker':'<path d="M4 9.5h4l5-4.5v14l-5-4.5H4z"/><path d="M16.5 9a4.5 4.5 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/>',
+ 'TV':'<rect x="2.5" y="5" width="19" height="12" rx="1"/><path d="M8 21h8M12 17v4"/>',
+}
+CAM_DEF = {'Dome Cam': 100, 'Bullet Cam': 60, 'PTZ Cam': 90}
+CAM_RANGE = 15  # percent of plan width
+def cam_view(d):
+    return {'dir': d.get('dir', 0) or 0, 'fov': d.get('fov') or CAM_DEF.get(d['type'], 90), 'range': d.get('range') or CAM_RANGE}
+
+def dev_icon(t, color, solid=True, size=34, label=None):
+    """Self-contained SVG marker: ring + symbol. Solid = installed / survey, white = planned."""
+    sym = DEV_SYM.get(t, '<circle cx="12" cy="12" r="3"/>')
+    bg, fg, dash = (color, '#fff', '') if solid else ('#fff', color, ' stroke-dasharray="3 2"')
+    return ('<svg class="dsym" viewBox="0 0 24 24" width="%d" height="%d" aria-label="%s"><circle cx="12" cy="12" r="11" fill="%s" stroke="%s" stroke-width="1.6"%s/>'
+            '<g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="%s" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g></svg>') % (
+            size, size, _esc(label or t), bg, color if not solid else '#fff', dash, fg, sym)
+
+_IMG_SIZE = {}
+def img_size(fn):
+    """Width/height of a plan image from its header (PNG, JPEG, GIF, WEBP). No extra libraries."""
+    if fn in _IMG_SIZE: return _IMG_SIZE[fn]
+    wh = (1000, 1000)
+    try:
+        with open(os.path.join(app.config['UPLOAD_FOLDER'], secure_filename(fn)), 'rb') as f: b = f.read(65536)
+        import struct
+        if b[:8] == b'\x89PNG\r\n\x1a\n': wh = struct.unpack('>II', b[16:24])
+        elif b[:6] in (b'GIF87a', b'GIF89a'): wh = struct.unpack('<HH', b[6:10])
+        elif b[:4] == b'RIFF' and b[8:12] == b'WEBP':
+            if b[12:16] == b'VP8X': wh = (1 + int.from_bytes(b[24:27], 'little'), 1 + int.from_bytes(b[27:30], 'little'))
+            elif b[12:16] == b'VP8 ': wh = (struct.unpack('<H', b[26:28])[0] & 0x3fff, struct.unpack('<H', b[28:30])[0] & 0x3fff)
+            elif b[12:16] == b'VP8L':
+                v = int.from_bytes(b[21:25], 'little'); wh = ((v & 0x3fff) + 1, ((v >> 14) & 0x3fff) + 1)
+        elif b[:2] == b'\xff\xd8':
+            i = 2
+            while i < len(b) - 9:
+                if b[i] != 0xFF: i += 1; continue
+                m = b[i + 1]
+                if m in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    h_, w_ = struct.unpack('>HH', b[i + 5:i + 9]); wh = (w_, h_); break
+                i += 2 + struct.unpack('>H', b[i + 2:i + 4])[0]
+    except Exception: pass
+    wh = (wh[0] or 1000, wh[1] or 1000); _IMG_SIZE[fn] = wh; return wh
+
+def cone_path(cx, cy, r, d, fov):
+    if fov >= 360: return 'M%.1f %.1fm-%.1f 0a%.1f %.1f 0 1 0 %.1f 0a%.1f %.1f 0 1 0 -%.1f 0z' % (cx, cy, r, r, r, 2 * r, r, r, 2 * r)
+    a1, a2 = math.radians(d - fov / 2), math.radians(d + fov / 2)
+    x1, y1 = cx + r * math.sin(a1), cy - r * math.cos(a1); x2, y2 = cx + r * math.sin(a2), cy - r * math.cos(a2)
+    return 'M%.1f %.1fL%.1f %.1fA%.1f %.1f 0 %d 1 %.1f %.1fZ' % (cx, cy, x1, y1, r, r, 1 if fov > 180 else 0, x2, y2)
+
+def plan_svg(fn, devs, ab=False, cones=True):
+    """One vector overlay for print and client views: coverage cones, symbols and labels."""
+    W, H = img_size(fn); s = W * 0.034; out = []
+    colors = {n: c for n, p, c in DEVICE_TYPES}
+    ds = [d for d in devs if d.get('plan') == fn]
+    if cones:
+        for d in ds:
+            if d['type'] not in CAM_DEF: continue
+            v = cam_view(d); col = colors[d['type']]; cx, cy = d['x'] * W / 100, d['y'] * H / 100
+            out.append('<path d="%s" fill="%s" fill-opacity=".14" stroke="%s" stroke-opacity=".7" stroke-width="%.1f"%s/>' % (
+                cone_path(cx, cy, v['range'] * W / 100, v['dir'], v['fov']), col, col, W * 0.002, ' stroke-dasharray="%.1f %.1f"' % (W * .008, W * .006) if d['type'] == 'PTZ Cam' else ''))
+    for d in ds:
+        col = colors[d['type']]; cx, cy = d['x'] * W / 100, d['y'] * H / 100; solid = not (ab and not d.get('installed'))
+        out.append('<svg x="%.1f" y="%.1f" width="%.1f" height="%.1f" viewBox="0 0 24 24" overflow="visible">%s</svg>' % (cx - s / 2, cy - s / 2, s, s, dev_icon(d['type'], col, solid).split('>', 1)[1].rsplit('</svg>', 1)[0]))
+        lab = _esc(d.get('label') or '')
+        lf = d['x'] > 82
+        out.append('<text x="%.1f" y="%.1f" font-size="%.1f" font-weight="700" font-family="Arial,sans-serif" fill="#111" stroke="#fff" stroke-width="%.1f" paint-order="stroke" dominant-baseline="middle" text-anchor="%s">%s</text>' % (cx - s * .62 if lf else cx + s * .62, cy, s * .62, s * .2, 'end' if lf else 'start', lab))
+    return Markup('<svg class="plan-svg" viewBox="0 0 %d %d" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%%;height:100%%;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact">%s</svg>' % (W, H, ''.join(out)))
+app.jinja_env.globals.update(DEV_SYM=DEV_SYM, CAM_DEF=CAM_DEF, CAM_RANGE=CAM_RANGE, plan_svg=plan_svg, dev_icon=lambda t, c, solid=True, size=28: Markup(dev_icon(t, c, solid, size)))
+# ---------- end device symbols ----------
+
 OPS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
 <style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:760px;margin:auto;padding:14px;overflow-wrap:anywhere}
 h1{font-size:1.4rem;margin:8px 0}h2{font-size:1.15rem;color:#a49f2a;border-bottom:2px solid #a49f2a;margin:22px 0 8px}
@@ -2863,8 +2969,8 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% if j.job_type not in ('Survey','Office Task') %}{% if j.materials_list or j.materials %}<div class="sec">{{ 'Parts Used' if j.job_type == 'Service' else 'Materials' }}</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}{% endif %}
 {% if j.job_type in ('Install','Office Task','') or (j.job_type == 'Service' and j.checklist|selectattr('done')|list) %}<div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if j.job_type == 'Survey' and j.photos %}<div class="sec">Photos</div>{% for p in j.photos %}<img src="/uploads/{{ p.filename|urlencode }}" alt="photo">{% endfor %}{% endif %}
-{% set ab = j.job_type != 'Survey' %}{% if j.job_type != 'Office Task' and j.plans %}<div class="sec">{{ 'As-Built' if ab else 'Floor Plan Devices' }}</div>{% if ab %}<div class="muted">Solid pin = installed, white pin = planned</div>{% endif %}{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);{% if ab and not d.installed %}background:#fff;color:{{ DEV_COLORS[d.type] }};border:2px solid {{ DEV_COLORS[d.type] }};{% else %}background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;{% endif %}border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
-{% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if ab %} ({{ j.devices|selectattr('type','equalto',t)|selectattr('installed')|list|length }} installed){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total{% if ab %}, {{ j.devices|selectattr('installed')|list|length }} installed{% endif %})</div>
+{% set ab = j.job_type != 'Survey' %}{% if j.job_type != 'Office Task' and j.plans %}<div class="sec">{{ 'As-Built' if ab else 'Floor Plan Devices' }}</div>{% if ab %}<div class="muted">Solid symbol = installed, white dashed symbol = planned. Shaded wedges show camera coverage.</div>{% endif %}{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{{ plan_svg(fn, j.devices, ab) }}</div>{% endfor %}
+{% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}<span style="white-space:nowrap">{{ dev_icon(t, DEV_COLORS[t], true, 18) }} {{ t }} x{{ n }}</span>{% if ab %} ({{ j.devices|selectattr('type','equalto',t)|selectattr('installed')|list|length }} installed){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total{% if ab %}, {{ j.devices|selectattr('installed')|list|length }} installed{% endif %})</div>
 <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #999"><th>Label</th><th>Device</th>{% if ab %}<th>Installed</th><th>MAC / Serial</th><th>IP</th><th>Switch port</th><th>Cable label</th>{% endif %}<th>Height</th><th>Cable run</th><th>Note</th>{% if ab %}<th>Photo</th>{% endif %}</tr>{% for d in j.devices %}<tr style="border-bottom:1px solid #ddd"><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td>{% if ab %}<td>{{ 'Yes' if d.installed else 'Planned' }}</td><td>{{ d.mac }}</td><td>{{ d.ip }}</td><td>{{ d.port }}</td><td>{{ d.clabel }}</td>{% endif %}<td>{{ d.height }}</td><td>{{ d.cable }}</td><td>{{ d.note }}</td>{% if ab %}<td>{% if d.photo %}<img src="/uploads/{{ d.photo|urlencode }}" alt="{{ d.label }}" style="width:60px;height:60px">{% endif %}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
 {% if j.job_type != 'Office Task' and (j.map.cameras or j.map.runs) %}<div class="sec">Site Map</div>
 {% if j.map.cameras %}<div><b>Exterior cameras:</b></div>{% for c in j.map.cameras %}<div>{{ c.label }}: facing {{ c.dir }}&deg; {{ compass(c.dir) }}, view {{ c.fov }}&deg;, range {{ c.range }} ft <span class="muted">({{ c.lat }}, {{ c.lng }})</span></div>{% endfor %}{% endif %}
@@ -3039,8 +3145,8 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 {% if paid %}<div class="ok" style="margin-top:12px;text-align:center">&#10003; Paid. Thank you!</div>{% elif pay %}<a href="{{ pay }}" target="_blank" rel="noopener noreferrer" class="btn" style="display:block;text-align:center;text-decoration:none;margin-top:14px;font-size:1.4rem;padding:22px">Pay Now</a><div class="muted" style="text-align:center;margin-top:4px">Opens the secure QuickBooks payment page</div>{% endif %}
 {% if j.job_type == 'Survey' %}<h2>Site Survey</h2><div class="card">{% if j.survey.want_desc %}<div><b>What you want:</b></div><div style="white-space:pre-wrap">{{ j.survey.want_desc }}</div>{% endif %}
 {% if j.survey.conditions %}<div style="margin-top:8px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ j.survey.conditions }}</div>{% endif %}</div>{% endif %}
-{% if j.plans %}<h2>{{ 'Plan and Devices' if j.job_type == 'Survey' else 'As-Built Plan' }}</h2>{% for fn in j.plans %}<div class="plan"><img src="{{ signed(fn) }}" alt="plan">{% for d in j.devices if d.plan == fn %}<span class="pin" style="left:{{ d.x }}%;top:{{ d.y }}%;background:{{ DEV_COLORS[d.type] }}">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
-{% if j.devices %}<div><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+{% if j.plans %}<h2>{{ 'Plan and Devices' if j.job_type == 'Survey' else 'As-Built Plan' }}</h2>{% for fn in j.plans %}<div class="plan"><img src="{{ signed(fn) }}" alt="plan">{{ plan_svg(fn, j.devices, j.job_type != 'Survey') }}</div>{% endfor %}
+{% if j.devices %}<div><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}<span style="white-space:nowrap">{{ dev_icon(t, DEV_COLORS[t], true, 18) }} {{ t }} x{{ n }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</div>
 <table><tr><th>Label</th><th>Device</th><th>Note</th>{% if j.job_type != 'Survey' %}<th>Status</th>{% endif %}</tr>{% for d in j.devices %}<tr><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td><td>{{ d.note }}</td>{% if j.job_type != 'Survey' %}<td>{{ 'Installed' if d.installed else 'Planned' }}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
 {% if j.photos %}<h2>Photos</h2><div class="ph">{% for p in j.photos %}<a href="{{ signed(p.filename) }}" target="_blank"><img src="{{ signed(p.filename) }}" alt="photo"></a>{% endfor %}</div>{% endif %}
 {% if j.job_type not in ('Survey','Office Task') and j.status == 'completed' and j.signature and j.signature.startswith('data:image/') %}<h2>Completion Signature</h2><img src="{{ j.signature }}" alt="signature" style="width:260px;max-width:100%;border:1px solid #ddd">{% if j.completed_at %}<div class="muted">Completed {{ j.completed_at[:10] }}</div>{% endif %}{% endif %}
