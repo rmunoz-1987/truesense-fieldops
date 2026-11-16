@@ -18,6 +18,7 @@ app.permanent_session_lifetime = timedelta(days=30)
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
 SURVEY_TEXT = ['site_conditions', 'want_desc', 'contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
+SURVEY_OFFICE_ONLY = ['timeline', 'budget', 'decision_maker']
 SURVEY_OBSTACLES = ['Lift needed', 'Concrete', 'Long runs', 'Access issues']
 
 def clean_survey(raw):
@@ -172,14 +173,16 @@ def job_dict(row):
     d.pop('survey_list', None); d['survey'] = clean_survey(d.pop('survey_form', None))
     d['survey']['conditions'] = site_conditions(d['survey'])
     d['survey']['contact_tel'] = ''.join(c for c in d['survey']['contact_phone'] if c.isdigit() or c == '+')
-    if not is_office(): d.pop('survey_office', None)
+    if not is_office():
+        d.pop('survey_office', None)
+        for k in SURVEY_OFFICE_ONLY: d['survey'].pop(k, None)
     else: d['survey_office'] = d.get('survey_office') or ''
     d['punch_list'] = parse_ticks(d.get('punch_list')); d['quick_notes'] = d.get('quick_notes') or ''
     d['help_open'] = d.get('help_flag') == 'open'
     d['devices'] = parse_devices(d.pop('survey_devices', None))
     d['map'] = parse_map(d.pop('map_data', None))
     if not is_office():
-        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name'): d.pop(k, None)
+        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at'): d.pop(k, None)
     return d
 
 def me():
@@ -243,7 +246,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -402,7 +405,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn gray" onclick="devSel=null;renderDevices()">Close</button></div>
 <div id="dev-counts"></div></div></div><div id="sv-mapslot"></div>
 <div class="ptitle" style="font-size:1.2rem">5. Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
-{% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
+{% if office %}<div id="sv-expect" class="muted" style="margin:6px 0"></div><div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
 {% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button><button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
@@ -487,7 +490,7 @@ const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
 async function loadDash(){const [a,c,fu,tx,dx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json())]);
-document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.expired?' expired ':' expires ')+x.expires).join(', ');
+document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.missing?' missing':(x.expired?' expired ':' expires ')+x.expires)).join(', ');
 const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),review:a.filter(j=>j.status==='review'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
 document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="review"]').classList.toggle('red',lists.review.length>0);document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
 if(F==='follow'||F==='texts'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return F==='follow'?renderFollowList(fu,today):renderTextList(tx)}
@@ -593,7 +596,7 @@ function addMat(){const n=document.getElementById('mat-new');const t=n.value.tri
 function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs';renderLabor()}
 const money=n=>'$'+Number(n||0).toFixed(2);
 function renderLabor(){const el=document.getElementById('labor');if(!el||!currentJob.labor)return;const L=currentJob.labor;
-el.innerHTML=L.lines.map(l=>'<div>'+esc(l.sub)+': '+l.hours+' hrs'+(l.no_rate?' &middot; <b style="color:#b00020">No rate set</b>':(l.rate_hourly!=null?' x '+money(l.rate_hourly)+'/hr':'')+(l.rate_flat!=null?' + '+money(l.rate_flat)+' flat':'')+' = <b>'+money(l.cost)+'</b>')+'</div>').join('')+'<div style="font-size:1.2rem;font-weight:700;margin-top:4px">Total labor: '+money(L.total)+'</div>'}
+el.innerHTML=L.lines.map(l=>'<div>'+esc(l.sub)+': '+l.hours+' hrs'+(l.no_rate?' &middot; <b style="color:#b00020">No rate set</b>':(l.rate_hourly!=null?' x '+money(l.rate_hourly)+'/hr':'')+(l.rate_flat!=null?' + '+money(l.rate_flat)+' flat':'')+' = <b>'+money(l.cost)+'</b>')+'</div>').join('')+'<div style="font-size:1.2rem;font-weight:700;margin-top:4px">Total labor: '+money(L.total)+'</div>'+(L.locked?'<div class="muted">Rates locked when the job was completed.</div>':'<div class="muted">Uses current rates until the job is completed.</div>')}
 async function saveTime(mode){const h=document.getElementById('hours');if(!h.value)return;
 const body={mode:mode,hours:h.value,miles:mode==='set'?(currentJob.total_miles||0):0};
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -743,7 +746,7 @@ const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
 if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);const la=lock&&!{{ office|tojson }};document.getElementById('update-note').classList.toggle('hidden',la);document.getElementById('log-add').classList.toggle('hidden',la);renderDevices()}
 function fillSurvey(){svEditing=false;devType='';devSel=null;devMove=null;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
-if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacyCond(s);const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
+if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacyCond(s);const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';const ex=document.getElementById('sv-expect');if(ex)ex.textContent=(s.timeline||s.budget||s.decision_maker)?'Earlier entry (office only): Timeline '+(s.timeline||'-')+' \u00b7 Budget '+(s.budget||'-')+' \u00b7 Decision maker '+(s.decision_maker||'-'):'';svCall()}
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
@@ -862,6 +865,9 @@ def save_survey(job_id):
     if err: conn.close(); return err
     if row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     form=clean_survey((request.get_json(silent=True) or {}).get('survey'))
+    if not is_office():
+        old=clean_survey(row['survey_form'])
+        for k in SURVEY_OFFICE_ONLY: form[k]=old[k]
     conn.execute('UPDATE jobs SET survey_form=? WHERE id=?',(json.dumps(form),job_id)); conn.commit(); conn.close()
     return jsonify({'ok':True})
 
@@ -973,6 +979,7 @@ def complete(job_id):
                      (finish_status(row),notes,materials,sig,minutes,miles,now,job_id))
     for ptype in PHOTO_TYPES: save_photos(conn, job_id, request.files.getlist(ptype), ptype, now)
     if row['job_type']!='Survey' and minutes: add_sub_minutes(conn, row, minutes)
+    if row['job_type']=='Survey' or finish_status(row)=='completed': lock_rates(conn, job_id)
     conn.commit()
     if row['job_type']=='Survey': notify_kelly(conn, job_id, kelly_event)
     st=conn.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()['status']; conn.close()
@@ -988,7 +995,7 @@ def approve_job(job_id):
     if not row: conn.close(); return ('',404)
     if row['status']!='review': conn.close(); return jsonify({'error':'This job is not waiting for review'}),400
     now=datetime.utcnow().isoformat()
-    conn.execute("UPDATE jobs SET status='completed',completed_at=COALESCE(completed_at,?),review_by=?,review_at=? WHERE id=?",(now,me(),now_local_str(),job_id)); conn.commit()
+    conn.execute("UPDATE jobs SET status='completed',completed_at=COALESCE(completed_at,?),review_by=?,review_at=? WHERE id=?",(now,me(),now_local_str(),job_id)); lock_rates(conn, job_id); conn.commit()
     pkg=build_invoice_draft(conn, job_id, now) if needs_review(row) else None; conn.close()
     return jsonify({'ok':True,'status':'completed','invoice_draft':pkg})
 
@@ -1015,12 +1022,21 @@ def job_labor(conn, row):
     hrs={r['sub']:r['minutes'] for r in conn.execute('SELECT sub,minutes FROM job_hours WHERE job_id=?',(row['id'],)).fetchall()}
     if not hrs and (row['total_minutes'] or 0) and ckey(row['tech']): hrs={ckey(row['tech']):row['total_minutes']}
     if ckey(row['tech']): hrs.setdefault(ckey(row['tech']),0)
-    rates={r['key']:r for r in conn.execute('SELECT * FROM subs').fetchall()}
+    rates={r['key']:{'h':r['rate_hourly'],'f':r['rate_flat']} for r in conn.execute('SELECT * FROM subs').fetchall()}
+    try: locked=json.loads(row['labor_rates'] or '{}') if row['status']=='completed' else {}
+    except Exception: locked={}
     lines=[]
     for k,m in hrs.items():
-        r=rates.get(k); rh=(r['rate_hourly'] if r else None); rf=(r['rate_flat'] if r else None); h=round(m/60,2)
+        r=locked.get(k) or rates.get(k); rh=(r['h'] if r else None); rf=(r['f'] if r else None); h=round(m/60,2)
         lines.append({'sub':k.title(),'hours':h,'rate_hourly':rh,'rate_flat':rf,'no_rate':rh is None and rf is None,'cost':round(h*(rh or 0)+(rf or 0),2)})
-    return {'lines':lines,'total':round(sum(l['cost'] for l in lines),2)}
+    return {'lines':lines,'total':round(sum(l['cost'] for l in lines),2),'locked':bool(locked)}
+
+def lock_rates(conn, job_id):
+    row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    keys={r['sub'] for r in conn.execute('SELECT sub FROM job_hours WHERE job_id=?',(job_id,)).fetchall()}
+    if ckey(row['tech']): keys.add(ckey(row['tech']))
+    rates={r['key']:{'h':r['rate_hourly'],'f':r['rate_flat']} for r in conn.execute('SELECT * FROM subs').fetchall()}
+    conn.execute('UPDATE jobs SET labor_rates=? WHERE id=?',(json.dumps({k:rates.get(k,{'h':None,'f':None}) for k in keys}),job_id))
 
 def own_job(conn, job_id):
     row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
@@ -1455,10 +1471,12 @@ def set_status(job_id):
     if st in ('completed','review'):
         conn.execute('UPDATE jobs SET status=?,completed_at=COALESCE(completed_at,?) WHERE id=?',(st,now,job_id))
         if st=='completed' and row['status']!='completed' and needs_review(row): conn.execute('UPDATE jobs SET review_by=?,review_at=? WHERE id=?',(me(),now_local_str(),job_id))
+        if st=='completed' and row['status']!='completed': lock_rates(conn, job_id)
+        if st=='review': conn.execute('UPDATE jobs SET labor_rates=NULL WHERE id=?',(job_id,))
         conn.commit()
         if st=='completed' and row['status']!='completed' and needs_review(row): build_invoice_draft(conn, job_id, now)
     else:
-        conn.execute('UPDATE jobs SET status=?,completed_at=NULL WHERE id=?',(st,job_id)); conn.commit()
+        conn.execute('UPDATE jobs SET status=?,completed_at=NULL,labor_rates=NULL WHERE id=?',(st,job_id)); conn.commit()
     conn.close(); return jsonify({'ok':True,'status':st,'status_label':STATUS_LABEL[st]})
 
 @app.route('/api/jobs/<job_id>/private-notes', methods=['POST'])
@@ -1488,7 +1506,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
-{% if s.timeline or s.budget or s.decision_maker %}<div style="margin-top:4px" class="muted">Earlier entry: Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
+{% if office and (s.timeline or s.budget or s.decision_maker) %}<div style="margin-top:4px" class="muted">Earlier entry (office only): Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
 {% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
 {% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Punch Items ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
@@ -1529,7 +1547,11 @@ def doc_alerts(conn):
     soon=(today_local()+timedelta(days=30)).isoformat(); t=today_local().isoformat(); out=[]
     names={x.lower() for x in sub_names(conn)}
     for r in conn.execute("SELECT * FROM sub_docs WHERE IFNULL(expires,'')!='' AND expires<=? ORDER BY expires",(soon,)).fetchall():
-        if r['sub'] in names: out.append({'sub':r['sub'].title(),'kind':dict(SUB_DOCS).get(r['kind'],r['kind']),'expires':r['expires'],'expired':r['expires']<t})
+        if r['sub'] in names: out.append({'sub':r['sub'].title(),'kind':dict(SUB_DOCS).get(r['kind'],r['kind']),'expires':r['expires'],'expired':r['expires']<t,'missing':False})
+    have={(r['sub'],r['kind']) for r in conn.execute("SELECT sub,kind FROM sub_docs WHERE IFNULL(filename,'')!=''").fetchall()}
+    for n in sub_names(conn):
+        for k,l in SUB_DOCS:
+            if (n.lower(),k) not in have: out.append({'sub':n,'kind':l,'expires':'','expired':False,'missing':True})
     return out
 
 def sub_companies(conn): return {r['key']:r['company'] for r in conn.execute("SELECT key,company FROM subs WHERE IFNULL(company,'')!=''").fetchall()}
@@ -1615,7 +1637,7 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
-{% if s.timeline or s.budget or s.decision_maker %}<div style="margin-top:4px" class="muted">Earlier entry: Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
+{% if office and (s.timeline or s.budget or s.decision_maker) %}<div style="margin-top:4px" class="muted">Earlier entry (office only): Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
 {% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
 {% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Punch Items ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
