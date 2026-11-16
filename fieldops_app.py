@@ -17,17 +17,30 @@ app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
-SURVEY_TEXT = ['want_desc', 'contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
+SURVEY_TEXT = ['site_conditions', 'want_desc', 'contact_name', 'contact_phone', 'current_system', 'power', 'network', 'conduit', 'obstacle_notes', 'timeline', 'budget', 'decision_maker']
 SURVEY_OBSTACLES = ['Lift needed', 'Concrete', 'Long runs', 'Access issues']
 
 def clean_survey(raw):
     try: d = json.loads(raw) if isinstance(raw, str) and raw else raw
     except Exception: d = None
     d = d if isinstance(d, dict) else {}
-    out = {k: str(d.get(k) or '').strip()[:2000] for k in SURVEY_TEXT}
+    out = {k: str(d.get(k) or '').strip()[:4000] for k in SURVEY_TEXT}
     ob = d.get('obstacles') if isinstance(d.get('obstacles'), list) else []
     out['obstacles'] = [o for o in SURVEY_OBSTACLES if o in ob]
     return out
+
+def legacy_conditions(sv):
+    out = [f'{l}: {sv[k]}' for k, l in (('current_system', 'Current system'), ('power', 'Power'), ('network', 'Network'), ('conduit', 'Conduit / pathways')) if sv.get(k)]
+    if sv.get('obstacles'): out.append('Obstacles: ' + ', '.join(sv['obstacles']))
+    if sv.get('obstacle_notes'): out.append(sv['obstacle_notes'])
+    return '\n'.join(out)
+
+def site_conditions(sv): return sv.get('site_conditions') or legacy_conditions(sv)
+
+def notes_log(conn, j):
+    lines = [j['notes']] if j['notes'] else []
+    lines += [f"{u['created_at']} {u['author']}: {u['note']}" for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id', (j['id'],)).fetchall()]
+    return '\n'.join(lines)
 
 def parse_ticks(raw):
     try: items = json.loads(raw) if isinstance(raw, str) and raw else raw
@@ -157,6 +170,7 @@ def job_dict(row):
     d['hours'] = round((d.get('total_minutes') or 0) / 60, 2); d['total_miles'] = d.get('total_miles') or 0
     d['job_type'] = d.get('job_type') or ''
     d.pop('survey_list', None); d['survey'] = clean_survey(d.pop('survey_form', None))
+    d['survey']['conditions'] = site_conditions(d['survey'])
     d['survey']['contact_tel'] = ''.join(c for c in d['survey']['contact_phone'] if c.isdigit() or c == '+')
     if not is_office(): d.pop('survey_office', None)
     else: d['survey_office'] = d.get('survey_office') or ''
@@ -337,7 +351,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="detail" class="hidden">
 <button class="big-btn gray" style="font-size:1.3rem;margin-bottom:8px" onclick="showList()">&larr; Back</button>
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div><div id="d-created" style="color:#666;font-size:.85rem;margin-top:6px"></div></div>
-{% if office %}<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
+<div id="sec-help">{% if office %}<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
 <div id="help-meta" class="muted" style="font-size:.85rem"></div><div id="help-text" style="white-space:pre-wrap;margin:6px 0"></div><div id="help-img"></div>
 </div>{% endif %}
 <button class="big-btn" style="background:#b00020;font-size:1.5rem;padding:22px" onclick="document.getElementById('help-form').classList.toggle('hidden');document.getElementById('help-note').focus()">Need Help</button>
@@ -347,19 +361,17 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="job" style="border:2px solid #1565c0;overflow-wrap:anywhere;word-break:break-word;min-width:0;max-width:100%;box-sizing:border-box"><div style="font-weight:800;font-size:1.5rem;color:#1565c0">Tech Support</div>
 <div id="support-open"><textarea id="support-note" rows="3" style="font-size:1.25rem" autocapitalize="sentences" autocorrect="on" spellcheck="true" enterkeyhint="send" placeholder="Say or type a follow-up"></textarea>
 <button class="big-btn" style="background:#1565c0;font-size:1.3rem" onclick="sendSupport()">Send Follow-up</button>
-<button class="big-btn" style="background:#2e7d32;font-size:1.3rem" onclick="resolveSupport()">Issue Resolved</button></div><div id="support"></div></div>
-<a id="directions" class="big-btn" target="_blank">Directions</a>
+<button class="big-btn" style="background:#2e7d32;font-size:1.3rem" onclick="resolveSupport()">Issue Resolved</button></div><div id="support"></div></div></div>
+<div id="sec-links"><a id="directions" class="big-btn" target="_blank">Directions</a>
 <a id="call" class="big-btn gray">Call Customer</a>
 <a id="history" class="big-btn gray">Client History</a>
-<a id="print" class="big-btn gray" target="_blank">Print Summary</a>
-<div class="job"><div style="font-weight:600">Job Type</div>{% if office %}<select id="jtype" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setType(this.value)"><option value="">(not set)</option>{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>{% else %}<div id="jtype-label" style="margin:6px 0"></div>{% endif %}</div>
-<div class="job hidden" id="survey-card"><div style="font-weight:800;font-size:1.4rem">Site Survey for Estimate</div>
+<a id="print" class="big-btn gray" target="_blank">Print Summary</a></div>
+<div id="sec-type"><div class="job"><div style="font-weight:600">Job Type</div>{% if office %}<select id="jtype" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setType(this.value)"><option value="">(not set)</option>{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>{% else %}<div id="jtype-label" style="margin:6px 0"></div>{% endif %}</div></div>
+<div id="sec-survey"><div class="job" id="survey-card"><div style="font-weight:800;font-size:1.4rem">Site Survey for Estimate</div>
 <div class="ptitle" style="font-size:1.2rem">1. Photos</div><div class="big-btn" id="sv-add" onclick="document.getElementById('survey').click()">Add Photos</div>
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
-<div class="ptitle" style="font-size:1.2rem">3. Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
-<div class="ptitle" style="font-size:1.2rem">4. Obstacles</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
-<textarea id="sv-obstacle_notes" rows="3" placeholder="Other obstacles / notes"></textarea>
+<div class="ptitle" style="font-size:1.2rem">3. Site Conditions</div><textarea id="sv-site_conditions" rows="5" style="font-size:1.1rem" placeholder="Current system, power, network, conduit, and obstacles like lift, concrete, long runs, access (tap the mic to talk)"></textarea>
 <div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div>
@@ -371,59 +383,56 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="dv-photo"></div><div class="big-btn gray" id="dv-photo-btn" onclick="document.getElementById('dv-photo-file').click()">Add Device Photo</div><input type="file" id="dv-photo-file" accept="image/*" capture="environment" style="display:none" onchange="devPhoto(this)"></div>
 <div id="dv-btns"><button class="big-btn" onclick="devSave()">Save</button><div class="row"><button class="big-btn gray" onclick="devMoveStart()">Move</button><button class="big-btn" style="background:#b00020" onclick="devDelete()">Delete</button></div></div>
 <button class="big-btn gray" onclick="devSel=null;renderDevices()">Close</button></div>
-<div id="dev-counts"></div></div></div>
-<div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
-<div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
+<div id="dev-counts"></div></div></div><div id="sv-mapslot"></div>
+<div class="ptitle" style="font-size:1.2rem">5. Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
 {% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button>{% endif %}
-{% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div>
-<div class="job ns"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
-<div class="job hidden" id="bp-card"><div style="font-weight:600;margin-bottom:6px">Blueprints</div><div id="bp-list"></div>
+{% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
+<div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
+<div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
+<textarea id="update-note" rows="3" placeholder="Say or type a note (tap the mic to talk)"></textarea><button class="big-btn" id="log-add" onclick="saveUpdate()">Add Note</button>
+<div id="updates"></div><div id="log-legacy"></div></div>
+<div id="sec-photos"><div class="job"><div style="font-weight:600;margin-bottom:6px">Photos</div>
+<div class="row"><div class="big-btn" onclick="document.getElementById('before').click()">Before</div><div class="big-btn" onclick="document.getElementById('during').click()">During</div><div class="big-btn" onclick="document.getElementById('after').click()">After</div></div>
+<input type="file" id="before" accept="image/*" multiple capture="environment" style="display:none">
+<input type="file" id="during" accept="image/*" multiple capture="environment" style="display:none">
+<input type="file" id="after" accept="image/*" multiple capture="environment" style="display:none">
+<div id="photos"></div></div></div>
+<div id="sec-mat"><div class="job"><div style="font-weight:600;margin-bottom:6px" id="mat-title">Materials</div><div id="mat-legacy" class="muted" style="white-space:pre-wrap"></div><div id="matlist"></div>
+<div class="row" style="align-items:center"><input type="text" id="mat-new" placeholder="Add material (e.g. 2x Maglock)" onkeydown="if(event.key==='Enter')addMat()"><button class="big-btn" style="flex:0 0 70px" onclick="addMat()">Add</button></div></div></div>
+<div id="sec-time"><div class="job"><div style="font-weight:600">Time</div><div id="totals" style="font-size:1.1rem;margin:6px 0"></div>
+<input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal">
+<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div></div></div>
+<div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
+<div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned tech only. Not on client printouts.</div><div id="punch"></div>
+<div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
+<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div>
+<div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
-<input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div>
-<div class="job hidden" id="map-card"><div style="font-weight:800;font-size:1.4rem">Site Map</div><div id="map-sum" class="muted" style="font-size:1.05rem"></div><button class="big-btn" onclick="mapOpen()">Open Site Map</button></div>
+<input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
+<div id="sec-map"><button class="big-btn gray" onclick="mapOpen()">Site Map <span id="map-sum" style="font-weight:400;font-size:.9rem"></span></button></div>
+<div id="sec-private">{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
+<textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}</div>
+<div id="sec-sig"><div class="job"><div style="font-weight:600">Customer Signature</div><canvas id="sig"></canvas>
+<button class="big-btn gray" onclick="clearSig()" style="padding:12px">Clear Signature</button></div></div>
+<div id="sec-finish"><button class="big-btn green" id="finish">Finish Job</button></div>
+<div id="sec-more"><button class="big-btn gray" id="more-btn" onclick="toggleMore()">Show more</button><div id="more-box" class="hidden"></div></div>
+<div id="sec-admin">{% if office %}<select id="r-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
+<div class="row"><button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button><button class="big-btn gray" onclick="assignMe()">Assign to Me</button></div>
+<button class="big-btn gray" onclick="copyJob()">Copy Job</button>
+<button class="big-btn" style="background:#b00020" onclick="deleteJob()">Delete Job</button>{% endif %}
+<button class="big-btn gray" onclick="showList()">Back</button></div>
 <div id="mp" class="hidden"><div class="mp-tools" id="mp-tools"><button data-m="cam" onclick="mapMode(this.dataset.m)">+ Camera</button><button data-m="measure" onclick="mapMode(this.dataset.m)">Measure</button><button onclick="mapClose()">Done</button></div>
 <div class="row" id="mp-find" style="align-items:center"><input type="search" id="mp-q" placeholder="Job address" onkeydown="if(event.key==='Enter')mapFind()"><button class="big-btn gray" style="flex:0 0 80px" onclick="mapFind()">Find</button></div>
 <div class="mp-b"><button onclick="meCenter()" style="background:#1565c0;color:#fff;border-color:#1565c0">My Location</button><button id="mp-usesite" class="hidden" onclick="useMeSite()">Use My Location as Site</button></div>
 <div id="mp-hint" style="font-weight:700;text-align:center;margin:4px 0"></div><div id="mp-loc" class="muted" style="text-align:center"></div><div id="mp-map"></div><div id="mp-panel"></div><div id="mp-list"></div>
 <button class="big-btn gray" onclick="mapClose()">Close Map</button></div>
-<div class="job hidden" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div></div>
 <div id="sk" class="hidden"><div style="font-weight:800;font-size:1.3rem;text-align:center;margin-bottom:6px">Draw Plan</div>
 <div class="sk-tools"><button data-t="pen" onclick="skTool(this.dataset.t)">Draw</button><button data-t="line" onclick="skTool(this.dataset.t)">Line</button><button data-t="erase" onclick="skTool(this.dataset.t)">Eraser</button><button data-t="text" onclick="skTool(this.dataset.t)">Room Label</button><button onclick="skUndo()">Undo</button></div>
 <canvas id="sk-c" width="1200" height="900" style="height:auto;max-height:70vh;object-fit:contain;border:2px solid #ccc;border-style:solid"></canvas>
 <div id="sk-hint" class="muted" style="text-align:center;font-size:1.05rem"></div>
 <div class="row"><button class="big-btn gray" onclick="skClose()">Cancel</button><button class="big-btn green" onclick="skSave()">Save Plan</button></div></div>
-<div class="job ns"><div style="font-weight:600;margin-bottom:6px">Photos</div>
-<div class="row"><div class="big-btn" onclick="document.getElementById('before').click()">Before</div><div class="big-btn" onclick="document.getElementById('during').click()">During</div><div class="big-btn" onclick="document.getElementById('after').click()">After</div></div>
-<input type="file" id="before" accept="image/*" multiple capture="environment" style="display:none">
-<input type="file" id="during" accept="image/*" multiple capture="environment" style="display:none">
-<input type="file" id="after" accept="image/*" multiple capture="environment" style="display:none">
-<div id="photos"></div></div>
-<div class="job ns"><div style="font-weight:600;margin-bottom:6px">Materials</div><div id="matlist"></div>
-<div class="row" style="align-items:center"><input type="text" id="mat-new" placeholder="Add material (e.g. 2x Maglock)" onkeydown="if(event.key==='Enter')addMat()"><button class="big-btn" style="flex:0 0 70px" onclick="addMat()">Add</button></div></div>
-<div class="job ns"><div style="font-weight:600">Time &amp; Miles</div><div id="totals" style="font-size:1.1rem;margin:6px 0"></div>
-<div class="row"><input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal"><input type="number" id="miles" placeholder="Miles" step="0.1" inputmode="decimal"></div>
-<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div></div>
-{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
-<textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}
-<div class="job ns"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div></div>
-<div class="job ns"><div style="font-weight:600;margin-bottom:6px">Internal Punch List</div><div class="muted" style="font-size:.85rem">Office and assigned tech only. Not on client printouts.</div><div id="punch"></div>
-<div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div>
-<div class="job"><div style="font-weight:600">Quick Notes</div><textarea id="quick-notes" rows="3" placeholder="Quick notes (tap the mic on your keyboard to talk)"></textarea><button class="big-btn gray" onclick="saveQuick()">Save Quick Notes</button></div>
-<div class="job ns"><div style="font-weight:600;margin-bottom:6px">Daily Updates</div><div id="updates"></div>
-<textarea id="update-note" placeholder="Today's progress, issues, materials needed" rows="3"></textarea>
-<button class="big-btn" onclick="saveUpdate()">Save Daily Update</button></div>
-<textarea id="notes" placeholder="Notes" rows="3"></textarea>
-<div class="ns"><input type="text" id="materials" placeholder="Materials used">
-<div>Customer Signature</div><canvas id="sig"></canvas>
-<button class="big-btn gray" onclick="clearSig()" style="padding:12px">Clear Signature</button></div>
-<button class="big-btn green" id="finish">Finish Job</button>
-{% if office %}<select id="r-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
-<div class="row"><button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button><button class="big-btn gray" onclick="assignMe()">Assign to Me</button></div>
-<button class="big-btn gray" onclick="copyJob()">Copy Job</button>
-<button class="big-btn" style="background:#b00020" onclick="deleteJob()">Delete Job</button>{% endif %}
-<button class="big-btn gray" onclick="showList()">Back</button>
 </div>
 <script>
 let currentJob=null; const canvas=document.getElementById('sig'); const ctx=canvas.getContext('2d'); let drawing=false;
@@ -476,7 +485,8 @@ const first=th.items.find(x=>x.author!=='Tech Support');let desc=(first?first.no
 th.items.slice().reverse().forEach(x=>det.appendChild(entry(x)));el.appendChild(det)})}
 async function loadUpdates(){const r=await fetch('/api/jobs/'+currentJob.id+'/updates');const u=r.ok?await r.json():[];const el=document.getElementById('updates');el.innerHTML='';
 u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.8rem;color:#666';m.textContent=x.created_at+' \u00b7 '+x.author;const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=x.note;d.append(m,t);el.appendChild(d)});
-if(!u.length)el.innerHTML='<div style="color:#666">No updates yet</div>'}
+if(!u.length)el.innerHTML='<div style="color:#666">No notes yet</div>';
+const lg=document.getElementById('log-legacy');lg.innerHTML='';[['Notes',currentJob.notes],['Quick notes',currentJob.quick_notes]].forEach(([k,v])=>{if(!v)return;const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.8rem;color:#666';m.textContent='Earlier '+k.toLowerCase();const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=v;d.append(m,t);lg.appendChild(d)})}
 async function saveUpdate(){const n=document.getElementById('update-note');if(!n.value.trim())return;
 const r=await fetch('/api/jobs/'+currentJob.id+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});
 if(r.ok){n.value='';loadUpdates()}else alert('Error')}
@@ -513,11 +523,11 @@ const s=document.createElement('span');s.textContent=x.text;const b=document.cre
 if(!m.length)el.innerHTML='<div class="muted">No materials yet. Check items off as you use them.</div>'}
 async function saveMats(){await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({materials:currentJob.materials_list})})}
 function addMat(){const n=document.getElementById('mat-new');const t=n.value.trim();if(!t)return;(currentJob.materials_list=currentJob.materials_list||[]).push({text:t,used:false});n.value='';renderMats();saveMats()}
-function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs \u00b7 '+(currentJob.total_miles||0)+' miles'}
-async function saveTime(mode){const h=document.getElementById('hours'),m=document.getElementById('miles');if(!h.value&&!m.value)return;
-const body={mode:mode,hours:h.value||(mode==='set'?currentJob.hours:0),miles:m.value||(mode==='set'?currentJob.total_miles:0)};
+function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs'}
+async function saveTime(mode){const h=document.getElementById('hours');if(!h.value)return;
+const body={mode:mode,hours:h.value,miles:mode==='set'?(currentJob.total_miles||0):0};
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;h.value='';m.value='';renderTotals()}else alert('Error')}
+if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;h.value='';renderTotals()}else alert('Error')}
 async function setStatus(v){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:v})});
 if(r.ok){currentJob.status=v;renderKelly()}else{alert('Error');document.getElementById('status').value=currentJob.status}}
 async function savePrivate(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/private-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_notes:document.getElementById('private-notes').value})});alert(r.ok?'Saved':'Error')}
@@ -527,7 +537,9 @@ const s=document.createElement('span');s.textContent=x.text;l.append(c,s);if(rem
 if(!items.length)el.innerHTML='<div class="muted">None yet</div>'}
 function post(path,body){return fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})}
 const savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
-const SV_TEXT=['want_desc','contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'];
+const SV_TEXT=['want_desc','contact_name','contact_phone','site_conditions'];
+function legacyCond(s){const out=[];[['current_system','Current system'],['power','Power'],['network','Network'],['conduit','Conduit / pathways']].forEach(([k,l])=>{if(s[k])out.push(l+': '+s[k])});
+if((s.obstacles||[]).length)out.push('Obstacles: '+s.obstacles.join(', '));if(s.obstacle_notes)out.push(s.obstacle_notes);return out.join('\\n')}
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
 let svEditing=false;
 const DEVS={{ dev_types|tojson }};let devType='',devSel=null,devMove=null;
@@ -657,24 +669,36 @@ document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=
 document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',!(done&&svEditing));
 const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
-if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);renderDevices()}
+if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);const la=lock&&!{{ office|tojson }};document.getElementById('update-note').classList.toggle('hidden',la);document.getElementById('log-add').classList.toggle('hidden',la);renderDevices()}
 function fillSurvey(){svEditing=false;devType='';devSel=null;devMove=null;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
-document.querySelectorAll('.sv-ob').forEach(c=>c.checked=(s.obstacles||[]).includes(c.value));const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
-async function saveSurvey(quiet){const s={obstacles:[...document.querySelectorAll('.sv-ob')].filter(c=>c.checked).map(c=>c.value)};SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
+if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacyCond(s);const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
+async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
+const LAYOUT={Survey:{show:['help','links','type','survey','log','finish'],more:[]},
+Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','private','sig','finish'],more:[]},
+Service:{show:['help','links','type','status','log','photos','mat','time','private','sig','finish'],more:['ab','map','check']},
+'Office Task':{show:['type','status','log','check','finish'],more:[]}};
+function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
-const sv=t==='Survey';document.getElementById('survey-card').classList.toggle('hidden',!sv);document.querySelectorAll('#detail .ns').forEach(e=>e.classList.toggle('hidden',sv));
-document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');document.getElementById('ab-card').classList.toggle('hidden',sv||t==='Office Task');document.getElementById('map-card').classList.toggle('hidden',t==='Office Task');mapSummary();
-document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementById('markup'));document.getElementById('mk-title').textContent=sv?'5. Floor Plan Devices':'Plan and Devices';renderDevices();const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
+const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
+['help','links','type','survey','status','log','photos','mat','time','check','ab','map','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
+if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
+det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
+document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementById('markup'));document.getElementById('mk-title').textContent=sv?'4. Devices and Map':'Plan and Devices';
+document.getElementById('log-title').textContent={Survey:'Notes',Service:'Problem & What Was Done','Office Task':'Notes'}[t]||'Notes & Updates';
+document.getElementById('mat-title').textContent=t==='Service'?'Parts Used':'Materials';document.getElementById('mat-new').placeholder=t==='Service'?'Add part (e.g. 1x 4TB hard drive)':'Add material (e.g. 2x Maglock)';
+document.getElementById('mat-legacy').textContent=currentJob.materials?'Earlier note: '+currentJob.materials:'';
+document.getElementById('punch-wrap').classList.toggle('hidden',t==='Office Task');
+const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':t==='Office Task'?'Done':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');mapSummary();renderDevices();if(!sv&&t!=='Office Task')resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
-async function saveQuick(){const r=await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value});alert(r.ok?'Saved':'Error')}
 async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}});if(r.ok){currentJob.tech={{ name|tojson }};const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech;alert('Assigned to you')}else alert('Error')}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
-renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('quick-notes').value=currentJob.quick_notes||'';document.getElementById('notes').value=currentJob.notes||'';document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';document.getElementById('miles').value='';
+renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -684,14 +708,17 @@ document.getElementById('history').href='/clients?name='+encodeURIComponent(curr
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
 document.getElementById('home').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');window.scrollTo(0,0);renderType();clearSig()}
 function showList(){history.replaceState(null,'','/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
+async function flushNote(){const n=document.getElementById('update-note');if(!n.value.trim())return true;
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});if(r.ok){n.value='';loadUpdates();return true}alert('Error saving note');return false}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
-fd.append('notes',document.getElementById('notes').value);
-if(currentJob.job_type==='Survey'){if(!(await saveSurvey(true)))return;if(!(await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value})).ok){alert('Error');return}const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});if(r.ok){alert('Survey complete. Kelly has been told it is ready for an estimate.');openJob(currentJob.id)}else alert('Error');return}
-fd.append('materials',document.getElementById('materials').value);
-fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',document.getElementById('miles').value||0);
+fd.append('notes',currentJob.notes||'');
+if(currentJob.job_type==='Survey'){if(!(await saveSurvey(true)))return;if(!(await flushNote()))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});if(r.ok){alert('Survey complete. Kelly has been told it is ready for an estimate.');openJob(currentJob.id)}else alert('Error');return}
+if(!(await flushNote()))return;
+fd.append('materials',currentJob.materials||'');
+fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',0);
 fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
-if(r.ok){alert('Job finished');showList()}else alert('Error')};
+if(r.ok){alert(currentJob.job_type==='Office Task'?'Task done':'Job finished');showList()}else alert('Error')};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
 const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
@@ -822,6 +849,7 @@ def job_updates(job_id):
     if not row: conn.close(); return ('',404)
     if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
     if request.method=='POST':
+        if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
         note=((request.get_json(silent=True) or {}).get('note') or '').strip()[:2000]
         if not note: conn.close(); return jsonify({'error':'note required'}),400
         conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit()
@@ -871,7 +899,7 @@ def build_invoice_draft(conn, job_id, now):
     photos=[{'filename':p['filename'],'type':p['photo_type']} for p in conn.execute('SELECT filename,photo_type FROM photos WHERE job_id=?',(job_id,)).fetchall()]
     pkg={'job_id':job_id,'customer':j['customer'],'phone':j['phone'],'address':j['address'],'title':j['title'],'scope':j['scope'],
          'tech':j['tech'],'materials':j['materials'] or '','materials_list':parse_materials(j['materials_list']),'hours':round((j['total_minutes'] or 0)/60,2),'miles':j['total_miles'] or 0,
-         'notes':j['notes'] or '','photos':photos,'completed_at':j['completed_at'],'status':'ready_for_review (not sent)'}
+         'notes':notes_log(conn, j),'photos':photos,'completed_at':j['completed_at'],'status':'ready_for_review (not sent)'}
     conn.execute('INSERT OR REPLACE INTO invoice_drafts (job_id,package,status,created_at) VALUES (?,?,?,?)',(job_id,json.dumps(pkg),'ready_for_review',now))
     conn.commit()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
@@ -1163,7 +1191,8 @@ def notify_kelly(conn, job_id, event):
           'obstacles':sv['obstacles'],'obstacle_notes':sv['obstacle_notes'],
           'site_contact':{'name':sv['contact_name'],'phone':sv['contact_phone']},
           'client_expectations':{'timeline':sv['timeline'],'budget':sv['budget'],'decision_maker':sv['decision_maker']},
-          'notes':j['notes'] or '','quick_notes':j['quick_notes'] or '',
+          'site_conditions':site_conditions(sv),
+          'notes':notes_log(conn, j),'quick_notes':j['quick_notes'] or '',
           'photo_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in fns],
           'print_url':f"{base}/print/job/{j['id']}",
           'plan_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in plan_files(conn, j['id'])],
@@ -1256,24 +1285,22 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
 {% macro bplist(j) %}{% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints ({{ j.blueprints|length }})</div>{% for b in j.blueprints %}<div style="margin:4px 0"><a href="/uploads/{{ b.filename|urlencode }}" target="_blank">{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint" style="width:56px;height:56px;vertical-align:middle">{% else %}&#128196;{% endif %} {{ b.name }}</a></div>{% endfor %}{% endif %}{% endmacro %}
 {% macro photogroups(j) %}{% if j.job_type == 'Survey' %}{% for p in j.photos %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="photo"></a>{% else %}<div class="muted">None</div>{% endfor %}{% else %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if loop.index <= 3 or g %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ lbl }} ({{ g|length }})</div>{% endif %}{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endif %}{% endmacro %}
-{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> {% if office and j.help_open %}<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span> {% endif %}<span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.job_type != 'Survey' %} &middot; {{ j.hours }} hrs &middot; {{ j.total_miles }} mi{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
+{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> {% if office and j.help_open %}<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span> {% endif %}<span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.job_type not in ('Survey','Office Task') %} &middot; {{ j.hours }} hrs{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
 {% if office and j.help_open %}<div style="border:2px solid #b00020;background:#fff5f5;border-radius:10px;padding:8px;margin-top:8px"><div style="color:#b00020;font-weight:700">&#9888; Needs Help</div><div class="muted" style="font-size:.8rem">{{ j.help_by }} &middot; {{ j.help_at }}</div><div style="white-space:pre-wrap">{{ j.help_note }}</div>{% if j.help_photo %}<a href="/uploads/{{ j.help_photo|urlencode }}" target="_blank"><img src="/uploads/{{ j.help_photo|urlencode }}" alt="help photo"></a>{% endif %}</div>{% endif %}
 {% if j.job_type == 'Survey' %}<a class="btn" style="background:#6a1b9a;color:#fff" href="/?job={{ j.id|urlencode }}">Open Survey</a>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
-{% if j.job_type != 'Survey' %}<div class="sec">Daily Updates ({{ j.updates|length }})</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% else %}<div class="muted">None</div>{% endfor %}{% endif %}
-<div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes or '' }}</div>{% if not j.notes %}<div class="muted">None</div>{% endif %}
+<div class="sec">{{ {'Service':'Problem &amp; What Was Done','Survey':'Notes','Office Task':'Notes'}.get(j.job_type, 'Notes &amp; Updates')|safe }}</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% endfor %}{% if j.notes %}<div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}{% if not j.notes and not j.updates %}<div class="muted">None</div>{% endif %}
 {% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
-<div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
-<div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
-<div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
+<div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
+{% if s.timeline or s.budget or s.decision_maker %}<div style="margin-top:4px" class="muted">Earlier entry: Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
 {% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
-{% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Internal Punch List ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
+{% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Punch Items ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
-{% if j.job_type != 'Survey' %}{% if j.materials or j.materials_list %}<div class="sec">Materials</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}
-<div class="sec">Checklist ({{ j.checklist|selectattr('done')|list|length }}/{{ j.checklist|length }})</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
+{% if j.job_type not in ('Survey','Office Task') %}{% if j.materials or j.materials_list %}<div class="sec">{{ 'Parts Used' if j.job_type == 'Service' else 'Materials' }}</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}{% endif %}
+{% if j.job_type in ('Install','Office Task','') or (j.job_type == 'Service' and j.checklist|selectattr('done')|list) %}<div class="sec">Checklist ({{ j.checklist|selectattr('done')|list|length }}/{{ j.checklist|length }})</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 <div class="sec">Photos ({{ j.photos|length }})</div>{{ photogroups(j) }}{{ bplist(j) }}
 </details>{% endmacro %}
 {% if client is none %}<h2>Clients</h2><a class="btn" href="/">Back to Jobs</a>
@@ -1287,7 +1314,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 {% set active = jobs|rejectattr('status','equalto','completed')|list %}{% set done = jobs|selectattr('status','equalto','completed')|rejectattr('job_type','equalto','Survey')|list %}{% set surveys = jobs|selectattr('status','equalto','completed')|selectattr('job_type','equalto','Survey')|list %}
 <div class="job">{% if info.address %}<div>{{ info.address }}</div>{% endif %}{% if info.phone %}<div><a href="tel:{{ info.phone }}">{{ info.phone }}</a></div>{% endif %}
 <div class="muted" style="margin-top:4px">{{ active|length }} active &middot; {{ done|length + surveys|length }} completed</div>
-<div style="margin-top:4px;font-weight:600">Total: {{ (jobs|sum(attribute='hours'))|round(2) }} hrs &middot; {{ (jobs|sum(attribute='total_miles'))|round(1) }} miles</div></div>
+<div style="margin-top:4px;font-weight:600">Total: {{ (jobs|sum(attribute='hours'))|round(2) }} hrs</div></div>
 <a class="btn" href="/print/client?name={{ client|urlencode }}" target="_blank">Print Summary</a>
 {% if office %}<form method="post" action="/clients/delete" onsubmit="return confirm('Delete this client and ALL of its jobs, photos and notes? This cannot be undone.')"><input type="hidden" name="name" value="{{ client }}"><button class="btn" type="submit" style="width:100%;border:0;background:#b00020;color:#fff;font-size:1rem">Delete Client</button></form>{% endif %}
 <div class="folder">Active Jobs</div>{% for j in active %}{{ jobcard(j, true) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
@@ -1368,26 +1395,24 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block">
 <button class="btn noprint" onclick="window.print()">Print</button>
 <h1>{{ heading }}</h1>{% if info %}<div>{{ info.address }}</div><div>{{ info.phone }}</div>{% endif %}
-<div class="muted">{{ jobs|length }} job{{ '' if jobs|length == 1 else 's' }} &middot; Total {{ (jobs|sum(attribute='hours'))|round(2) }} hrs &middot; {{ (jobs|sum(attribute='total_miles'))|round(1) }} miles &middot; Printed {{ printed }}</div>
+<div class="muted">{{ jobs|length }} job{{ '' if jobs|length == 1 else 's' }} &middot; Total {{ (jobs|sum(attribute='hours'))|round(2) }} hrs &middot; Printed {{ printed }}</div>
 {% for j in jobs %}<div class="job"><h2>{{ j.id }} &middot; {{ j.title }}</h2>
 <div>Status: <b>{{ j.status_label }}</b>{% if j.job_type %} &middot; Type: <b>{{ j.job_type }}</b>{% endif %} &middot; Tech: {{ j.tech or '-' }}{% if j.scheduled_date %} &middot; Scheduled {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}</div>
 <div>{{ j.customer }} &middot; {{ j.address }}{% if j.phone %} &middot; {{ j.phone }}{% endif %}</div>
-{% if j.job_type != 'Survey' %}<div>Hours: {{ j.hours }} &middot; Miles: {{ j.total_miles }}</div>{% endif %}
+{% if j.job_type not in ('Survey','Office Task') %}<div>Hours: {{ j.hours }}</div>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
-{% if j.notes %}<div class="sec">Notes</div><div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}
+{% set lt = {'Service':'Problem &amp; What Was Done','Survey':'Notes','Office Task':'Notes'}.get(j.job_type, 'Notes &amp; Updates') %}{% if j.notes or j.updates %}<div class="sec">{{ lt|safe }}</div>{% for u in j.updates|reverse %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> <span style="white-space:pre-wrap">{{ u.note }}</span></div>{% endfor %}{% if j.notes %}<div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}{% endif %}
 {% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
-<div><b>Current system:</b> {{ s.current_system or '-' }}</div><div><b>Power:</b> {{ s.power or '-' }}</div><div><b>Network:</b> {{ s.network or '-' }}</div><div><b>Conduit / pathways:</b> {{ s.conduit or '-' }}</div>
-<div style="margin-top:4px"><b>Obstacles:</b> {{ s.obstacles|join(', ') if s.obstacles else '-' }}</div>{% if s.obstacle_notes %}<div style="white-space:pre-wrap">{{ s.obstacle_notes }}</div>{% endif %}
-<div style="margin-top:4px"><b>Timeline:</b> {{ s.timeline or '-' }} &middot; <b>Budget:</b> {{ s.budget or '-' }} &middot; <b>Decision maker:</b> {{ s.decision_maker or '-' }}</div>
+<div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
+{% if s.timeline or s.budget or s.decision_maker %}<div style="margin-top:4px" class="muted">Earlier entry: Timeline {{ s.timeline or '-' }} &middot; Budget {{ s.budget or '-' }} &middot; Decision maker {{ s.decision_maker or '-' }}</div>{% endif %}
 {% if office and j.survey_office %}<div style="margin-top:4px"><b>Rough materials &amp; labor (office only):</b></div><div style="white-space:pre-wrap">{{ j.survey_office }}</div>{% endif %}</div>{% endif %}
 {% if office and j.quick_notes %}<div class="sec">Quick Notes</div><div style="white-space:pre-wrap">{{ j.quick_notes }}</div>{% endif %}
-{% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Internal Punch List ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
+{% if office and j.punch_list and j.job_type != 'Survey' %}<div class="sec">Punch Items ({{ j.punch_list|selectattr('done')|list|length }}/{{ j.punch_list|length }})</div>{% for c in j.punch_list %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if office and j.private_notes %}<div class="sec">Private Office Notes</div><div style="white-space:pre-wrap">{{ j.private_notes }}</div>{% endif %}
-{% if j.job_type != 'Survey' %}{% if j.materials_list or j.materials %}<div class="sec">Materials</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}
-<div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
-{% if j.updates %}<div class="sec">Daily Updates</div>{% for u in j.updates %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> {{ u.note }}</div>{% endfor %}{% endif %}{% endif %}
+{% if j.job_type not in ('Survey','Office Task') %}{% if j.materials_list or j.materials %}<div class="sec">{{ 'Parts Used' if j.job_type == 'Service' else 'Materials' }}</div>{% for m in j.materials_list %}<div>{{ '&#9745;'|safe if m.used else '&#9744;'|safe }} {{ m.text }}</div>{% endfor %}{% if j.materials %}<div>{{ j.materials }}</div>{% endif %}{% endif %}{% endif %}
+{% if j.job_type in ('Install','Office Task','') or (j.job_type == 'Service' and j.checklist|selectattr('done')|list) %}<div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}{% endif %}
 {% if j.job_type == 'Survey' and j.photos %}<div class="sec">Photos</div>{% for p in j.photos %}<img src="/uploads/{{ p.filename|urlencode }}" alt="photo">{% endfor %}{% endif %}
 {% set ab = j.job_type != 'Survey' %}{% if j.job_type != 'Office Task' and j.plans %}<div class="sec">{{ 'As-Built' if ab else 'Floor Plan Devices' }}</div>{% if ab %}<div class="muted">Solid pin = installed, white pin = planned</div>{% endif %}{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);{% if ab and not d.installed %}background:#fff;color:{{ DEV_COLORS[d.type] }};border:2px solid {{ DEV_COLORS[d.type] }};{% else %}background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;{% endif %}border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
 {% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if ab %} ({{ j.devices|selectattr('type','equalto',t)|selectattr('installed')|list|length }} installed){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total{% if ab %}, {{ j.devices|selectattr('installed')|list|length }} installed{% endif %})</div>
@@ -1398,7 +1423,7 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% if j.job_type != 'Survey' %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ lbl }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
 {% endif %}
 {% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints</div>{% for b in j.blueprints %}<div>{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint"><br>{% endif %}<a href="/uploads/{{ b.filename|urlencode }}">{{ b.name }}</a></div>{% endfor %}{% endif %}
-{% if j.job_type != 'Survey' and j.signature and j.signature.startswith('data:image/') %}<div class="sec">Customer Signature</div><img src="{{ j.signature }}" alt="signature" style="width:240px;height:auto;object-fit:contain;border:1px solid #ddd">{% endif %}
+{% if j.job_type not in ('Survey','Office Task') and j.signature and j.signature.startswith('data:image/') %}<div class="sec">Customer Signature</div><img src="{{ j.signature }}" alt="signature" style="width:240px;height:auto;object-fit:contain;border:1px solid #ddd">{% endif %}
 </div>{% else %}<div class="muted">No jobs</div>{% endfor %}
 </body></html>'''
 
