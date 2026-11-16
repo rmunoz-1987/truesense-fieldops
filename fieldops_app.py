@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
-import sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request
+import sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request, urllib.parse, math, time
 from datetime import timedelta
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -101,7 +101,48 @@ def dev_counts(devs):
         if k: c[n] = k
     return c
 
-app.jinja_env.globals.update(DEV_COLORS={n: c for n, p, c in DEVICE_TYPES}, dev_counts=dev_counts)
+def _num(v, lo, hi, dflt):
+    try: f = float(v)
+    except (TypeError, ValueError): return dflt
+    return dflt if f != f else min(hi, max(lo, f))
+
+def feet_between(a, b):
+    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 6371008.8 * 2 * math.asin(min(1, math.sqrt(h))) * 3.28084
+
+def parse_map(raw):
+    try: d = json.loads(raw) if isinstance(raw, str) and raw else raw
+    except Exception: d = None
+    d = d if isinstance(d, dict) else {}
+    cams = []; used = set()
+    for c in (d.get('cameras') if isinstance(d.get('cameras'), list) else [])[:200]:
+        if not isinstance(c, dict) or _num(c.get('lat'), -90, 90, None) is None or _num(c.get('lng'), -180, 180, None) is None: continue
+        cams.append({'id': secure_filename(str(c.get('id') or ''))[:20] or uuid.uuid4().hex[:10], 'label': str(c.get('label') or '')[:10],
+                     'lat': round(_num(c['lat'], -90, 90, 0), 7), 'lng': round(_num(c['lng'], -180, 180, 0), 7), 'dir': round(_num(c.get('dir'), -10000, 10000, 0) % 360),
+                     'fov': round(_num(c.get('fov'), 10, 360, 90)), 'range': round(_num(c.get('range'), 5, 2000, 60))})
+    for c in cams:
+        n = c['label'][1:]
+        if c['label'].startswith('C') and n.isdigit() and int(n) not in used: used.add(int(n))
+        else: c['label'] = ''
+    for c in cams:
+        if not c['label']: n = max(used or {0}) + 1; used.add(n); c['label'] = f'C{n}'
+    runs = []
+    for r in (d.get('runs') if isinstance(d.get('runs'), list) else [])[:100]:
+        if not isinstance(r, dict) or not isinstance(r.get('pts'), list): continue
+        pts = [[round(_num(q[0], -90, 90, 0), 7), round(_num(q[1], -180, 180, 0), 7)] for q in r['pts'][:200] if isinstance(q, list) and len(q) == 2 and _num(q[0], -90, 90, None) is not None and _num(q[1], -180, 180, None) is not None]
+        if len(pts) < 2: continue
+        segs = [round(feet_between(pts[i], pts[i + 1]), 1) for i in range(len(pts) - 1)]; slack = round(_num(r.get('slack'), 0, 100, 0), 1); tot = round(sum(segs), 1)
+        runs.append({'id': secure_filename(str(r.get('id') or ''))[:20] or uuid.uuid4().hex[:10], 'label': str(r.get('label') or '').strip()[:80], 'pts': pts,
+                     'slack': slack, 'segments_ft': segs, 'total_ft': tot, 'adjusted_ft': round(tot * (1 + slack / 100), 1)})
+    v = d.get('view') if isinstance(d.get('view'), dict) else {}
+    view = {'lat': _num(v.get('lat'), -90, 90, None), 'lng': _num(v.get('lng'), -180, 180, None), 'zoom': _num(v.get('zoom'), 1, 22, 18)}
+    g = d.get('geo') if isinstance(d.get('geo'), dict) else None
+    return {'cameras': cams, 'runs': runs, 'view': view if view['lat'] is not None and view['lng'] is not None else None, 'geo': g}
+
+def compass(deg): return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][int(round(deg / 45.0)) % 8]
+
+app.jinja_env.globals.update(compass=compass, DEV_COLORS={n: c for n, p, c in DEVICE_TYPES}, dev_counts=dev_counts)
 BLUEPRINT_EXTS = {'.pdf', '.png', '.jpg', '.jpeg', '.webp', '.heic'}
 
 def parse_materials(raw):
@@ -122,6 +163,7 @@ def job_dict(row):
     d['punch_list'] = parse_ticks(d.get('punch_list')); d['quick_notes'] = d.get('quick_notes') or ''
     d['help_open'] = d.get('help_flag') == 'open'
     d['devices'] = parse_devices(d.pop('survey_devices', None))
+    d['map'] = parse_map(d.pop('map_data', None))
     if not is_office(): d.pop('private_notes', None)
     return d
 
@@ -186,7 +228,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -258,6 +300,9 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
 .plan{position:relative;margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}.plan img{width:100%;height:auto;display:block}
 .pin{position:absolute;transform:translate(-50%,-50%);min-width:32px;padding:0 4px;height:32px;line-height:28px;font-size:.85rem;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box}.pin.sel{outline:3px solid #111}
+#mp{position:fixed;inset:0;background:#fff;z-index:40;overflow:auto;padding:10px}#mp.hidden{display:none}#mp-map{height:55vh;border-radius:10px}
+.mp-tools{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.mp-tools button,.mp-b button{padding:14px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:1rem;color:var(--text)}.mp-tools button.on{border-color:var(--text);background:#fbfaf0}
+.mp-b{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.mp-seg{background:rgba(0,0,0,.7);color:#fff;font-weight:700;font-size:12px;padding:2px 5px;border-radius:6px;white-space:nowrap}
 #sk{position:fixed;inset:0;background:#fff;z-index:50;overflow:auto;padding:10px}#sk.hidden{display:none}
 .sk-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px}.sk-tools button{padding:14px 2px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}.sk-tools button.on{border-color:var(--text);background:#fbfaf0}
 
@@ -334,6 +379,10 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="job hidden" id="bp-card"><div style="font-weight:600;margin-bottom:6px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div>
+<div class="job hidden" id="map-card"><div style="font-weight:800;font-size:1.4rem">Site Map</div><div id="map-sum" class="muted" style="font-size:1.05rem"></div><button class="big-btn" onclick="mapOpen()">Open Site Map</button></div>
+<div id="mp" class="hidden"><div class="mp-tools" id="mp-tools"><button data-m="cam" onclick="mapMode(this.dataset.m)">+ Camera</button><button data-m="measure" onclick="mapMode(this.dataset.m)">Measure</button><button onclick="mapClose()">Done</button></div>
+<div id="mp-hint" style="font-weight:700;text-align:center;margin:4px 0"></div><div id="mp-map"></div><div id="mp-panel"></div><div id="mp-list"></div>
+<button class="big-btn gray" onclick="mapClose()">Close Map</button></div>
 <div class="job hidden" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div></div>
 <div id="sk" class="hidden"><div style="font-weight:800;font-size:1.3rem;text-align:center;margin-bottom:6px">Draw Plan</div>
 <div class="sk-tools"><button data-t="pen" onclick="skTool(this.dataset.t)">Draw</button><button data-t="line" onclick="skTool(this.dataset.t)">Line</button><button data-t="erase" onclick="skTool(this.dataset.t)">Eraser</button><button data-t="text" onclick="skTool(this.dataset.t)">Room Label</button><button onclick="skUndo()">Undo</button></div>
@@ -534,6 +583,54 @@ skC.addEventListener('pointermove',e=>{if(!skCur)return;e.preventDefault();const
 ['pointerup','pointercancel'].forEach(t=>skC.addEventListener(t,e=>{if(!skCur)return;skOps.push(skCur);skCur=null;skDraw()}));
 async function skSave(){if(!skOps.length){alert('Draw something first');return}skDraw();const blob=await new Promise(r=>skC.toBlob(r,'image/png'));const fd=new FormData();fd.append('files',blob,'sketch.png');
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;skOps=[];document.getElementById('sk').classList.add('hidden');renderDevices()}else alert(d.error||'Error')}
+const MCOL=['#ff1744','#2979ff','#00e676','#ffea00','#d500f9','#ff9100'];let mpL=null,mpLay=null,mpM='',mpSel=null,mpRun=null;
+function mjob(){currentJob.map=currentJob.map||{};const m=currentJob.map;m.cameras=m.cameras||[];m.runs=m.runs||[];return m}
+function mft(a,b){return L.latLng(a).distanceTo(L.latLng(b))*3.28084}
+function loadLeaflet(){if(window.L)return Promise.resolve(true);return new Promise(res=>{const c=document.createElement('link');c.rel='stylesheet';c.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';document.head.appendChild(c);
+const s=document.createElement('script');s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';s.onload=()=>res(!!window.L);s.onerror=()=>res(false);document.head.appendChild(s)})}
+function mapSummary(){const m=mjob();document.getElementById('map-sum').textContent=m.cameras.length||m.runs.length?m.cameras.length+' camera'+(m.cameras.length===1?'':'s')+', '+m.runs.length+' run'+(m.runs.length===1?'':'s'):'No cameras or runs yet'}
+async function mapOpen(){document.getElementById('mp').classList.remove('hidden');window.scrollTo(0,0);if(!(await loadLeaflet())){document.getElementById('mp-hint').textContent='Map could not load. Check your signal.';return}
+if(!mpL){mpL=L.map('mp-map');L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19,attribution:'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'}).addTo(mpL);mpLay=L.layerGroup().addTo(mpL);mpL.on('click',mapTap)}
+mpM='';mpSel=null;mpRun=null;const m=mjob();setTimeout(()=>mpL.invalidateSize(),60);
+if(m.view)mpL.setView([m.view.lat,m.view.lng],m.view.zoom);else if(m.geo&&m.geo.lat!=null)mpL.setView([m.geo.lat,m.geo.lng],19);
+else{mpL.setView([29.76,-95.37],11);mapRender();document.getElementById('mp-hint').textContent='Finding the address...';const r=await post('/geocode',{});const d=await r.json().catch(()=>({}));
+if(r.ok&&d.lat!=null){m.geo={lat:d.lat,lng:d.lng};mpL.setView([d.lat,d.lng],19)}else{mapRender();document.getElementById('mp-hint').textContent='Address not found. Pan and zoom to the site.';return}}
+mapRender()}
+function mapClose(){if(mpRun&&mpRun.pts.length&&!confirm('Throw away the run you are drawing?'))return;mpRun=null;mpM='';document.getElementById('mp').classList.add('hidden');if(mpL&&!devLock())mapSave();mapSummary()}
+function mapMode(md){if(devLock())return;mpM=mpM===md?'':md;mpSel=null;mpRun=mpM==='measure'?{pts:[]}:null;mapRender()}
+function mapTap(e){if(devLock())return;const m=mjob();const p=[e.latlng.lat,e.latlng.lng];
+if(mpM==='cam'){m.cameras.push({lat:p[0],lng:p[1],dir:0,fov:90,range:60});mpM='';mapSave('cam')}
+else if(mpM==='measure'&&mpRun){mpRun.pts.push(p);mapRender()}}
+function cone(c){const R=6378137,d=c.range*0.3048,n=Math.max(8,Math.round(c.fov/6)),pts=[[c.lat,c.lng]];
+for(let i=0;i<=n;i++){const b=(c.dir-c.fov/2+c.fov*i/n)*Math.PI/180;pts.push([c.lat+d*Math.cos(b)/R*180/Math.PI,c.lng+d*Math.sin(b)/(R*Math.cos(c.lat*Math.PI/180))*180/Math.PI])}return pts}
+function cmp(d){return['N','NE','E','SE','S','SW','W','NW'][Math.round(d/45)%8]}
+function segLabels(pts,col){for(let i=0;i<pts.length-1;i++){const a=pts[i],b=pts[i+1];L.marker([(a[0]+b[0])/2,(a[1]+b[1])/2],{interactive:false,icon:L.divIcon({className:'',html:'<span class="mp-seg">'+Math.round(mft(a,b))+' ft</span>',iconSize:null})}).addTo(mpLay)}}
+function mapRender(){if(!mpL)return;const m=mjob(),lock=devLock();mpLay.clearLayers();
+document.querySelectorAll('#mp-tools button[data-m]').forEach(b=>{b.classList.toggle('on',b.dataset.m===mpM);b.style.display=lock?'none':''});
+m.cameras.forEach((c,i)=>{const col=MCOL[i%MCOL.length];L.polygon(cone(c),{color:col,weight:2,fillOpacity:.3,interactive:false}).addTo(mpLay);
+const mk=L.marker([c.lat,c.lng],{draggable:!lock,icon:L.divIcon({className:'',html:'<span class="pin" style="position:static;transform:none;display:inline-block;background:'+col+';color:#111">'+esc(c.label||'C')+'</span>',iconSize:[36,36],iconAnchor:[18,18]})}).addTo(mpLay);
+mk.on('click',()=>{if(mpM)return;mpSel={k:'cam',id:c.id};mapRender()});mk.on('dragend',ev=>{const q=ev.target.getLatLng();c.lat=q.lat;c.lng=q.lng;mapSave()})});
+m.runs.forEach(r=>{const ln=L.polyline(r.pts,{color:'#ffea00',weight:(mpSel&&mpSel.id===r.id)?7:4}).addTo(mpLay);ln.on('click',ev=>{L.DomEvent.stopPropagation(ev);if(mpM)return;mpSel={k:'run',id:r.id};mapRender()});segLabels(r.pts)});
+if(mpRun&&mpRun.pts.length){L.polyline(mpRun.pts,{color:'#00e5ff',weight:4,dashArray:'8 6'}).addTo(mpLay);mpRun.pts.forEach(q=>L.circleMarker(q,{radius:6,color:'#00e5ff',fillOpacity:1,interactive:false}).addTo(mpLay));segLabels(mpRun.pts)}
+document.getElementById('mp-hint').textContent=lock?'View only':mpM==='cam'?'Tap the map where the camera goes':mpM==='measure'?'Tap points along the run':'Tap a camera or run to change it';
+const P=document.getElementById('mp-panel');P.innerHTML='';const btn=(t,f,cls)=>{const b=document.createElement('button');b.textContent=t;b.onclick=f;if(cls)b.style.cssText=cls;return b};const grid=(...bs)=>{const g=document.createElement('div');g.className='mp-b';bs.forEach(b=>g.appendChild(b));return g};
+const box=document.createElement('div');box.className='job';box.style.border='2px solid var(--accent)';const ttl=document.createElement('div');ttl.style.cssText='font-weight:800;font-size:1.2rem';box.appendChild(ttl);const inf=document.createElement('div');inf.style.fontSize='1.1rem';box.appendChild(inf);
+if(mpRun){const tot=mpRun.pts.slice(1).reduce((a,q,i)=>a+mft(mpRun.pts[i],q),0);ttl.textContent='New Run';inf.textContent=mpRun.pts.length+' points, '+Math.round(tot)+' ft';
+box.appendChild(grid(btn('Undo Point',()=>{mpRun.pts.pop();mapRender()}),btn('Finish Run',finishRun,'background:#2d6a4f;color:#fff')));P.appendChild(box)}
+else if(mpSel){const it=(mpSel.k==='cam'?m.cameras:m.runs).find(x=>x.id===mpSel.id);if(!it){mpSel=null}else if(mpSel.k==='cam'){const c=it;ttl.textContent=c.label+' Camera';inf.textContent='Facing '+c.dir+'\u00b0 '+cmp(c.dir)+', view '+c.fov+'\u00b0, range '+c.range+' ft';
+const ch=(k,dv,lo,hi,wrap)=>()=>{let v=c[k]+dv;v=wrap?((v%360)+360)%360:Math.min(hi,Math.max(lo,v));c[k]=v;mapSave()};
+if(!lock){box.appendChild(grid(btn('Turn Left',ch('dir',-15,0,0,1)),btn('Turn Right',ch('dir',15,0,0,1)),btn('Narrower',ch('fov',-10,10,360)),btn('Wider',ch('fov',10,10,360)),btn('Range -10 ft',ch('range',-10,5,2000)),btn('Range +10 ft',ch('range',10,5,2000))));
+const h=document.createElement('div');h.className='muted';h.textContent='Drag the pin to move it';box.appendChild(h);box.appendChild(grid(btn('Delete',()=>{if(!confirm('Delete '+c.label+'?'))return;m.cameras=m.cameras.filter(x=>x!==c);mpSel=null;mapSave()},'background:#b00020;color:#fff'),btn('Close',()=>{mpSel=null;mapRender()})))}
+else box.appendChild(grid(btn('Close',()=>{mpSel=null;mapRender()})));P.appendChild(box)}
+else{const r=it;ttl.textContent=r.label||'Run';inf.textContent=(r.segments_ft||[]).map(Math.round).join(' + ')+' = '+Math.round(r.total_ft||0)+' ft'+(r.slack?', with '+r.slack+'% slack = '+Math.round(r.adjusted_ft)+' ft':'');
+const li=document.createElement('input');li.type='text';li.placeholder='Run name (example: Bldg A to B)';li.value=r.label||'';li.disabled=lock;const si=document.createElement('input');si.type='number';si.inputMode='decimal';si.placeholder='Slack percent (optional)';si.value=r.slack||'';si.disabled=lock;box.append(li,si);
+if(!lock)box.appendChild(grid(btn('Save',()=>{r.label=li.value.trim();r.slack=parseFloat(si.value)||0;mapSave()},'background:var(--accent);color:#fff'),btn('Delete',()=>{if(!confirm('Delete this run?'))return;m.runs=m.runs.filter(x=>x!==r);mpSel=null;mapSave()},'background:#b00020;color:#fff')));
+box.appendChild(grid(btn('Close',()=>{mpSel=null;mapRender()})));P.appendChild(box)}}
+const Ls=document.getElementById('mp-list');Ls.innerHTML='';const line=t=>{const d=document.createElement('div');d.style.cssText='font-size:1.1rem;padding:6px 0;border-bottom:1px solid #e5e5e5';d.textContent=t;Ls.appendChild(d)};
+m.cameras.forEach(c=>line(c.label+': facing '+cmp(c.dir)+', '+c.fov+'\u00b0, '+c.range+' ft'));m.runs.forEach(r=>line((r.label||'Run')+': '+Math.round(r.total_ft||0)+' ft'+(r.slack?' ('+Math.round(r.adjusted_ft)+' ft with slack)':'')));mapSummary()}
+function finishRun(){if(!mpRun||mpRun.pts.length<2){alert('Tap at least 2 points');return}const lb=prompt('Name this run (example: Bldg A to B)','');if(lb===null)return;mjob().runs.push({label:lb.trim(),pts:mpRun.pts,slack:0});mpRun=null;mpM='';mapSave('run')}
+async function mapSave(sel){const m=mjob();const c=mpL?mpL.getCenter():null;const r=await post('/map',{cameras:m.cameras,runs:m.runs,view:c?{lat:c.lat,lng:c.lng,zoom:mpL.getZoom()}:m.view});
+if(r.ok){const d=(await r.json()).map;currentJob.map=Object.assign(d,{geo:m.geo});if(sel==='cam'){const x=d.cameras[d.cameras.length-1];if(x)mpSel={k:'cam',id:x.id}}if(sel==='run'){const x=d.runs[d.runs.length-1];if(x)mpSel={k:'run',id:x.id}}}else alert('Error, not saved');mapRender()}
 async function uploadPlans(inp){if(!inp.files.length)return;const fd=new FormData();[...inp.files].forEach(f=>fd.append('files',f));inp.value='';
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;renderDevices()}else alert(d.error||'Error')}
 async function removePlan(fn){if(!confirm('Remove this plan and all its devices?'))return;const r=await post('/plans/delete',{filename:fn});if(r.ok){const d=await r.json();currentJob.plans=d.plans;currentJob.devices=d.devices;devSel=null;devMove=null;renderDevices()}else alert('Error')}
@@ -550,7 +647,7 @@ let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey';document.getElementById('survey-card').classList.toggle('hidden',!sv);document.querySelectorAll('#detail .ns').forEach(e=>e.classList.toggle('hidden',sv));
-document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');document.getElementById('ab-card').classList.toggle('hidden',sv||t==='Office Task');
+document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');document.getElementById('ab-card').classList.toggle('hidden',sv||t==='Office Task');document.getElementById('map-card').classList.toggle('hidden',t==='Office Task');mapSummary();
 document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementById('markup'));document.getElementById('mk-title').textContent=sv?'5. Floor Plan Devices':'Plan and Devices';renderDevices();const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
@@ -867,6 +964,42 @@ def save_devices(job_id):
     conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); prune_devphotos(conn, job_id, devs); conn.commit(); conn.close()
     return jsonify({'ok':True,'devices':devs})
 
+@app.route('/api/jobs/<job_id>/map', methods=['POST'])
+def save_map(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    d=request.get_json(silent=True) or {}
+    m=parse_map({'cameras':d.get('cameras'),'runs':d.get('runs'),'view':d.get('view'),'geo':parse_map(row['map_data'])['geo']})
+    store={'cameras':m['cameras'],'runs':[{k:r[k] for k in ('id','label','pts','slack')} for r in m['runs']],'view':m['view'],'geo':m['geo']}
+    conn.execute('UPDATE jobs SET map_data=? WHERE id=?',(json.dumps(store),job_id)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'map':m})
+
+GEO_LOCK=threading.Lock(); GEO_LAST=[0.0]
+@app.route('/api/jobs/<job_id>/geocode', methods=['POST'])
+def geocode_job(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    addr=(row['address'] or '').strip(); m=parse_map(row['map_data'])
+    if not addr: conn.close(); return jsonify({'error':'no address'}),404
+    g=m['geo']
+    if not (g and g.get('addr')==addr):
+        g={'addr':addr,'lat':None,'lng':None}
+        try:
+            with GEO_LOCK:
+                wait=1.1-(time.time()-GEO_LAST[0])
+                if wait>0: time.sleep(wait)
+                req=urllib.request.Request('https://nominatim.openstreetmap.org/search?'+urllib.parse.urlencode({'format':'json','limit':1,'q':addr}),
+                    headers={'User-Agent':'TrueSense-FieldOps/1.0 (truesense-fieldops.onrender.com)'})
+                res=json.loads(urllib.request.urlopen(req, timeout=8).read().decode()); GEO_LAST[0]=time.time()
+            if res: g={'addr':addr,'lat':float(res[0]['lat']),'lng':float(res[0]['lon'])}
+        except Exception as e:
+            app.logger.warning('Geocode failed for %s: %s', job_id, e); conn.close(); return jsonify({'error':'lookup failed'}),502
+        raw=json.loads(row['map_data']) if row['map_data'] else {}
+        raw=raw if isinstance(raw,dict) else {}
+        raw['geo']=g; conn.execute('UPDATE jobs SET map_data=? WHERE id=?',(json.dumps(raw),job_id)); conn.commit()
+    conn.close()
+    return (jsonify({'ok':True,'lat':g['lat'],'lng':g['lng']}) if g.get('lat') is not None else (jsonify({'error':'address not found'}),404))
+
 def devphoto_files(conn, job_id):
     return {r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='devphoto'",(job_id,)).fetchall()}
 
@@ -998,7 +1131,9 @@ def notify_kelly(conn, job_id, event):
           'plan_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in plan_files(conn, j['id'])],
           'devices':[{'type':d['type'],'label':d['label'],'note':d['note'],'height':d['height'],'cable':d['cable'],
                       'plan_url':f"{base}/help-photo/{d['plan']}?t={help_photo_token(d['plan'])}"} for d in parse_devices(j['survey_devices'])],
-          'device_counts':dev_counts(parse_devices(j['survey_devices']))}
+          'device_counts':dev_counts(parse_devices(j['survey_devices'])),
+          'map_cameras':[{'label':c['label'],'lat':c['lat'],'lng':c['lng'],'direction_deg':c['dir'],'direction':compass(c['dir']),'fov_deg':c['fov'],'range_ft':c['range']} for c in parse_map(j['map_data'])['cameras']],
+          'map_runs':[{'label':r['label'],'segments_ft':r['segments_ft'],'total_ft':r['total_ft'],'slack_pct':r['slack'],'adjusted_ft':r['adjusted_ft']} for r in parse_map(j['map_data'])['runs']]}
     def send():
         try:
             req=urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
@@ -1219,6 +1354,9 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% set ab = j.job_type != 'Survey' %}{% if j.job_type != 'Office Task' and j.plans %}<div class="sec">{{ 'As-Built' if ab else 'Floor Plan Devices' }}</div>{% if ab %}<div class="muted">Solid pin = installed, white pin = planned</div>{% endif %}{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);{% if ab and not d.installed %}background:#fff;color:{{ DEV_COLORS[d.type] }};border:2px solid {{ DEV_COLORS[d.type] }};{% else %}background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;{% endif %}border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
 {% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if ab %} ({{ j.devices|selectattr('type','equalto',t)|selectattr('installed')|list|length }} installed){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total{% if ab %}, {{ j.devices|selectattr('installed')|list|length }} installed{% endif %})</div>
 <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #999"><th>Label</th><th>Device</th>{% if ab %}<th>Installed</th><th>MAC / Serial</th><th>IP</th><th>Switch port</th><th>Cable label</th>{% endif %}<th>Height</th><th>Cable run</th><th>Note</th>{% if ab %}<th>Photo</th>{% endif %}</tr>{% for d in j.devices %}<tr style="border-bottom:1px solid #ddd"><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td>{% if ab %}<td>{{ 'Yes' if d.installed else 'Planned' }}</td><td>{{ d.mac }}</td><td>{{ d.ip }}</td><td>{{ d.port }}</td><td>{{ d.clabel }}</td>{% endif %}<td>{{ d.height }}</td><td>{{ d.cable }}</td><td>{{ d.note }}</td>{% if ab %}<td>{% if d.photo %}<img src="/uploads/{{ d.photo|urlencode }}" alt="{{ d.label }}" style="width:60px;height:60px">{% endif %}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
+{% if j.job_type != 'Office Task' and (j.map.cameras or j.map.runs) %}<div class="sec">Site Map</div>
+{% if j.map.cameras %}<div><b>Exterior cameras:</b></div>{% for c in j.map.cameras %}<div>{{ c.label }}: facing {{ c.dir }}&deg; {{ compass(c.dir) }}, view {{ c.fov }}&deg;, range {{ c.range }} ft <span class="muted">({{ c.lat }}, {{ c.lng }})</span></div>{% endfor %}{% endif %}
+{% if j.map.runs %}<div style="margin-top:4px"><b>Measured runs:</b></div>{% for r in j.map.runs %}<div>{{ r.label or 'Run' }}: {{ r.segments_ft|join(' + ') }} = <b>{{ r.total_ft }} ft</b>{% if r.slack %}, plus {{ r.slack }}% slack = <b>{{ r.adjusted_ft }} ft</b>{% endif %}</div>{% endfor %}{% endif %}{% endif %}
 {% if j.job_type != 'Survey' %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ lbl }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
 {% endif %}
 {% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints</div>{% for b in j.blueprints %}<div>{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint"><br>{% endif %}<a href="/uploads/{{ b.filename|urlencode }}">{{ b.name }}</a></div>{% endfor %}{% endif %}
