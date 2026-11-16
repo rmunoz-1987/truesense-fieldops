@@ -16,6 +16,7 @@ app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + j
 app.permanent_session_lifetime = timedelta(days=30)
 
 DEFAULT_CHECKLIST = ['Cleaned up', 'Checked in with the client', 'Walked the finished work with the client']
+NO_CLOSING_STEPS = ('Survey', 'Office Task')  # these job types do not get the 3 closing steps
 JOB_TYPES = ['Install', 'Service', 'Survey', 'Office Task']
 # Built-in checklist templates: (name, job type, steps). Seeded once by name; office edits and deletes are kept.
 BUILTIN_TEMPLATES = [
@@ -77,15 +78,17 @@ def now_local_str():
     except Exception:
         return (datetime.utcnow() - timedelta(hours=6)).strftime('%Y-%m-%d %I:%M %p CT')
 
-def parse_checklist(raw):
+def parse_checklist(raw, job_type=''):
     try:
         items = json.loads(raw) if raw else None
     except Exception:
         items = None
+    closing = (job_type or '') not in NO_CLOSING_STEPS
     if not items:
-        items = [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST]
+        items = [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST] if closing else []
     out = [{'text': str(i.get('text', '')), 'done': bool(i.get('done'))} for i in items if isinstance(i, dict) and i.get('text')]
     have = {i['text'] for i in out}
+    if not closing: return [i for i in out if i['done'] or i['text'] not in DEFAULT_CHECKLIST]
     return out + [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST if t not in have]
 
 STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_parts', 'Waiting on Parts'), ('review', 'Needs Review'), ('completed', 'Complete')]
@@ -179,7 +182,7 @@ def parse_materials(raw):
     return [{'text': str(i.get('text', ''))[:200], 'used': bool(i.get('used'))} for i in (items if isinstance(items, list) else []) if isinstance(i, dict) and str(i.get('text', '')).strip()]
 
 def job_dict(row):
-    d = dict(row); d['checklist'] = parse_checklist(d.get('checklist'))
+    d = dict(row); d['checklist'] = parse_checklist(d.get('checklist'), d.get('job_type'))
     d['materials_list'] = parse_materials(d.get('materials_list'))
     d['tech'] = nice_name(d.get('tech'))
     d['status_label'] = STATUS_LABEL.get(d.get('status') or 'assigned', (d.get('status') or 'Open').replace('_', ' ').title())
@@ -1113,7 +1116,7 @@ def create_job():
         t = conn.execute('SELECT items FROM checklist_templates WHERE LOWER(name)=? ORDER BY id LIMIT 1',(DEFAULT_TEMPLATE.get(jt,'').lower(),)).fetchone()
         try: lines = [x for x in json.loads(t['items']) if str(x).strip()] if t else []
         except Exception: lines = []
-    chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
+    chk = json.dumps([{'text': x, 'done': False} for x in (lines or (DEFAULT_CHECKLIST if jt not in NO_CLOSING_STEPS else []))])
     tech = nice_name(d.get('tech')) or default_sub()
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
     conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
