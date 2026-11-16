@@ -264,6 +264,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, due TEXT, note TEXT, done INTEGER DEFAULT 0, created_by TEXT, created_at TEXT, done_by TEXT, done_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS msg_drafts (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, kind TEXT, phone TEXT, body TEXT, status TEXT DEFAULT 'pending', ref_date TEXT, created_by TEXT, created_at TEXT, approved_by TEXT, approved_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS subs (
+        key TEXT PRIMARY KEY, company TEXT, updated_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -460,8 +462,8 @@ canvas.style.touchAction='none';
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
 const OFFICE={{ office|tojson }};let F='';
-const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div><button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
-const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div><div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
+const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div>${j.company?'<div style="color:#666">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
+const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div>${j.company?'<div class="muted">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
 const TPLS={{ tpls|tojson }};
 function tplOpts(){const t=document.getElementById('n-type').value,s=document.getElementById('n-tpl');if(!s)return;s.innerHTML='';const o=new Option('Checklist: none (type your own below)','');s.add(o);
@@ -484,7 +486,7 @@ const jobs=F?lists[F]:a;const g={};jobs.forEach(j=>{const k=(j.tech||'').trim()|
 const keys=Object.keys(g).sort((x,y)=>x==='Unassigned'?-1:y==='Unassigned'?1:x.localeCompare(y));
 keys.forEach(k=>g[k].sort((x,y)=>(x.scheduled_date||'9999').localeCompare(y.scheduled_date||'9999')));
 const title=F?'<div class="day">'+esc(document.querySelector('.tile[data-f="'+F+'"]').textContent.replace(/^\d+/,''))+' <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all)</a></div>':'';
-document.getElementById('list').innerHTML=title+(keys.map(k=>`<div class="tech-h">${esc(k)} &middot; ${g[k].length} job${g[k].length===1?'':'s'}</div>`+g[k].map(dcard).join('')).join('')||'<div class="job">No jobs</div>')}
+document.getElementById('list').innerHTML=title+(keys.map(k=>`<div class="tech-h">${esc(k)}${g[k][0].company?' ('+esc(g[k][0].company)+')':''} &middot; ${g[k].length} job${g[k].length===1?'':'s'}</div>`+g[k].map(dcard).join('')).join('')||'<div class="job">No jobs</div>')}
 function fuLabel(d,today){return d<today?'Overdue, '+dayLabel(d).replace(/^Overdue, /,''):dayLabel(d)}
 function renderFollowList(fu,today){const el=document.getElementById('list');el.innerHTML='<div class="day">Follow-ups <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all jobs)</a></div>';
 if(!fu.length){el.innerHTML+='<div class="job">No follow-ups</div>';return}
@@ -796,8 +798,11 @@ def list_jobs():
         rows=conn.execute("SELECT * FROM jobs WHERE INSTR(LOWER(IFNULL(customer,'')),?)>0 OR INSTR(LOWER(IFNULL(address,'')),?)>0 OR INSTR(LOWER(id),?)>0 ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(q,q,q)).fetchall()
     elif status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
     else: rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY created_at DESC").fetchall()
-    conn.close()
-    return jsonify([job_dict(r) for r in rows if can_see(r)])
+    co=sub_companies(conn) if is_office() else {}; conn.close()
+    out=[job_dict(r) for r in rows if can_see(r)]
+    for j in out:
+        if co: j['company']=co.get(ckey(j['tech']),'')
+    return jsonify(out)
 
 @app.route('/api/jobs', methods=['POST'])
 def create_job():
@@ -1455,6 +1460,8 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 
 def ckey(name): return (name or '').strip().lower()
 
+def sub_companies(conn): return {r['key']:r['company'] for r in conn.execute("SELECT key,company FROM subs WHERE IFNULL(company,'')!=''").fetchall()}
+
 def tech_has_client(conn, customer):
     return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE LOWER(TRIM(customer))=?',(ckey(customer),)).fetchall())
 
@@ -1592,7 +1599,9 @@ TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 .btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}h2{color:#a49f2a;margin:8px 0}h3{margin:18px 0 6px;border-bottom:2px solid #a49f2a;padding-bottom:4px}a{color:#111}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
 <h2>Subs</h2><a class="btn" href="/">Back to Jobs</a>
-{% for t, jobs in techs %}<h3>{{ t }} &middot; {{ jobs|length }} open job{{ '' if jobs|length == 1 else 's' }}</h3>
+{% for t, jobs in techs %}<h3>{{ t }}{% if co.get(t.lower()) %} ({{ co.get(t.lower()) }}){% endif %} &middot; {{ jobs|length }} open job{{ '' if jobs|length == 1 else 's' }}</h3>
+<form method="post" action="/subs/save" class="job"><input type="hidden" name="name" value="{{ t }}"><label style="font-weight:600">Company name<input name="company" value="{{ co.get(t.lower(), '') }}" maxlength="100" placeholder="Company name" style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label>
+<button type="submit" style="width:100%;background:#a49f2a;color:#fff;border:0;padding:14px;border-radius:10px;font-size:1rem;font-weight:600">Save</button></form>
 {% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.customer or j.title }}</b></a>{% if j.help_open %} <span style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.title }} &middot; {{ j.scheduled_date or 'No date' }} &middot; {{ j.status_label }}</div></div>{% else %}<div class="job muted">No open jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
 
@@ -1650,8 +1659,8 @@ td.drop{cursor:pointer}td.drop.hot{background:#fbfaf0;outline:2px dashed #a49f2a
 <div style="display:flex;gap:8px"><a class="btn" href="/schedule?start={{ prev }}">&larr; Prev</a><a class="btn" href="/schedule">This Week</a><a class="btn" href="/schedule?start={{ next }}">Next &rarr;</a></div>
 <div style="color:#666">Drag a job to a day and sub. On a phone, tap the job, then tap the box where it goes.</div>
 <div id="bar" class="hidden"></div>
-<div class="wrap"><table><tr><th>Tech</th><th>No date</th>{% for d in days %}<th class="{{ 'today' if d.today else '' }}">{{ d.label }}</th>{% endfor %}</tr>
-{% for t in techs %}<tr><td class="tech">{{ t }}</td>{% for d in [{'iso':''}] + days %}<td class="drop" data-date="{{ d.iso }}" data-tech="{{ t }}">{% for j in jobs if (j.tech or '').strip().lower() == t.lower() and (j.scheduled_date or '') == d.iso %}<div class="card" draggable="true" data-id="{{ j.id }}"><div class="id">{{ j.id }}</div><div><b>{{ j.customer or j.title }}</b></div><div>{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}</div><a href="/?job={{ j.id|urlencode }}" onclick="event.stopPropagation()">Open</a></div>{% endfor %}</td>{% endfor %}</tr>{% endfor %}
+<div class="wrap"><table><tr><th>Sub</th><th>No date</th>{% for d in days %}<th class="{{ 'today' if d.today else '' }}">{{ d.label }}</th>{% endfor %}</tr>
+{% for t in techs %}<tr><td class="tech">{{ t }}{% if co.get(t.lower()) %}<div style="font-weight:400;font-size:.8rem;color:#666">{{ co.get(t.lower()) }}</div>{% endif %}</td>{% for d in [{'iso':''}] + days %}<td class="drop" data-date="{{ d.iso }}" data-tech="{{ t }}">{% for j in jobs if (j.tech or '').strip().lower() == t.lower() and (j.scheduled_date or '') == d.iso %}<div class="card" draggable="true" data-id="{{ j.id }}"><div class="id">{{ j.id }}</div><div><b>{{ j.customer or j.title }}</b></div><div>{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}</div><a href="/?job={{ j.id|urlencode }}" onclick="event.stopPropagation()">Open</a></div>{% endfor %}</td>{% endfor %}</tr>{% endfor %}
 </table></div>
 <script>
 let sel=null;const bar=document.getElementById('bar');
@@ -1671,12 +1680,12 @@ def schedule_page():
     try: start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
     except ValueError: start=t
     start=start-timedelta(days=start.weekday()); end=start+timedelta(days=6)
-    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' AND (scheduled_date IS NULL OR scheduled_date='' OR scheduled_date BETWEEN ? AND ?) ORDER BY created_at",(start.isoformat(),end.isoformat())).fetchall(); conn.close()
+    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' AND (scheduled_date IS NULL OR scheduled_date='' OR scheduled_date BETWEEN ? AND ?) ORDER BY created_at",(start.isoformat(),end.isoformat())).fetchall(); co=sub_companies(conn); conn.close()
     jobs=[job_dict(r) for r in rows]
     techs=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]+[k.title() for k in sorted(USERS) if k in OFFICE_NAMES]
     techs+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().lower() not in [x.lower() for x in techs]})
     days=[{'iso':(start+timedelta(days=i)).isoformat(),'label':(start+timedelta(days=i)).strftime('%a %b ')+str((start+timedelta(days=i)).day),'today':start+timedelta(days=i)==t} for i in range(7)]
-    return render_template_string(SCHED_HTML, days=days, techs=techs, jobs=jobs, prev=(start-timedelta(days=7)).isoformat(), next=(start+timedelta(days=7)).isoformat())
+    return render_template_string(SCHED_HTML, co=co, days=days, techs=techs, jobs=jobs, prev=(start-timedelta(days=7)).isoformat(), next=(start+timedelta(days=7)).isoformat())
 
 @app.route('/api/jobs/<job_id>/schedule', methods=['POST'])
 def schedule_job(job_id):
@@ -1803,10 +1812,18 @@ def update_draft(did):
 @app.route('/techs')
 def techs_page():
     if not is_office(): return redirect('/')
-    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date, '9999')").fetchall(); conn.close()
+    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date, '9999')").fetchall(); co=sub_companies(conn); conn.close()
     jobs=[job_dict(r) for r in rows]; names=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
     names+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().title() not in names})
-    return render_template_string(TECHS_HTML, techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
+    return render_template_string(TECHS_HTML, co=co, techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
+
+@app.route('/subs/save', methods=['POST'])
+def subs_save():
+    if not is_office(): return ('',403)
+    k=ckey(request.form.get('name'))
+    if not k: return redirect('/techs')
+    conn=get_db(); conn.execute('INSERT INTO subs (key,company,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET company=excluded.company,updated_at=excluded.updated_at',(k,(request.form.get('company') or '').strip()[:100],now_local_str())); conn.commit(); conn.close()
+    return redirect('/techs')
 
 @app.route('/to-order')
 def to_order():
