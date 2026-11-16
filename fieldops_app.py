@@ -73,7 +73,7 @@ def parse_checklist(raw):
     have = {i['text'] for i in out}
     return out + [{'text': t, 'done': False} for t in DEFAULT_CHECKLIST if t not in have]
 
-STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_parts', 'Waiting on Parts'), ('completed', 'Complete')]
+STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_parts', 'Waiting on Parts'), ('review', 'Needs Review'), ('completed', 'Complete')]
 STATUS_LABEL = dict(STATUSES)
 PHOTO_TYPES = ['before', 'during', 'after']
 SURVEY_PHOTO_TYPES = ['survey']
@@ -243,7 +243,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -348,7 +348,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button></div>{% endif %}
+<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -406,6 +406,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
 {% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button><button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
+<div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
+<div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
+<button class="big-btn green" style="font-size:1.2rem;padding:18px" onclick="approveJob()">Approve</button></div>{% endif %}</div>
 <div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
@@ -485,8 +488,8 @@ const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b)
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
 async function loadDash(){const [a,c,fu,tx,dx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json())]);
 document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.expired?' expired ':' expires ')+x.expires).join(', ');
-const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
-document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
+const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),review:a.filter(j=>j.status==='review'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
+document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="review"]').classList.toggle('red',lists.review.length>0);document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
 if(F==='follow'||F==='texts'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return F==='follow'?renderFollowList(fu,today):renderTextList(tx)}
 Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});
 document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);
@@ -515,6 +518,10 @@ r.append(s,mk('Copy','gray',async()=>{try{await navigator.clipboard.writeText(x.
 const r2=document.createElement('div');r2.className='row';r2.appendChild(mk('Open Job','gray',()=>openJob(x.job_id)));d.append(h,j,w,ph,bd,r,r2);el.appendChild(d)})}
 async function onMyWay(){if(!confirm('Tell the office you are on your way?'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/onmyway',{method:'POST'});
 if(r.ok)alert('Done. The office will check the text and send it.');else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+function renderReview(){const b=document.getElementById('review-box');if(!b)return;b.classList.toggle('hidden',currentJob.status!=='review');
+const n=(currentJob.photos||[]).length,dv=(currentJob.devices||[]).length;document.getElementById('review-info').textContent=(currentJob.tech||'Sub')+' finished this job. '+n+' photo'+(n===1?'':'s')+', '+dv+' device'+(dv===1?'':'s')+' on the as-built.'}
+async function approveJob(){if(!confirm('Approve this job and make the invoice draft?'))return;const r=await post('/approve',{});
+if(r.ok){alert('Approved. Invoice draft is ready to review.');openJob(currentJob.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 function renderHub(){const u=document.getElementById('hub-url');if(!u)return;u.value=currentJob.hub_url?location.origin+currentJob.hub_url:'';document.getElementById('hub-exp').textContent=currentJob.hub_expires?'Link works until '+currentJob.hub_expires:'';
 document.getElementById('hub-appr').textContent=currentJob.hub_approved_at?'Estimate approved by '+(currentJob.hub_approved_name||'client')+' on '+currentJob.hub_approved_at:(currentJob.job_type==='Survey'?'Estimate not approved yet':'')}
 async function newHub(){if(!confirm('Make a new link? The old link will stop working.'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/hub-new',{method:'POST'});
@@ -592,7 +599,7 @@ const body={mode:mode,hours:h.value,miles:mode==='set'?(currentJob.total_miles||
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;if(d.labor)currentJob.labor=d.labor;h.value='';renderTotals()}else alert('Error')}
 async function setStatus(v){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:v})});
-if(r.ok){currentJob.status=v;renderKelly()}else{alert('Error');document.getElementById('status').value=currentJob.status}}
+if(r.ok){const d=await r.json();currentJob.status=d.status;document.getElementById('status').value=d.status;if(d.status==='review'&&v!=='review')alert('Sent to the office for review.');renderKelly();renderReview()}else{alert('Error');document.getElementById('status').value=currentJob.status}}
 async function savePrivate(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/private-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_notes:document.getElementById('private-notes').value})});alert(r.ok?'Saved':'Error')}
 function renderTicks(elId,items,save,removable){const el=document.getElementById(elId);el.innerHTML='';
 items.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';const c=document.createElement('input');c.type='checkbox';c.checked=x.done;c.onchange=()=>{x.done=c.checked;save()};
@@ -741,13 +748,13 @@ async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{})
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
 const LAYOUT={Survey:{show:['help','links','type','omw','survey','log','follow','hub','finish'],more:[]},
-Install:{show:['help','links','type','omw','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
-Service:{show:['help','links','type','omw','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
+Install:{show:['help','review','links','type','omw','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
+Service:{show:['help','review','links','type','omw','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','omw','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','omw','review','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -767,7 +774,7 @@ renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();document.getElementById('sec-omw').style.display=currentJob.status==='completed'?'none':'';const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();renderReview();document.getElementById('sec-omw').style.display=['completed','review'].includes(currentJob.status)?'none':'';const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -783,7 +790,7 @@ fd.append('materials',currentJob.materials||'');
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',0);
 fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
-if(r.ok){alert(currentJob.job_type==='Office Task'?'Task done':'Job finished');showList()}else alert('Error')};
+if(r.ok){const d=await r.json().catch(()=>({}));alert(currentJob.job_type==='Office Task'?'Task done':d.status==='review'?'Job finished. The office will review it.':'Job finished');showList()}else alert('Error')};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
 const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
@@ -963,13 +970,27 @@ def complete(job_id):
         kelly_event='survey_completed'
     else:
         conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
-                     ('completed',notes,materials,sig,minutes,miles,now,job_id))
+                     (finish_status(row),notes,materials,sig,minutes,miles,now,job_id))
     for ptype in PHOTO_TYPES: save_photos(conn, job_id, request.files.getlist(ptype), ptype, now)
     if row['job_type']!='Survey' and minutes: add_sub_minutes(conn, row, minutes)
     conn.commit()
     if row['job_type']=='Survey': notify_kelly(conn, job_id, kelly_event)
-    pkg=build_invoice_draft(conn, job_id, now); conn.close()
-    return jsonify({'ok':True,'invoice_draft':pkg})
+    st=conn.execute('SELECT status FROM jobs WHERE id=?',(job_id,)).fetchone()['status']; conn.close()
+    return jsonify({'ok':True,'status':st})
+
+def needs_review(row): return (row['job_type'] or '') not in ('Survey','Office Task')
+def finish_status(row): return 'review' if needs_review(row) else 'completed'
+
+@app.route('/api/jobs/<job_id>/approve', methods=['POST'])
+def approve_job(job_id):
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return ('',404)
+    if row['status']!='review': conn.close(); return jsonify({'error':'This job is not waiting for review'}),400
+    now=datetime.utcnow().isoformat()
+    conn.execute("UPDATE jobs SET status='completed',completed_at=COALESCE(completed_at,?),review_by=?,review_at=? WHERE id=?",(now,me(),now_local_str(),job_id)); conn.commit()
+    pkg=build_invoice_draft(conn, job_id, now) if needs_review(row) else None; conn.close()
+    return jsonify({'ok':True,'status':'completed','invoice_draft':pkg})
 
 def build_invoice_draft(conn, job_id, now):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
@@ -1430,9 +1451,12 @@ def set_status(job_id):
     st=((request.get_json(silent=True) or {}).get('status') or '').strip()
     if st not in STATUS_LABEL: conn.close(); return jsonify({'error':'bad status'}),400
     now=datetime.utcnow().isoformat()
-    if st=='completed':
-        conn.execute('UPDATE jobs SET status=?,completed_at=COALESCE(completed_at,?) WHERE id=?',(st,now,job_id)); conn.commit()
-        if row['status']!='completed': build_invoice_draft(conn, job_id, now)
+    if st=='completed' and needs_review(row) and not is_office(): st='review'
+    if st in ('completed','review'):
+        conn.execute('UPDATE jobs SET status=?,completed_at=COALESCE(completed_at,?) WHERE id=?',(st,now,job_id))
+        if st=='completed' and row['status']!='completed' and needs_review(row): conn.execute('UPDATE jobs SET review_by=?,review_at=? WHERE id=?',(me(),now_local_str(),job_id))
+        conn.commit()
+        if st=='completed' and row['status']!='completed' and needs_review(row): build_invoice_draft(conn, job_id, now)
     else:
         conn.execute('UPDATE jobs SET status=?,completed_at=NULL WHERE id=?',(st,job_id)); conn.commit()
     conn.close(); return jsonify({'ok':True,'status':st,'status_label':STATUS_LABEL[st]})
