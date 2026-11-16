@@ -261,6 +261,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS followups (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, due TEXT, note TEXT, done INTEGER DEFAULT 0, created_by TEXT, created_at TEXT, done_by TEXT, done_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS msg_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, kind TEXT, phone TEXT, body TEXT, status TEXT DEFAULT 'pending', ref_date TEXT, created_by TEXT, created_at TEXT, approved_by TEXT, approved_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -336,7 +338,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button></div>{% endif %}
+<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -394,6 +396,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
 {% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button><button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
+<div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
 <textarea id="update-note" rows="3" placeholder="Say or type a note (tap the mic to talk)"></textarea><button class="big-btn" id="log-add" onclick="saveUpdate()">Add Note</button>
@@ -470,10 +473,10 @@ const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=ass
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
-async function loadDash(){const [a,c,fu]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json())]);
-const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today)};
-document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));
-if(F==='follow'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return renderFollowList(fu,today)}
+async function loadDash(){const [a,c,fu,tx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json())]);
+const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
+document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
+if(F==='follow'||F==='texts'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return F==='follow'?renderFollowList(fu,today):renderTextList(tx)}
 Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});
 document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);
 const jobs=F?lists[F]:a;const g={};jobs.forEach(j=>{const k=(j.tech||'').trim()||'Unassigned';(g[k]=g[k]||[]).push(j)});
@@ -488,6 +491,19 @@ fu.forEach(x=>{const d=document.createElement('div');d.className='job';d.style.b
 const j=document.createElement('div');j.style.fontWeight='600';j.textContent=x.job_id+' \u00b7 '+(x.customer||x.title||'');const n=document.createElement('div');n.style.cssText='white-space:pre-wrap;font-size:1.1rem';n.textContent=x.note;
 const r=document.createElement('div');r.className='row';const b1=document.createElement('button');b1.className='big-btn green';b1.textContent='Done';b1.onclick=async()=>{if((await fetch('/api/followups/'+x.id+'/done',{method:'POST'})).ok)load();else alert('Error')};
 const b2=document.createElement('button');b2.className='big-btn gray';b2.textContent='Open Job';b2.onclick=()=>openJob(x.job_id);r.append(b1,b2);d.append(h,j,n,r);el.appendChild(d)})}
+function renderTextList(tx){const el=document.getElementById('list');el.innerHTML='<div class="day">Texts to Review <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all jobs)</a></div><div class="muted" style="margin-bottom:8px">The app never texts clients. Approve, then tap Text Client to send it from your phone.</div>';
+if(!tx.length){el.innerHTML+='<div class="job">No texts to review</div>';return}
+tx.forEach(x=>{const d=document.createElement('div');d.className='job';const h=document.createElement('div');h.style.cssText='font-weight:700;color:var(--accent)';h.textContent=(x.kind==='reminder'?'Visit reminder':'On my way')+' \u00b7 '+(x.status==='pending'?'Needs review':'Approved');
+const j=document.createElement('div');j.style.fontWeight='600';j.textContent=x.job_id+' \u00b7 '+(x.customer||x.title||'');const w=document.createElement('div');w.className='muted';w.textContent='From '+(x.created_by||'')+' \u00b7 '+(x.created_at||'');
+const ph=document.createElement('input');ph.type='tel';ph.placeholder='Client phone';ph.value=x.phone||'';const bd=document.createElement('textarea');bd.rows=4;bd.value=x.body||'';
+const r=document.createElement('div');r.className='row';const act=async(a)=>{const res=await fetch('/api/drafts/'+x.id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,phone:ph.value,body:bd.value})});if(res.ok)load();else{const e=await res.json().catch(()=>({}));alert(e.error||'Error')}};
+const mk=(t,c,f)=>{const b=document.createElement('button');b.className='big-btn '+c;b.textContent=t;b.onclick=f;return b};
+if(x.status==='pending'){r.append(mk('Approve','green',()=>act('approve')),mk('Dismiss','gray',()=>{if(confirm('Dismiss this text?'))act('dismiss')}))}
+else{ph.readOnly=true;bd.readOnly=true;const s=document.createElement('a');s.className='big-btn green';s.style.cssText='display:block;text-align:center;text-decoration:none;box-sizing:border-box';s.textContent='Text Client';s.href='sms:'+encodeURIComponent((x.phone||'').replace(/[^0-9+]/g,''))+'?&body='+encodeURIComponent(x.body||'');
+r.append(s,mk('Copy','gray',async()=>{try{await navigator.clipboard.writeText(x.body)}catch(e){bd.select();document.execCommand('copy')}alert('Text copied')}),mk('Done','gray',()=>act('done')))}
+const r2=document.createElement('div');r2.className='row';r2.appendChild(mk('Open Job','gray',()=>openJob(x.job_id)));d.append(h,j,w,ph,bd,r,r2);el.appendChild(d)})}
+async function onMyWay(){if(!confirm('Tell the office you are on your way?'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/onmyway',{method:'POST'});
+if(r.ok)alert('Done. The office will check the text and send it.');else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 function renderHub(){const u=document.getElementById('hub-url');if(!u)return;u.value=currentJob.hub_url?location.origin+currentJob.hub_url:'';
 document.getElementById('hub-appr').textContent=currentJob.hub_approved_at?'Estimate approved by '+(currentJob.hub_approved_name||'client')+' on '+currentJob.hub_approved_at:(currentJob.job_type==='Survey'?'Estimate not approved yet':'')}
 async function copyHub(){const u=document.getElementById('hub-url');try{await navigator.clipboard.writeText(u.value);alert('Link copied')}catch(e){u.select();document.execCommand('copy');alert('Link copied')}}
@@ -708,14 +724,14 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','survey','log','follow','hub','finish'],more:[]},
-Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
-Service:{show:['help','links','type','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
+const LAYOUT={Survey:{show:['help','links','type','omw','survey','log','follow','hub','finish'],more:[]},
+Install:{show:['help','links','type','omw','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
+Service:{show:['help','links','type','omw','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','omw','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -735,7 +751,7 @@ renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();document.getElementById('sec-omw').style.display=currentJob.status==='completed'?'none':'';const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -1697,6 +1713,49 @@ def hub_approve(job_id):
     conn.close()
     return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id))
 
+def draft_phone(r):
+    p=(r['phone'] or '').strip()
+    if not p:
+        try: p=(json.loads(r['survey_form'] or '{}').get('contact_phone') or '').strip()
+        except Exception: p=''
+    return p
+
+def first_name(n): return ((n or '').strip().split() or [''])[0]
+
+@app.route('/api/jobs/<job_id>/onmyway', methods=['POST'])
+def on_my_way(job_id):
+    conn=get_db(); r,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    if r['job_type']=='Office Task': conn.close(); return jsonify({'error':'Not for office tasks'}),400
+    who=first_name(me()) or 'your tech'
+    body=f"Hi{(' '+r['customer'].strip()) if (r['customer'] or '').strip() else ''}, this is {who} with True Sense Security. I am on my way{(' to '+r['address']) if r['address'] else ''}. See you soon."
+    today=today_local().isoformat()
+    ex=conn.execute("SELECT id FROM msg_drafts WHERE job_id=? AND kind='onmyway' AND ref_date=? AND status='pending'",(job_id,today)).fetchone()
+    if ex: conn.execute('UPDATE msg_drafts SET body=?,created_by=?,created_at=? WHERE id=?',(body,me(),now_local_str(),ex['id']))
+    else: conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(job_id,'onmyway',draft_phone(r),body,today,me(),now_local_str()))
+    conn.commit(); conn.close(); return jsonify({'ok':True})
+
+@app.route('/api/drafts')
+def list_drafts():
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db()
+    rows=[dict(x) for x in conn.execute("SELECT d.*,j.customer,j.title FROM msg_drafts d LEFT JOIN jobs j ON j.id=d.job_id WHERE d.status IN ('pending','approved') ORDER BY d.status DESC, d.id DESC").fetchall()]
+    conn.close(); return jsonify(rows)
+
+@app.route('/api/drafts/<int:did>', methods=['POST'])
+def update_draft(did):
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    d=request.get_json(silent=True) or {}; a=d.get('action')
+    conn=get_db(); row=conn.execute('SELECT * FROM msg_drafts WHERE id=?',(did,)).fetchone()
+    if not row: conn.close(); return jsonify({'error':'Not found'}),404
+    if a=='approve':
+        body=(d.get('body') or '').strip()
+        if not body: conn.close(); return jsonify({'error':'Text is empty'}),400
+        conn.execute("UPDATE msg_drafts SET status='approved',body=?,phone=?,approved_by=?,approved_at=? WHERE id=?",(body[:1000],(d.get('phone') or '').strip()[:40],me(),now_local_str(),did))
+    elif a in ('dismiss','done'): conn.execute('UPDATE msg_drafts SET status=? WHERE id=?',('dismissed' if a=='dismiss' else 'done',did))
+    else: conn.close(); return jsonify({'error':'Bad action'}),400
+    conn.commit(); conn.close(); return jsonify({'ok':True})
+
 @app.route('/techs')
 def techs_page():
     if not is_office(): return redirect('/')
@@ -1725,7 +1784,7 @@ def delete_client():
         for ph in conn.execute('SELECT filename FROM photos WHERE job_id=?',(row['id'],)).fetchall():
             try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(ph['filename'])))
             except OSError: pass
-        for t in ('photos','job_updates','invoice_drafts','followups'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
+        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
     conn.execute('DELETE FROM jobs WHERE LOWER(TRIM(customer))=?',(k,))
     conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,)); conn.commit(); conn.close()
     return redirect('/clients')
@@ -1756,7 +1815,7 @@ def delete_job(job_id):
     for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
         try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
         except OSError: pass
-    for t in ('photos','job_updates','invoice_drafts','followups'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
+    for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
     n=conn.execute('DELETE FROM jobs WHERE id=?',(job_id,)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
 
