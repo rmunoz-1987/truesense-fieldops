@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
 import re, sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request, urllib.parse, math, time
 from datetime import timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception: ZoneInfo=None
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
@@ -299,7 +302,7 @@ MANIFEST = {'name':'True Sense Field Ops','short_name':'Field Ops','start_url':'
     'icons':[{'src':'/static/icons/icon-192.png','sizes':'192x192','type':'image/png'},{'src':'/static/icons/icon-512.png','sizes':'512x512','type':'image/png'},
              {'src':'/static/icons/maskable-512.png','sizes':'512x512','type':'image/png','purpose':'maskable'}]}
 
-SW_JS = r"""const V='fo-v3';const SHELL=['/offline','/static/icons/icon-192.png','/static/icons/icon-512.png'];
+SW_JS = r"""const V='fo-v4';const SHELL=['/offline','/static/logo.png','/static/icons/icon-192.png','/static/icons/icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('message',e=>{if(e.data==='logout')e.waitUntil(caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))))});
@@ -377,6 +380,9 @@ def add_tap_css(resp):
             h=resp.get_data(as_text=True)
             if 'id="tap-css"' not in h:
                 h=h.replace('</head>', TAP_CSS+PWA_HEAD+'</head>', 1) if '</head>' in h else TAP_CSS+h
+                if resp.status_code<400:
+                    try: h=apply_shell(h, request.path)
+                    except Exception as e: app.logger.warning('shell failed: %s', e)
                 resp.set_data(h)
     except Exception: pass
     return resp
@@ -411,6 +417,332 @@ def bg_start():
         if _BG['started']: return
         _BG['started']=True
     if os.environ.get('BG_TIMER','1')!='0': threading.Thread(target=bg_loop, daemon=True, name='fo-bg').start()
+
+# ---------- App shell: top search, tabs / rail, quick-add, theme ----------
+def _ico(d): return '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'
+ICONS = {
+ 'today':_ico('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+ 'jobs':_ico('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>'),
+ 'clients':_ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2 .4 3.4 2 4 4.5"/>'),
+ 'money':_ico('<path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+ 'more':_ico('<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>'),
+ 'cal':_ico('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+ 'me':_ico('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/>'),
+ 'search':_ico('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+ 'plus':_ico('<path d="M12 5v14M5 12h14"/>'),
+ 'box':_ico('<path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/>'),
+ 'repeat':_ico('<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/>'),
+ 'tool':_ico('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>'),
+ 'eye':_ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+ 'note':_ico('<path d="M4 4h12l4 4v12H4z"/><path d="M8 12h8M8 16h5"/>'),
+ 'chart':_ico('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+ 'clock':_ico('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+ 'qbo':_ico('<circle cx="12" cy="12" r="9"/><path d="M9 8v8M9 8h3a2.5 2.5 0 0 1 0 5H9M15 16v-8"/>'),
+ 'users':_ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.5c1.6.6 2.6 2.4 3 5.5"/>'),
+ 'check':_ico('<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
+ 'shield':_ico('<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/>'),
+ 'pen':_ico('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+ 'gear':_ico('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+ 'cart':_ico('<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.5h11.6L22 7H6"/>'),
+ 'moon':_ico('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+ 'bell':_ico('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>'),
+ 'out':_ico('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
+ 'doc':_ico('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h8"/>'),
+ 'alert':_ico('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>'),
+ 'pin':_ico('<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+}
+
+SHELL_CSS = """<style id="shell-css">
+:root{--brand:#7a7a12;--gold:#baa205;--gold2:#dab703;--accent:#a49f2a;--ink:#1d1f14;--muted:#6b6d60;--line:#ececE6;--soft:#f7f6ef;--card:#fff;
+--shadow:0 1px 2px rgba(29,31,20,.06),0 4px 16px rgba(29,31,20,.07);--r:16px}
+html.fo-shell{background:#fff;padding:66px 0 calc(92px + env(safe-area-inset-bottom));scroll-padding-top:76px}
+html.fo-shell body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif!important;color:var(--ink);background:#fff!important;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html.fo-shell .header{display:none}
+html.fo-shell body>img[alt="True Sense Security"],html.fo-shell body>a>img[alt="True Sense Security"]{display:none!important}
+.fo-tabs a.fo-rail-logo{display:none}
+html.fo-shell .fo-back{display:inline-flex;align-items:center;width:auto;min-height:44px;padding:10px 18px;font-size:1rem;margin:0 0 4px}
+html.fo-shell #search-box{display:none!important}
+.fo-top{position:fixed;top:0;left:0;right:0;height:60px;z-index:45;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 12px}
+.fo-logo{flex:0 0 auto;display:flex;align-items:center}.fo-logo img{height:30px;width:auto;display:block}
+.fo-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:0 12px;height:44px;margin:0}
+.fo-search svg{flex:0 0 20px;width:20px;height:20px;color:var(--muted)}.fo-search input{border:0!important;background:transparent!important;outline:0;font-size:16px;width:100%;padding:0!important;margin:0!important;height:42px;color:var(--ink);box-shadow:none!important}
+.fo-tabs{position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.fo-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 4px;border-radius:12px;color:var(--muted);text-decoration:none;font-size:.74rem;font-weight:650;min-height:52px;justify-content:center}
+.fo-tabs a.on{color:var(--brand)}.fo-tabs a.on svg{stroke-width:2.4}.fo-tabs a.on span.fo-dot{background:var(--gold)}
+.fo-tabs a span.fo-dot{width:22px;height:3px;border-radius:3px;background:transparent;margin-top:1px}
+
+.fo-fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:46;width:62px;height:62px;border-radius:50%;border:0;background:linear-gradient(145deg,var(--gold2),var(--brand));color:#fff;box-shadow:0 8px 24px rgba(122,122,18,.38);display:flex;align-items:center;justify-content:center}
+.fo-fab svg{width:30px;height:30px;stroke-width:2.6}
+.fo-veil{position:fixed;inset:0;background:rgba(20,21,14,.38);z-index:70;opacity:0;pointer-events:none;transition:opacity .2s}
+.fo-veil.on{opacity:1;pointer-events:auto}
+.fo-sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:#fff;border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 30px rgba(0,0,0,.15);max-width:640px;margin:0 auto}
+.fo-sheet{visibility:hidden}.fo-sheet.on{transform:none;visibility:visible}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
+.fo-sheet h3{margin:4px 0 10px;font-size:1.1rem}.fo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fo-tile{display:flex;align-items:center;gap:10px;padding:16px 14px;border-radius:14px;background:var(--soft);border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:700;font-size:1rem;min-height:60px;text-align:left;width:100%;font-family:inherit}
+.fo-tile svg{flex:0 0 24px;color:var(--brand)}
+.fo-seg{display:flex;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;margin:0 auto 12px;max-width:480px}
+.fo-seg a{flex:1;text-align:center;padding:10px 6px;border-radius:10px;color:var(--muted);text-decoration:none;font-weight:700}.fo-seg a.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
+/* shared premium look for existing pages */
+html.fo-shell .job,html.fo-shell .card{border:1px solid var(--line)!important;border-radius:var(--r)!important;box-shadow:var(--shadow)}
+html.fo-shell .big-btn,html.fo-shell .btn{border-radius:14px!important;font-weight:700;letter-spacing:.1px}
+html.fo-shell .big-btn:not(.gray):not(.green):not(.stop):not(.red){background:linear-gradient(145deg,var(--gold),var(--brand))}
+html.fo-shell input,html.fo-shell select,html.fo-shell textarea{border-radius:12px!important;font-family:inherit}
+html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var(--line)}
+.fo-page-h{display:flex;align-items:center;gap:10px;margin:4px 0 12px}.fo-page-h h1{margin:0}
+.fo-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fo-card{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;color:var(--ink);text-decoration:none;min-height:96px}
+.fo-card svg{color:var(--brand)}.fo-card b{display:block;font-size:1.08rem;margin-top:8px}.fo-card small{display:block;color:var(--muted);margin-top:2px;font-size:.86rem}
+.fo-skel{background:linear-gradient(90deg,#f0efe8 0,#faf9f4 40%,#f0efe8 80%);background-size:200% 100%;animation:fo-shim 1.2s linear infinite;border-radius:12px}
+@keyframes fo-shim{to{background-position:-200% 0}}
+.fo-hello h1{font-size:1.6rem;margin:2px 0 2px;letter-spacing:-.3px}.fo-hello{margin-bottom:12px}
+.fo-prog{margin:0 0 14px}.fo-bar{display:flex;height:12px;border-radius:12px;background:#eeede4;overflow:hidden}.fo-bar i{display:block;height:100%;transition:width .6s ease}
+.fo-legend{display:flex;gap:16px;margin-top:6px;color:var(--muted);font-size:.9rem}.fo-legend b{color:var(--ink)}
+.fo-kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px}
+.fo-kpi{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px;text-decoration:none;color:var(--ink);min-height:108px;position:relative;overflow:hidden}
+.fo-kpi small{display:block;color:var(--muted);font-weight:650;font-size:.85rem}.fo-kpi b{display:block;font-size:1.9rem;letter-spacing:-.5px;margin-top:4px;line-height:1.1}
+.fo-kpi.hot b{color:#b3261e}.fo-spark{display:block;width:100%;height:30px;margin-top:6px}
+.fo-h{font-size:1.1rem!important;color:var(--ink)!important;border:0!important;margin:22px 0 10px!important;letter-spacing:-.2px}
+.fo-act{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:12px;margin-bottom:10px;color:var(--ink);text-decoration:none;min-height:64px}
+.fo-ai{flex:0 0 42px;height:42px;border-radius:12px;background:var(--soft);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:1.3rem}
+.fo-act.red .fo-ai{background:#fdecea;color:#b3261e}.fo-act.ok .fo-ai{background:#e8f5e9;color:#2e7d32}
+.fo-at{flex:1;min-width:0}.fo-at b{display:block}.fo-at em{font-style:normal;background:var(--ink);color:#fff;border-radius:10px;padding:0 8px;font-size:.8rem;margin-left:4px;vertical-align:2px}
+.fo-act.red .fo-at em{background:#b3261e}.fo-at small{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fo-ab{flex:0 0 auto;background:linear-gradient(145deg,var(--gold),var(--brand));color:#fff;font-weight:700;border-radius:12px;padding:10px 14px;min-width:72px;text-align:center}
+#fo-map{height:240px;border-radius:var(--r);overflow:hidden;margin-bottom:10px;border:1px solid var(--line)}
+.fo-row{padding:12px 4px;border-bottom:1px solid var(--line);cursor:pointer}.fo-row:last-child{border-bottom:0}
+.fo-pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32;margin-right:8px;box-shadow:0 0 0 0 rgba(46,125,50,.5);animation:fo-pl 1.8s infinite}
+@keyframes fo-pl{70%{box-shadow:0 0 0 10px rgba(46,125,50,0)}100%{box-shadow:0 0 0 0 rgba(46,125,50,0)}}
+@media(min-width:900px){.fo-kpis{grid-template-columns:repeat(4,1fr)}#today{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}#today>.fo-hello,#today>.fo-prog,#today>.fo-kpis{grid-column:1/-1}}
+.fo-kpi.hot b{color:#b3261e}.fo-cap{display:block;font-style:normal;color:var(--muted);font-size:.72rem;margin-top:2px}
+.fo-empty{background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:16px;color:var(--muted);text-align:center}
+
+@keyframes fo-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+html.fo-shell body>*:not(.fo-sh){animation:fo-in .28s ease both}
+/* desktop: left rail */
+@media(min-width:900px){
+ html.fo-shell{padding:76px 0 28px 232px}
+ .fo-top{left:232px;height:64px;padding:0 22px}.fo-top .fo-logo{display:none}.fo-search{max-width:620px}
+ .fo-tabs{top:0;bottom:0;right:auto;width:232px;flex-direction:column;justify-content:flex-start;border-top:0;border-right:1px solid var(--line);padding:16px 12px;gap:4px;background:#fff}
+ .fo-tabs a{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;padding:12px 14px;font-size:1rem;min-height:48px}
+ .fo-tabs a.on{background:var(--soft)}.fo-tabs a span.fo-dot{display:none}
+ .fo-tabs a.fo-rail-logo{display:block;padding:4px 10px 18px}.fo-rail-logo img{height:40px;width:auto}
+ .fo-fab{bottom:28px;right:28px}
+ .fo-cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+}
+/* dark mode: invert the page once at the root (fixed overlays keep working), re-invert media */
+html[data-theme=dark]{filter:invert(.93) hue-rotate(180deg);background:#fff}
+html[data-theme=dark] img,html[data-theme=dark] video,html[data-theme=dark] canvas,html[data-theme=dark] .leaflet-container,html[data-theme=dark] iframe,html[data-theme=dark] [style*="background-image"]{filter:invert(1) hue-rotate(180deg)}
+html[data-theme=dark] .leaflet-container img{filter:none}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+</style>"""
+
+def shell_tabs(path, office):
+    if office:
+        tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/clients','Clients','clients'),('/money','Money','money'),('/more','More','more')]
+        groups={'today':('/',),'jobs':('/jobs','/schedule','/calendar','/new-job','/history'),'clients':('/clients','/print/client'),'money':('/money','/revenue','/reports','/qbo','/timelog'),
+                'more':('/more','/techs','/stock','/checklists','/safety','/agreement','/settings','/equipment','/plans','/to-order')}
+    else:
+        tabs=[('/','My Jobs','jobs'),('/my-schedule','Schedule','cal'),('/me','Me','me')]
+        groups={'jobs':('/','/job/'),'cal':('/my-schedule',),'me':('/me','/agreement')}
+    def on(k):
+        for p in groups.get(k,()):
+            if (p=='/' and path=='/') or (p!='/' and (path==p or path.startswith(p.rstrip('/')+'/'))): return True
+        return False
+    return ''.join('<a href="%s" class="%s"%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(u,'on' if on(k) else '',' aria-current="page"' if on(k) else '',ICONS[k],lab) for u,lab,k in tabs)
+
+def shell_html(path, office, q=''):
+    top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"></a>'
+         '<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search clients, jobs, notes, serials" aria-label="Search" autocomplete="off"></form></header>')%(ICONS['search'],h(q))
+    seg=''
+    if office and path in ('/jobs','/schedule','/calendar'):
+        seg='<div class="fo-seg fo-sh">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
+    tabs='<nav class="fo-tabs fo-sh" aria-label="Main"><a class="fo-rail-logo" href="/" style="min-height:0;padding:4px 10px 18px"><img src="/static/logo.png" alt="True Sense Security"></a>'+shell_tabs(path, office)+'</nav>'
+    fab=sheet=''
+    if office:
+        fab='<button class="fo-fab fo-sh" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>'%ICONS['plus']
+        items=[('/new-job?t=Install','Install','tool'),('/new-job?t=Service','Service','repeat'),('/new-job?t=Survey','Survey','eye'),('/new-job?t=Office Task','Office Task','note'),
+               ('/clients','Client','clients'),('/stock','Stock Item','box'),('/plans','Service Plan','cal'),('/equipment','Equipment','shield')]
+        sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
+               ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('t=')[1]) if '?t=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
+    return top+seg, tabs+fab+sheet
+
+SHELL_JS = """<script id="shell-js">
+function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);v.classList.toggle('on',on)}
+function foNew(a){var t=a.dataset.new;if(t&&typeof quickType==='function'&&document.getElementById('n-id')){foSheet(false);quickType(t);return false}return true}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')foSheet(false)});
+function foTheme(t){document.documentElement.setAttribute('data-theme',t);fetch('/api/me/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:t})});var b=document.getElementById('fo-theme');if(b)b.textContent=t==='dark'?'Dark mode is on':'Dark mode is off'}
+function foLogout(){if(!confirm('Log out?'))return;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout')}catch(e){}location.href='/logout'}
+function foB64(x){var p='='.repeat((4-x.length%4)%4);var r=atob((x+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,function(c){return c.charCodeAt(0)})}
+async function foPush(btn){if(!('serviceWorker' in navigator)||!('PushManager' in window)){alert('On iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.');return}
+btn.disabled=true;try{var perm=await Notification.requestPermission();if(perm!=='granted'){alert('Alerts are off. Turn them on in your phone settings.');btn.disabled=false;return}
+var k=await (await fetch('/api/push/key')).json();var reg=await navigator.serviceWorker.ready;var sub=(await reg.pushManager.getSubscription())||(await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:foB64(k.key)}));
+var r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});btn.textContent=r.ok?'Job alerts are on':'Could not turn on alerts';}catch(e){btn.textContent='Could not turn on alerts';btn.disabled=false}}
+</script>"""
+
+def theme_of(user):
+    try:
+        conn=get_db(); r=conn.execute('SELECT value FROM settings WHERE key=?',('theme:'+ckey(user),)).fetchone(); conn.close()
+        return 'dark' if r and r['value']=='dark' else 'light'
+    except Exception: return 'light'
+
+SHELL_SKIP = ('/hub/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
+def apply_shell(html, path):
+    if 'id="shell-css"' in html or not me() or not is_office() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
+    office=True; top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
+    html=html.replace('<html','<html class="fo-shell" data-theme="%s"'%theme_of(me()),1)
+    html=html.replace('</head>',SHELL_CSS+'</head>',1)
+    i=html.find('>',html.find('<body'))+1
+    html=html[:i]+top+html[i:]
+    j=html.rfind('</body>')
+    return (html[:j]+bottom+SHELL_JS+html[j:]) if j>0 else html+bottom+SHELL_JS
+
+@app.route('/api/me/theme', methods=['POST'])
+def set_theme():
+    if not me(): return jsonify({'error':'login'}),401
+    t='dark' if (request.get_json(silent=True) or {}).get('theme')=='dark' else 'light'
+    conn=get_db(); conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)',('theme:'+ckey(me()),t)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'theme':t})
+
+def card_grid(items):
+    return '<div class="fo-cards">'+''.join('<a class="fo-card" href="%s">%s<b>%s</b><small>%s</small></a>'%(h(u),ICONS.get(i,''),h(t),h(s)) for u,t,s,i in items)+'</div>'
+
+@app.route('/jobs')
+def jobs_view():
+    if not is_office(): return redirect('/')
+    return index(view='jobs')
+
+@app.route('/money')
+def money_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); t=today_local(); mo=t.strftime('%Y-%m')
+    sales=sum((r['sale_amount'] or 0) for r in conn.execute("SELECT sale_amount,completed_at FROM jobs WHERE status='completed'") if utc_day(r['completed_at'])[:7]==mo)
+    qp=conn.execute('SELECT paid FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
+    queued=conn.execute("SELECT COUNT(*) FROM qbo_queue WHERE status='queued'").fetchone()[0]; conn.close()
+    body='<div class="fo-cards" style="margin-bottom:14px"><div class="fo-card">%s<small>Field Ops sales, %s</small><b style="font-size:1.6rem">%s</b></div><div class="fo-card">%s<small>QuickBooks paid, %s</small><b style="font-size:1.6rem">%s</b></div></div>'%(
+        ICONS['chart'],t.strftime('%B'),money(sales),ICONS['qbo'],t.strftime('%B'),money(qp['paid']) if qp and qp['paid'] is not None else 'Not synced')
+    body+=card_grid([('/revenue','Revenue','Sales vs QuickBooks, 12 months','chart'),('/reports','Reports','Profit by job, sub and type','money'),
+                     ('/qbo','QuickBooks','%d waiting to export'%queued if queued else 'Export approved invoices','qbo'),('/timelog','Time Log','Clock-ins, GPS and hours','clock')])
+    return ops_page('Money', body, back=False)
+
+@app.route('/more')
+def more_page():
+    if not is_office(): return redirect('/')
+    return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/to-order','To Order','Parts to buy','cart'),
+        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
+        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Week board by sub','cal'),('/calendar','Calendar','Week list','cal'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
+
+def me_settings_body():
+    dark=theme_of(me())=='dark'
+    return ('<div class="fo-card" style="margin-bottom:12px"><b style="margin:0">%s</b><small>%s</small></div>'%(h(me()),'Office' if is_office() else 'Sub')+
+            '<button id="fo-theme" class="big-btn gray" onclick="foTheme(document.documentElement.getAttribute(\'data-theme\')===\'dark\'?\'light\':\'dark\')">%s</button>'%('Dark mode is on' if dark else 'Dark mode is off'))
+
+@app.route('/settings')
+def settings_page():
+    if not is_office(): return redirect('/me')
+    return ops_page('Settings', me_settings_body()+'<button class="big-btn gray" onclick="foLogout()">Log out</button>', back='/more')
+
+@app.route('/me')
+def me_page():
+    if not me(): return redirect('/login')
+    if is_office(): return redirect('/settings')
+    conn=get_db(); a=current_agreement(conn); signed=signed_current(conn, me())
+    docs={r['kind']:r for r in conn.execute('SELECT * FROM sub_docs WHERE sub=?',(ckey(me()),)).fetchall()}; conn.close()
+    body=me_settings_body()
+    body+='<h2>My Agreement</h2><a class="fo-card" href="/agreement">%s<b>Subcontractor Agreement v%s</b><small>%s</small></a>'%(ICONS['pen'],h(a['version']),'Signed' if signed else 'Not signed yet. Tap to sign.')
+    body+='<h2>My Documents</h2>'+''.join('<div class="fo-card" style="margin-bottom:8px">%s<b>%s</b><small>%s</small></div>'%(ICONS['doc'],h(lab),
+        ('Expires '+h(docs[k]['expires'])+(' (expired)' if (docs[k]['expires'] or '')<today_local().isoformat() else '')) if k in docs else 'Missing. Send it to the office.') for k,lab in SUB_DOCS)
+    body+='<h2>Job Alerts</h2><button class="big-btn" onclick="foPush(this)">Turn on job alerts</button><div class="muted">Pings you for new jobs and schedule changes.</div>'
+    body+='<button class="big-btn gray" style="margin-top:18px" onclick="foLogout()">Log out</button>'
+    return ops_page('Me', body, back=False)
+
+@app.route('/my-schedule')
+def my_schedule():
+    if not me(): return redirect('/login')
+    if is_office(): return redirect('/schedule')
+    conn=get_db(); rows=[r for r in conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date,'9999')").fetchall() if can_see(r)]; conn.close()
+    t=today_local(); days=[(t+timedelta(days=i)) for i in range(14)]; body=''
+    late=[r for r in rows if r['scheduled_date'] and r['scheduled_date']<t.isoformat()]
+    if late: body+='<h2>Past due</h2>'+''.join(sched_card(r) for r in late)
+    for d in days:
+        js=[r for r in rows if r['scheduled_date']==d.isoformat()]
+        lab='Today' if d==t else ('Tomorrow' if d==t+timedelta(days=1) else d.strftime('%a %b ')+str(d.day))
+        body+='<h2>%s</h2>'%lab+(''.join(sched_card(r) for r in js) or '<div class="muted" style="margin:0 0 6px">Nothing scheduled</div>')
+    nd=[r for r in rows if not r['scheduled_date']]
+    if nd: body+='<h2>No date yet</h2>'+''.join(sched_card(r) for r in nd)
+    return ops_page('My Schedule', body, back=False)
+def sched_card(r):
+    return '<a class="card" href="/?job=%s"><b>%s</b> <span class="muted">%s</span><div>%s</div><div class="muted">%s</div></a>'%(urllib.parse.quote(r['id']),h(r['customer'] or r['title']),h(r['job_type'] or ''),h(r['title']),h(r['address'] or ''))
+# ---------- end shell ----------
+
+def utc_day(iso):
+    if not iso: return ''
+    try:
+        d=datetime.fromisoformat(str(iso).replace('Z','')[:26])
+        return d.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Chicago')).date().isoformat()
+    except Exception: return str(iso)[:10]
+
+# ---------- Today dashboard ----------
+def week_start(d): return d-timedelta(days=d.weekday())
+@app.route('/api/today')
+def api_today():
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); t=today_local(); ti=t.isoformat(); mo=ti[:7]
+    try: make_reminders(conn)
+    except Exception: pass
+    open_rows=conn.execute("SELECT * FROM jobs WHERE status!='completed'").fetchall()
+    done_rows=conn.execute("SELECT id,job_type,sale_amount,completed_at,scheduled_date FROM jobs WHERE status='completed'").fetchall()
+    today=[job_dict(r) for r in open_rows if r['scheduled_date']==ti]
+    today.sort(key=lambda j:(j['status']!='in_progress', (j.get('tech') or '').lower()))
+    done_today=sum(1 for r in done_rows if r['scheduled_date']==ti or utc_day(r['completed_at'])==ti)
+    prog={'togo':sum(1 for j in today if j['status']!='in_progress'),'active':sum(1 for j in today if j['status']=='in_progress'),'done':done_today}
+    in_prog=[r for r in open_rows if r['status']=='in_progress']
+    review=[r for r in open_rows if r['status']=='review']
+    help_=[r for r in open_rows if r['help_flag']=='open']
+    sign=pending_countersign(conn)
+    queued={r['job_id']:r['status'] for r in conn.execute('SELECT job_id,status FROM qbo_queue')}
+    ready=[r for r in conn.execute("SELECT d.job_id,j.customer FROM invoice_drafts d JOIN jobs j ON j.id=d.job_id WHERE d.status='ready_for_review'") if r['job_id'] not in queued]
+    follow=conn.execute("SELECT COUNT(*) FROM followups WHERE done=0 AND due<=?",(ti,)).fetchone()[0]
+    texts=conn.execute("SELECT COUNT(*) FROM msg_drafts WHERE status='pending'").fetchone()[0]
+    docs=doc_alerts(conn); low=low_stock(conn)
+    qq=sum(1 for v in queued.values() if v=='queued'); qerr=sum(1 for v in queued.values() if v=='error')
+    def one(rows, label):
+        return {'href':'/?job='+urllib.parse.quote(rows[0]['id']),'btn':'Open'} if len(rows)==1 else {'href':'/jobs?f='+label,'btn':'Show'}
+    acts=[]
+    def add(n,title,detail,icon,href,btn,tone=''):
+        if n: acts.append({'n':n,'title':title,'detail':detail,'icon':ICONS[icon],'href':href,'btn':btn,'tone':tone})
+    if help_: add(len(help_),'Sub needs help',', '.join((r['customer'] or r['id']) for r in help_[:3]),'alert',one(help_,'help')['href'],'Help','red')
+    add(len(sign),'Needs your signature',', '.join(nice_name(r['sub']) for r in sign[:3])+' signed the agreement','pen','/agreement#pending','Sign','red')
+    if review: o=one(review,'review'); add(len(review),'Needs review',', '.join((r['customer'] or r['id']) for r in review[:3]),'check',o['href'],'Review')
+    add(len(ready),'Ready to invoice',', '.join((r['customer'] or r['job_id']) for r in ready[:3]),'money','/qbo','Export')
+    add(follow,'Follow-ups due','Calls to make today','bell','/jobs?f=follow','Call list')
+    add(texts,'Texts to review','Drafts waiting for your OK. Nothing sends on its own.','note','/jobs?f=texts','Review')
+    add(len(docs),'Sub docs due',', '.join('%s %s'%(d['sub'],'missing' if d['missing'] else ('expired' if d['expired'] else 'expires '+d['expires'])) for d in docs[:3]),'doc','/techs','Check')
+    add(len(low),'Low stock',', '.join(r['name'] for r in low[:3]),'box','/stock','Restock')
+    add(qq+qerr,'QuickBooks queue','%d waiting%s'%(qq,', %d failed'%qerr if qerr else ''),'qbo','/qbo','Open','red' if qerr else '')
+    # sparklines: last 8 weeks, completed jobs and sales
+    ws=week_start(t); weeks=[(ws-timedelta(weeks=7-i)).isoformat() for i in range(8)]
+    sj=[0]*8; sm=[0.0]*8; month=0.0
+    for r in done_rows:
+        d=utc_day(r['completed_at'])
+        if not d: continue
+        if d[:7]==mo: month+=fnum(r['sale_amount'])
+        try: w=week_start(datetime.strptime(d,'%Y-%m-%d').date()).isoformat()
+        except ValueError: continue
+        if w in weeks: i=weeks.index(w); sj[i]+=1; sm[i]+=fnum(r['sale_amount'])
+    live=[]
+    for p in conn.execute("SELECT p.*,j.customer,j.title,j.address FROM time_punches p LEFT JOIN jobs j ON j.id=p.job_id WHERE p.out_at IS NULL ORDER BY p.in_at DESC").fetchall():
+        live.append({'sub':nice_name(p['sub']),'job':p['job_id'],'customer':p['customer'] or '','title':p['title'] or '','address':p['address'] or '','lat':p['in_lat'],'lng':p['in_lng'],'since':p['in_at'],'flag':p['in_flag'] or ''})
+    feed=[{'job':r['job_id'],'author':r['author'] or '','note':(r['note'] or '')[:140],'at':r['created_at'] or '','customer':r['customer'] or ''} for r in
+          conn.execute('SELECT u.*,j.customer FROM job_updates u LEFT JOIN jobs j ON j.id=u.job_id ORDER BY u.id DESC LIMIT 8')]
+    qm=conn.execute('SELECT invoiced FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
+    msrc='Field Ops sales'
+    if qm and qm['invoiced'] is not None and fnum(qm['invoiced'])>=month: month=fnum(qm['invoiced']); msrc='QuickBooks invoiced'
+    conn.close()
+    hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
+    return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
+        'today':today,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm,'money_src':msrc},
+        'actions':acts,'live':live,'feed':feed})
+# ---------- end Today ----------
 
 @app.route('/healthz')
 def healthz(): return 'ok'
@@ -866,7 +1198,7 @@ body.office #home .job{border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04),0
 .sk-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px}.sk-tools button{padding:14px 2px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}.sk-tools button.on{border-color:var(--text);background:#fbfaf0}
 
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
-</style></head><body{% if office %} class="office"{% endif %}>
+</style></head><body class="{% if office %}office {% endif %}view-{{ view }}">
 <div class="header">
   <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
   <div class="sub">Field Ops</div>{% if office %}<div id="today-date" class="muted" style="font-size:.9rem;margin-top:2px"></div>{% endif %}
@@ -874,7 +1206,16 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<main>
-<div{% if view=='new' %} style="display:none"{% endif %}>
+{% if office and view=='today' %}<div id="today">
+<div class="fo-hello"><h1 id="fo-hello">Hello, {{ name }}</h1><div class="muted" id="fo-hello2">Loading your day...</div></div>
+<div class="fo-prog" id="fo-prog"><div class="fo-skel" style="height:14px"></div></div>
+<div class="fo-kpis" id="fo-kpis">{% for i in range(4) %}<div class="fo-kpi fo-skel" style="height:108px;border:0"></div>{% endfor %}</div>
+<section><h2 class="fo-h">Needs you</h2><div id="fo-acts">{% for i in range(3) %}<div class="fo-skel" style="height:68px;margin-bottom:10px"></div>{% endfor %}</div>
+<h2 class="fo-h">Today's jobs</h2><div id="fo-tjobs"><div class="fo-skel" style="height:96px"></div></div></section>
+<section><h2 class="fo-h">Subs on the clock</h2><div id="fo-live"></div>
+<h2 class="fo-h">Recent activity</h2><div id="fo-feed"></div></section>
+</div>{% endif %}
+<div{% if view in ('new','today') %} style="display:none"{% endif %}>
 <div class="tiles tiles4"><button class="tile t-active" data-f="active" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/></svg></span><b id="t-active">0</b><span class="tl">Active Jobs</span></button><button class="tile t-help" data-f="help" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg></span><b id="t-help">0</b><span class="tl">Needs Help</span></button><button class="tile t-surveys" data-f="surveys" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><b id="t-surveys">0</b><span class="tl">Surveys Pending</span></button><button class="tile t-today" data-f="today" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span><b id="t-today">0</b><span class="tl">Scheduled Today</span></button></div>
 <button class="big-btn gray" id="f-all" style="display:none" onclick="setF('')">All Jobs</button>
 <div class="mgrid main"><a href="/new-job" class="mbtn prime"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New Job</span></a><a href="/clients" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2 .4 3.4 2 4 4.5"/></svg><span>Clients &amp; Surveys</span></a><a href="/calendar" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg><span>Calendar</span></a><a href="/to-order" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.5h11.6L22 7H6"/></svg><span>To Order</span></a><a href="/techs" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/></svg><span>Subs</span></a><a href="/history" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg><span>Job History</span></a></div>
@@ -884,7 +1225,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
 <div id="search-box" class="row" style="align-items:center{% if view=='new' %};display:none{% endif %}"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
-{% if office and view=='new' %}<div id="office" class="job"><a href="/" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:0 0 8px">&larr; Back</a><h2 style="margin:4px 0 8px">New Job</h2>
+{% if office and view=='new' %}<div id="office" class="job"><a href="/jobs" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:0 0 8px">&larr; Back</a><h2 style="margin:4px 0 8px">New Job</h2>
 <div class="row" style="flex-wrap:wrap;gap:6px">{% for t in job_types %}<button class="big-btn gray qa" style="flex:1 1 45%" data-t="{{ t }}" onclick="quickType(this.dataset.t)">+ {{ t }}</button>{% endfor %}</div>
 <datalist id="cl-list"></datalist>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -899,7 +1240,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
 <textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
 <button class="big-btn" onclick="addJob()">Save Job</button><a href="/" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box">Cancel</a></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
-<div id="list"{% if view=='new' %} style="display:none"{% endif %}></div>
+<div id="list"{% if view in ('new','today') %} style="display:none"{% endif %}></div>
 {% if office %}</main>{% endif %}</div>
 <div id="toast" class="hidden"></div>
 <div id="detail" class="hidden">
@@ -1022,10 +1363,30 @@ canvas.style.touchAction='none';
 ['touchstart','touchmove'].forEach(t=>canvas.addEventListener(t,e=>e.preventDefault(),{passive:false}));
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
-const OFFICE={{ office|tojson }};const VIEW={{ view|tojson }};let F='';
+const OFFICE={{ office|tojson }};const VIEW={{ view|tojson }};let F=new URLSearchParams(location.search).get('f')||'';
 const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div>${j.company?'<div style="color:#666">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div>${j.company?'<div class="muted">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
+const $id=x=>document.getElementById(x);
+function spark(a,money){const w=120,h=34,m=Math.max(...a,1),n=a.length-1;const pts=a.map((v,i)=>[(i*w/n).toFixed(1),(h-3-(v/m)*(h-6)).toFixed(1)]);
+return '<svg class="fo-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,'+h+' '+pts.map(p=>p.join(',')).join(' ')+' '+w+','+h+'" fill="rgba(186,162,5,.16)"/><polyline points="'+pts.map(p=>p.join(',')).join(' ')+'" fill="none" stroke="#7a7a12" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>'}
+function fwhen(s){if(!s)return'';const d=new Date(/Z|[+-]\d\d:?\d\d$/.test(s)||!/T/.test(s)?s:s+'Z');if(isNaN(d))return s;const t=new Date();const same=d.toDateString()===t.toDateString();return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}
+let liveMap=null;
+async function loadToday(){let d;try{d=await (await fetch('/api/today')).json()}catch(e){return}
+$id('fo-hello').textContent=d.hello+', '+d.name;const n=d.kpi.today;$id('fo-hello2').textContent=n?'You have '+n+' job'+(n===1?'':'s')+' today.':'No jobs on the schedule today.';
+const p=d.prog,tot=p.togo+p.active+p.done||1;
+$id('fo-prog').innerHTML='<div class="fo-bar"><i style="width:'+(p.done/tot*100)+'%;background:#2e7d32"></i><i style="width:'+(p.active/tot*100)+'%;background:var(--gold)"></i></div><div class="fo-legend"><span><b>'+p.togo+'</b> to go</span><span><b>'+p.active+'</b> active</span><span><b>'+p.done+'</b> done</span></div>';
+const k=d.kpi;$id('fo-kpis').innerHTML=[['/jobs?f=today','Jobs today',k.today,spark(k.spark_jobs)+'<i class="fo-cap">Jobs done, 8 weeks</i>'],['/jobs?f=progress','In progress',k.progress,''],['#fo-acts','Waiting on you',k.waiting,''],['/money','Money in '+k.month,k.money,spark(k.spark_money)+'<i class="fo-cap">'+esc(k.money_src)+'. Sales trend, 8 weeks</i>']]
+.map(x=>'<a class="fo-kpi'+(x[1]==='Waiting on you'&&x[2]?' hot':'')+'" href="'+x[0]+'"><small>'+esc(x[1])+'</small><b>'+esc(String(x[2]))+'</b>'+x[3]+'</a>').join('');
+$id('fo-acts').innerHTML=d.actions.length?d.actions.map(a=>'<a class="fo-act '+a.tone+'" href="'+esc(a.href)+'"><span class="fo-ai">'+a.icon+'</span><span class="fo-at"><b>'+esc(a.title)+' <em>'+a.n+'</em></b><small>'+esc(a.detail)+'</small></span><span class="fo-ab">'+esc(a.btn)+'</span></a>').join(''):'<div class="fo-act ok"><span class="fo-ai">&#10003;</span><span class="fo-at"><b>All caught up</b><small>Nothing needs you right now.</small></span></div>';
+$id('fo-tjobs').innerHTML=d.today.length?d.today.map(dcard).join(''):'<div class="fo-empty">Nothing scheduled today. Tap + to add a job.</div>';
+const lv=d.live.filter(x=>x.lat!=null&&x.lng!=null);
+$id('fo-live').innerHTML=(d.live.length?(lv.length?'<div id="fo-map"></div>':'')+d.live.map(x=>'<div class="fo-row" data-id="'+esc(x.job)+'" onclick="openJob(this.dataset.id)"><span class="fo-pulse"></span><b>'+esc(x.sub)+'</b> <span class="muted">at '+esc(x.customer||x.title)+' since '+esc(fwhen(x.since))+(x.lat==null?' (no GPS)':'')+'</span></div>').join(''):'<div class="fo-empty">No one is clocked in right now.</div>');
+if(lv.length&&await loadLeaflet()){if(liveMap){liveMap.remove();liveMap=null}liveMap=L.map('fo-map',{zoomControl:false,attributionControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(liveMap);
+const b=[];lv.forEach(x=>{L.circleMarker([x.lat,x.lng],{radius:9,color:'#fff',weight:3,fillColor:'#7a7a12',fillOpacity:1}).addTo(liveMap).bindTooltip(x.sub,{permanent:true,direction:'top',offset:[0,-8]});b.push([x.lat,x.lng])});
+if(b.length===1)liveMap.setView(b[0],14);else liveMap.fitBounds(b,{padding:[30,30]})}
+$id('fo-feed').innerHTML=d.feed.length?d.feed.map(f=>'<div class="fo-row" data-id="'+esc(f.job)+'" onclick="openJob(this.dataset.id)"><b>'+esc(f.author)+'</b> <span class="muted">'+esc(f.customer||f.job)+' &middot; '+esc(fwhen(f.at))+'</span><div>'+esc(f.note)+'</div></div>').join(''):'<div class="fo-empty">No activity yet.</div>'}
+
 const TPLS={{ tpls|tojson }};
 function tplOpts(){const t=document.getElementById('n-type').value,s=document.getElementById('n-tpl');if(!s)return;s.innerHTML='';const o=new Option('Checklist: none (type your own below)','');s.add(o);
 TPLS.filter(x=>!x.job_type||x.job_type===t).forEach(x=>s.add(new Option('Checklist: '+x.name,String(x.id))));
@@ -1047,7 +1408,7 @@ if(c){if(!n('address').value)n('address').value=c.address;if(!n('phone').value)n
 function goSearch(){const q=(document.getElementById('q').value||'').trim();if(q.length>1)location.href='/search?q='+encodeURIComponent(q);else{document.getElementById('q').value='';load()}}
 function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){quickFill();o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
-if(OFFICE&&!q)return loadDash();
+if(OFFICE&&!q)return VIEW==='today'?loadToday():loadDash();
 const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
@@ -1478,7 +1839,7 @@ const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
 document.getElementById('home').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');window.scrollTo(0,0);renderType();clearSig()}
-function showList(){history.replaceState(null,'','/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
+function showList(){history.replaceState(null,'',VIEW==='jobs'?'/jobs':'/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
 async function flushNote(){const n=document.getElementById('update-note');if(!n.value.trim())return true;
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});if(r.ok){n.value='';loadUpdates();return true}alert('Error saving note');return false}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
@@ -1497,12 +1858,12 @@ const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'applicat
 if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
 ['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';location.href='/?job='+encodeURIComponent(body.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 {const td=document.getElementById('today-date');if(td)td.textContent=new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})}
-if(VIEW==='new'){tplOpts();quickFill();document.getElementById('n-id').focus()}else load();
+if(VIEW==='new'){tplOpts();quickFill();const qt=new URLSearchParams(location.search).get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()}else load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
 
 @app.route('/')
-def index(view='home'):
+def index(view='today'):
     techs=[(n,n) for n in sub_logins()]+[(nice_name(k),nice_name(k)+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
     tpls=[]
     if is_office():
@@ -1512,6 +1873,7 @@ def index(view='home'):
         conn=get_db(); low_n=len(low_stock(conn)); conn.close()
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
+    if view=='today' and not is_office(): view='home'
     return render_template_string(HTML, view=view, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
 
 @app.route('/new-job')
@@ -2408,7 +2770,7 @@ label{display:block;font-weight:600;margin-top:6px}.card{border:1px solid #e5e5e
 a.card{display:block;color:#111;text-decoration:none}.muted{color:#666;font-size:.9rem}.flag{background:#fdecea;color:#c62828;border-radius:8px;padding:2px 8px;font-weight:700}
 .okf{background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 8px;font-weight:700}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top}
 th{font-size:.85rem;color:#666}td:first-child{min-width:120px}.num{text-align:right;white-space:nowrap}.msg{background:#e8f5e9;border-radius:10px;padding:10px;margin:8px 0;font-weight:600}</style></head><body>
-<a href="{{ back or '/' }}" class="big-btn gray">&larr; Back</a><h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
+{% if back is not sameas false %}<a href="{{ back or '/' }}" class="big-btn gray fo-back">&larr; Back</a>{% endif %}<h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
 def ops_page(title, body, back='/', msg=''): return render_template_string(OPS_HTML, title=title, body=Markup(body), back=back, msg=msg)
 def money(v):
     try: x=float(v or 0)
