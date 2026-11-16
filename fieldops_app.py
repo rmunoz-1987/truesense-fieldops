@@ -758,9 +758,11 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
+<div class="row" style="flex-wrap:wrap;gap:6px">{% for t in job_types %}<button class="big-btn gray qa" style="flex:1 1 45%" data-t="{{ t }}" onclick="quickType(this.dataset.t)">+ {{ t }}</button>{% endfor %}</div>
+<datalist id="cl-list"></datalist>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
-<input type="text" id="n-title" placeholder="Title">
-<input type="text" id="n-customer" placeholder="Customer">
+<input type="text" id="n-title" placeholder="Title" oninput="this.dataset.auto=''">
+<input type="text" id="n-customer" placeholder="Customer" list="cl-list" onchange="pickClient()">
 <input type="text" id="n-address" placeholder="Address">
 <input type="tel" id="n-phone" placeholder="Customer phone">
 <select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% else %}<option value="">No subs set in Render</option>{% endfor %}</select>
@@ -822,7 +824,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-pn"><div class="job"><div style="font-weight:800;font-size:1.3rem">Photos and Notes</div><div class="muted">One save adds today's daily log, a job note and the photos.</div>
 <label class="big-btn gray" style="display:block;cursor:pointer;margin-top:8px">&#128247; Add Photos<input type="file" id="pn-photos" accept="image/*" multiple style="display:none" onchange="pnPicked()"></label><div id="pn-picked" class="muted" style="text-align:center"></div>
 <div style="font-weight:600;margin-top:8px">What did you do today?</div><textarea id="pn-work" rows="3" style="font-size:1.15rem" autocapitalize="sentences" placeholder="Say or type it"></textarea>
-<div style="font-weight:600">Materials used</div><input type="text" id="pn-mat" placeholder="500 ft Cat6, 2 cameras">
+<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">{% for c in ['Ran cable','Mounted devices','Programmed','Tested all','Trained client','Cleaned up'] %}<button type="button" class="big-btn gray" style="flex:1 1 30%;padding:12px;font-size:1rem" data-c="{{ c }}" onclick="chip(this.dataset.c)">{{ c }}</button>{% endfor %}</div>
+<div style="font-weight:600">Materials used</div><input type="text" id="pn-mat" placeholder="500 ft Cat6, 2 cameras" list="mat-list"><datalist id="mat-list"></datalist>
 <div style="font-weight:600">Problems or delays</div><input type="text" id="pn-issues" placeholder="None">
 <button class="big-btn" id="pn-save" style="font-size:1.25rem" onclick="pnSave()">Save</button><div id="pn-today" class="muted" style="text-align:center"></div></div></div>
 <div id="sec-done"><div class="job"><button class="big-btn green" id="done-btn" style="font-size:1.4rem;padding:22px" onclick="finishTap()">Finish</button><div id="done-why" class="stp-why"></div><div class="muted" style="text-align:center" id="done-note">Clocks you out and marks the job done.</div></div></div>
@@ -901,7 +904,18 @@ const c=document.getElementById('n-checklist');const d=TPLS.find(x=>x.name.toLow
 if(d&&(!c.value.trim()||c.value===tplLast)){s.value=String(d.id);tplPick()}else if(c.value===tplLast){c.value='';tplLast=''}}
 const DEF_TPL={{ def_tpl|tojson }};let tplLast='';
 function tplPick(){const id=document.getElementById('n-tpl').value;const x=TPLS.find(k=>String(k.id)===id);if(x){const c=document.getElementById('n-checklist');c.value=x.items.join('\\n');tplLast=c.value}}
-function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
+let QK=null;
+async function quickFill(){try{QK=await (await fetch('/api/quick')).json()}catch(e){return}
+const n=k=>document.getElementById('n-'+k);if(!n('id').value)n('id').value=QK.next_id;if(!n('date').value)n('date').value=QK.today;
+const lt=localStorage.getItem('fo_last_tech');if(lt&&[...n('tech').options].some(o=>o.value===lt))n('tech').value=lt;
+const ty=localStorage.getItem('fo_last_type');if(ty&&!n('title').value&&[...n('type').options].some(o=>o.value===ty)){n('type').value=ty;tplOpts()}
+document.getElementById('cl-list').innerHTML=QK.clients.map(c=>'<option value="'+esc(c.name)+'"></option>').join('');markQuick()}
+function markQuick(){const t=document.getElementById('n-type').value;document.querySelectorAll('.qa').forEach(b=>{b.classList.toggle('gray',b.dataset.t!==t)})}
+function quickType(t){const n=k=>document.getElementById('n-'+k);n('type').value=t;tplOpts();markQuick();autoTitle();n('customer').focus()}
+function autoTitle(){const n=k=>document.getElementById('n-'+k);const t=n('title');if(!t.value||t.dataset.auto==='1'){const c=n('customer').value.trim();t.value=n('type').value+(c?' - '+c:'');t.dataset.auto='1'}}
+function pickClient(){const n=k=>document.getElementById('n-'+k);const c=(QK&&QK.clients||[]).find(x=>x.name.toLowerCase()===n('customer').value.trim().toLowerCase());
+if(c){if(!n('address').value)n('address').value=c.address;if(!n('phone').value)n('phone').value=c.phone}autoTitle()}
+function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){quickFill();o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
 if(OFFICE&&!q)return loadDash();
 const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
@@ -1055,7 +1069,7 @@ function pnPicked(){const n=document.getElementById('pn-photos').files.length;do
 async function pnSave(){const f=document.getElementById('pn-photos'),w=document.getElementById('pn-work');if(!w.value.trim()&&!f.files.length){toast('Add a photo or say what you did');return}
 const fd=new FormData();fd.append('work_done',w.value);fd.append('materials',document.getElementById('pn-mat').value);fd.append('issues',document.getElementById('pn-issues').value);[...f.files].forEach(x=>fd.append('photos',x));
 const b=document.getElementById('pn-save');b.disabled=true;b.textContent='Saving...';const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/worklog',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));b.disabled=false;b.textContent='Save';
-if(!r.ok){toast(d.error||'Error',4000);return}f.value='';w.value='';document.getElementById('pn-mat').value='';document.getElementById('pn-issues').value='';pnPicked();toast('Saved');if(typeof loadUpdates==='function')loadUpdates();await reloadJob()}
+if(!r.ok){toast(d.error||'Error',4000);return}matRemember(document.getElementById('pn-mat').value);f.value='';w.value='';document.getElementById('pn-mat').value='';document.getElementById('pn-issues').value='';pnPicked();toast('Saved');if(typeof loadUpdates==='function')loadUpdates();await reloadJob()}
 async function finishTap(){const b=document.getElementById('done-btn');await refreshSteps();const S=currentJob.steps||[];const fin=S.find(s=>s.label==='Finish');
 if(fin&&fin.why){toast(fin.why,4000);const e=focusSecs(fin.go||[]);if(e)e.scrollIntoView({behavior:'smooth',block:'start'});return}
 b.disabled=true;b.textContent='Finishing...';if(currentJob.clock&&currentJob.clock.open){const loc=await getLoc();const r=await post('/clock',loc||{});if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.error||'Clock out failed',4000);b.disabled=false;b.textContent='Finish';return}}
@@ -1090,6 +1104,10 @@ const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type'
 if(r.ok){btn.classList.add('hidden');toast('Job alerts on. You will get a ping for new jobs and schedule changes.')}else{toast('Could not turn on alerts. Try again.');btn.disabled=false}}
 catch(e){toast('Could not turn on alerts. Try again.');btn.disabled=false}}
 window.addEventListener('load',()=>setTimeout(pushInit,800));
+function chip(c){const w=document.getElementById('pn-work');const v=w.value.trim();w.value=v?(v.replace(/[.,]?$/,'')+', '+c.toLowerCase()):c;w.focus()}
+function matRemember(v){v=(v||'').trim();if(!v)return;try{let a=JSON.parse(localStorage.getItem('fo_mats')||'[]').filter(x=>x!==v);a.unshift(v);localStorage.setItem('fo_mats',JSON.stringify(a.slice(0,12)))}catch(e){}matList()}
+function matList(){const d=document.getElementById('mat-list');if(!d)return;try{d.innerHTML=JSON.parse(localStorage.getItem('fo_mats')||'[]').map(x=>'<option value="'+esc(x)+'"></option>').join('')}catch(e){}}
+window.addEventListener('load',matList);
 async function qBadge(){const n=(await qAll().catch(()=>[])).length;let b=document.getElementById('q-bar');if(!b){b=document.createElement('div');b.id='q-bar';b.style.cssText='position:sticky;top:0;z-index:30;background:#b26a00;color:#fff;font-weight:700;text-align:center;padding:10px;border-radius:8px;margin:4px 0';document.body.prepend(b)}
 b.textContent=n?(navigator.onLine?'Sending '+n+' saved item'+(n>1?'s':'')+'...':'Offline. '+n+' item'+(n>1?'s':'')+' saved on this phone. They send when you are back online.'):(navigator.onLine?'':'Offline. You can keep working.');b.style.display=b.textContent?'block':'none'}
 let qBusy=false;async function qFlush(){if(qBusy||!navigator.onLine)return;qBusy=true;try{for(const it of await qAll()){let body=it.body;if(it.form){body=new FormData();it.form.forEach(([k,v,n])=>n?body.append(k,v,n):body.append(k,v))}
@@ -1316,7 +1334,8 @@ async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
 const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(r.ok){['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('office').classList.add('hidden');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
+['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';document.getElementById('office').classList.add('hidden');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
@@ -1370,6 +1389,16 @@ def create_job():
     conn.commit(); conn.close()
     push_to_sub(tech,'New job: '+title,(d.get('customer') or '').strip()+' - '+nice_day(sd),'/?job='+jid)
     return jsonify({'ok':True,'id':jid}),201
+
+@app.route('/api/quick')
+def quick_info():
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); y=today_local().year; pre='TS-%d-'%y; top=0
+    for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?',(pre+'%',)):
+        try: top=max(top,int(r['id'][len(pre):]))
+        except ValueError: pass
+    cl=[{'name':r['name'],'address':r['address'] or '','phone':r['phone'] or ''} for r in conn.execute('SELECT name,address,phone FROM clients ORDER BY name')]
+    conn.close(); return jsonify({'next_id':pre+'%04d'%(top+1),'clients':cl,'today':today_local().isoformat()})
 
 @app.route('/api/jobs/<job_id>/type', methods=['POST'])
 def set_job_type(job_id):
