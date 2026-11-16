@@ -575,6 +575,9 @@ def init_db():
     conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('tpl_seeded',?)",(json.dumps(sorted(seeded)),))
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
         job_id TEXT PRIMARY KEY, package TEXT, status TEXT DEFAULT 'ready_for_review', created_at TEXT)''')
+    for ix in ('photos(job_id)', 'photos(filename)', 'job_updates(job_id)', 'support_replies(job_id)', 'followups(job_id)', 'msg_drafts(job_id, kind, ref_date)',
+               'msg_drafts(status)', 'jobs(status)', 'jobs(scheduled_date)', 'time_punches(job_id)', 'time_punches(sub, out_at)', 'safety_forms(job_id, form_date)', 'safety_forms(form_date)'):
+        conn.execute('CREATE INDEX IF NOT EXISTS ix_%s ON %s' % (re.sub(r'\W+', '_', ix).strip('_'), ix))
     count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
     if count == 0:
         now = datetime.utcnow().isoformat()
@@ -2203,15 +2206,18 @@ def on_my_way(job_id):
     else: conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(job_id,'onmyway',draft_phone(r),body,today,me(),now_local_str()))
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
+REMIND_LAST=[0.0]
 def make_reminders(conn):
+    if time.time()-REMIND_LAST[0]<60: return
+    REMIND_LAST[0]=time.time(); added=False
     tm=(today_local()+timedelta(days=1)).isoformat()
     for r in conn.execute("SELECT * FROM jobs WHERE scheduled_date=? AND status!='completed' AND COALESCE(job_type,'')!='Office Task'",(tm,)).fetchall():
         ph=draft_phone(r)
         if not ph or conn.execute("SELECT 1 FROM msg_drafts WHERE job_id=? AND kind='reminder' AND ref_date=?",(r['id'],tm)).fetchone(): continue
         when=datetime.strptime(tm,'%Y-%m-%d').strftime('%A, %b %d').replace(' 0',' ')
         body=f"Hi{(' '+r['customer'].strip()) if (r['customer'] or '').strip() else ''}, this is True Sense Security. Reminder: we will see you tomorrow, {when}{(' at '+r['address']) if r['address'] else ''}. Reply to this text if you need to change it."
-        conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(r['id'],'reminder',ph,body,tm,'Auto',now_local_str()))
-    conn.commit()
+        conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(r['id'],'reminder',ph,body,tm,'Auto',now_local_str())); added=True
+    if added: conn.commit()
 
 @app.route('/api/drafts')
 def list_drafts():
@@ -2730,7 +2736,7 @@ def site_point(conn, row):
     g=parse_map(row['map_data'])['geo']
     if g and g.get('lat') is not None and g.get('addr','')==(row['address'] or '').strip() or (g and g.get('lat') is not None and g.get('q')=='My location'): return (g['lat'],g['lng'])
     addr=(row['address'] or '').strip()
-    if not addr: return None
+    if not addr or (g and g.get('addr')==addr and g.get('lat') is None): return None
     try: hit=nominatim(addr)
     except Exception: return (g['lat'],g['lng']) if g and g.get('lat') is not None else None
     g={'addr':addr,'q':addr,'lat':hit[0] if hit else None,'lng':hit[1] if hit else None}; set_geo(conn, row, g)
@@ -3095,7 +3101,8 @@ def uploads(fn):
         conn=get_db(); r=conn.execute('SELECT j.tech FROM photos p JOIN jobs j ON j.id=p.job_id WHERE p.filename=?',(fn,)).fetchone()
         ok=bool(r) and can_see(r); conn.close()
         if not ok: return ('',403)
-    return send_from_directory(app.config['UPLOAD_FOLDER'], secure_filename(fn))
+    r=send_from_directory(app.config['UPLOAD_FOLDER'], secure_filename(fn), max_age=7*86400)
+    r.headers['Cache-Control']='private, max-age=604800'; return r
 
 @app.route('/api/invoice-drafts')
 def list_invoice_drafts():
@@ -3110,5 +3117,15 @@ def get_invoice_draft(job_id):
     if not r: return ('',404)
     return jsonify(dict(json.loads(r['package']),draft_status=r['status'],draft_created_at=r['created_at']))
 
+def serve():
+    port=int(os.environ.get('PORT',5000))
+    try: from gunicorn.app.base import BaseApplication
+    except ImportError: return app.run(host='0.0.0.0', port=port, threaded=True)
+    class _G(BaseApplication):
+        def load_config(self):
+            for k,v in {'bind':'0.0.0.0:%d'%port,'workers':1,'worker_class':'gthread','threads':8,'timeout':120,'keepalive':5,'accesslog':'-'}.items(): self.cfg.set(k,v)
+        def load(self): return app
+    _G().run()
+
 if __name__=='__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT',5000)))
+    serve()
