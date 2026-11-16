@@ -202,7 +202,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path=='/api/tech-support/reply': return
+    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path=='/api/tech-support/reply': return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -242,7 +242,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -419,6 +419,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-map"><button class="big-btn gray" onclick="mapOpen()">Site Map <span id="map-sum" style="font-weight:400;font-size:.9rem"></span></button></div>
 <div id="sec-follow">{% if office %}<div class="job"><div style="font-weight:600">Follow-ups (office only)</div><div id="fu-list"></div>
 <div style="font-size:.85rem;color:#666;margin-top:8px">Remind me on</div><input type="date" id="fu-date"><input type="text" id="fu-note" placeholder="What to follow up on (e.g. call about estimate)"><button class="big-btn" onclick="addFollow()">Add Follow-up</button></div>{% endif %}</div>
+<div id="sec-hub">{% if office %}<div class="job"><div style="font-weight:600">Client Link (office only)</div><div class="muted" style="font-size:.9rem">Anyone with this link can see this job's summary, plan, photos and signature. Copy it and send it yourself.</div>
+<input type="text" id="hub-url" readonly onclick="this.select()"><button class="big-btn gray" onclick="copyHub()">Copy Link</button><div id="hub-appr" style="font-weight:700;font-size:1.1rem;color:#2e7d32"></div></div>{% endif %}</div>
 <div id="sec-private">{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
 <textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}</div>
 <div id="sec-sig"><div class="job"><div style="font-weight:600">Customer Signature</div><canvas id="sig"></canvas>
@@ -486,6 +488,9 @@ fu.forEach(x=>{const d=document.createElement('div');d.className='job';d.style.b
 const j=document.createElement('div');j.style.fontWeight='600';j.textContent=x.job_id+' \u00b7 '+(x.customer||x.title||'');const n=document.createElement('div');n.style.cssText='white-space:pre-wrap;font-size:1.1rem';n.textContent=x.note;
 const r=document.createElement('div');r.className='row';const b1=document.createElement('button');b1.className='big-btn green';b1.textContent='Done';b1.onclick=async()=>{if((await fetch('/api/followups/'+x.id+'/done',{method:'POST'})).ok)load();else alert('Error')};
 const b2=document.createElement('button');b2.className='big-btn gray';b2.textContent='Open Job';b2.onclick=()=>openJob(x.job_id);r.append(b1,b2);d.append(h,j,n,r);el.appendChild(d)})}
+function renderHub(){const u=document.getElementById('hub-url');if(!u)return;u.value=currentJob.hub_url?location.origin+currentJob.hub_url:'';
+document.getElementById('hub-appr').textContent=currentJob.hub_approved_at?'Estimate approved by '+(currentJob.hub_approved_name||'client')+' on '+currentJob.hub_approved_at:(currentJob.job_type==='Survey'?'Estimate not approved yet':'')}
+async function copyHub(){const u=document.getElementById('hub-url');try{await navigator.clipboard.writeText(u.value);alert('Link copied')}catch(e){u.select();document.execCommand('copy');alert('Link copied')}}
 async function loadFollow(){const el=document.getElementById('fu-list');if(!el)return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/followups');const u=r.ok?await r.json():[];el.innerHTML='';const today=ymd(new Date());
 u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5;'+(x.done?'color:#999':'');const h=document.createElement('div');h.style.cssText='font-weight:700;'+(!x.done&&x.due<today?'color:#b00020':'');h.textContent=x.done?'Done \u00b7 was due '+dayLabel(x.due).replace(/^Overdue, /,''):fuLabel(x.due,today);
 const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=x.note;d.append(h,t);if(!x.done){const b=document.createElement('button');b.className='big-btn green';b.style.padding='10px';b.textContent='Mark Done';b.onclick=async()=>{if((await fetch('/api/followups/'+x.id+'/done',{method:'POST'})).ok)loadFollow();else alert('Error')};d.appendChild(b)}el.appendChild(d)});
@@ -703,14 +708,14 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','survey','log','follow','finish'],more:[]},
-Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','follow','private','sig','finish'],more:[]},
-Service:{show:['help','links','type','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check']},
+const LAYOUT={Survey:{show:['help','links','type','survey','log','follow','hub','finish'],more:[]},
+Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
+Service:{show:['help','links','type','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','check','ab','map','follow','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -730,7 +735,7 @@ renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -872,7 +877,8 @@ def get_job(job_id):
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
     conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row); conn.close()
-    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs))
+    extra={'hub_url':'/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id)} if is_office() else {}
+    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
 def job_updates(job_id):
@@ -1252,6 +1258,8 @@ def support_list(job_id):
     rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at,IFNULL(kind,'') AS kind FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
     return jsonify(rows)
 
+def hub_token(job_id): return hmac.new(app.secret_key.encode(), ('hub:'+job_id).encode(), hashlib.sha256).hexdigest()[:32]
+
 def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
 
 @app.route('/help-photo/<path:fn>')
@@ -1376,7 +1384,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 {% if j.job_type == 'Survey' %}<a class="btn" style="background:#6a1b9a;color:#fff" href="/?job={{ j.id|urlencode }}">Open Survey</a>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 <div class="sec">{{ {'Service':'Problem &amp; What Was Done','Survey':'Notes','Office Task':'Notes'}.get(j.job_type, 'Notes &amp; Updates')|safe }}</div>{% for u in j.updates %}<div style="padding:4px 0;border-bottom:1px solid #eee"><div class="muted" style="font-size:.8rem">{{ u.created_at }} &middot; {{ u.author }}</div><div style="white-space:pre-wrap">{{ u.note }}</div></div>{% endfor %}{% if j.notes %}<div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}{% if not j.notes and not j.updates %}<div class="muted">None</div>{% endif %}
-{% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
+{% if j.job_type == 'Survey' %}{% set s = j.survey %}{% if j.hub_approved_at %}<div style="font-weight:700;color:#2e7d32">Estimate approved by {{ j.hub_approved_name or 'client' }} on {{ j.hub_approved_at }}</div>{% endif %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
@@ -1488,7 +1496,7 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% if j.job_type not in ('Survey','Office Task') %}<div>Hours: {{ j.hours }}</div>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
 {% set lt = {'Service':'Problem &amp; What Was Done','Survey':'Notes','Office Task':'Notes'}.get(j.job_type, 'Notes &amp; Updates') %}{% if j.notes or j.updates %}<div class="sec">{{ lt|safe }}</div>{% for u in j.updates|reverse %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> <span style="white-space:pre-wrap">{{ u.note }}</span></div>{% endfor %}{% if j.notes %}<div style="white-space:pre-wrap">{{ j.notes }}</div>{% endif %}{% endif %}
-{% if j.job_type == 'Survey' %}{% set s = j.survey %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
+{% if j.job_type == 'Survey' %}{% set s = j.survey %}{% if j.hub_approved_at %}<div style="font-weight:700;color:#2e7d32">Estimate approved by {{ j.hub_approved_name or 'client' }} on {{ j.hub_approved_at }}</div>{% endif %}<div class="sec">Estimating Site Survey</div><div style="border-left:3px solid #a49f2a;padding-left:8px">
 <div><b>Site contact:</b> {{ s.contact_name or '-' }}{% if s.contact_phone %} &middot; {% if s.contact_tel %}<a href="tel:{{ s.contact_tel }}">{{ s.contact_phone }}</a>{% else %}{{ s.contact_phone }}{% endif %}{% endif %}</div>
 {% if s.want_desc %}<div><b>What they want:</b> <span style="white-space:pre-wrap">{{ s.want_desc }}</span></div>{% endif %}
 <div style="margin-top:4px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ s.conditions or '-' }}</div>
@@ -1644,6 +1652,50 @@ def schedule_job(job_id):
     if not tech: return jsonify({'error':'tech required'}),400
     conn=get_db(); n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
+
+HUB_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>True Sense Security: {{ j.title }}</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:640px;margin:auto;padding:14px}
+h1{font-size:1.3rem;margin:10px 0 4px}h2{font-size:1.1rem;color:#a49f2a;margin:20px 0 6px;border-bottom:2px solid #a49f2a}.muted{color:#666}.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}
+.ph img{width:31%;aspect-ratio:1;object-fit:cover;border-radius:8px;margin:1%}.plan{position:relative;margin:8px 0;border:1px solid #ddd}.plan img{width:100%;display:block}
+.pin{position:absolute;transform:translate(-50%,-50%);color:#fff;border:2px solid #fff;border-radius:14px;min-width:26px;padding:0 3px;height:26px;line-height:22px;text-align:center;font-size:11px;font-weight:700}
+table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:6px;text-align:left}input{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}
+.btn{width:100%;background:#2e7d32;color:#fff;border:0;padding:18px;border-radius:10px;font-size:1.2rem;font-weight:700}.ok{background:#e8f5e9;border:2px solid #2e7d32;border-radius:12px;padding:14px;font-weight:700;font-size:1.1rem;color:#1b5e20}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block;margin:0 auto">
+<h1>{{ j.title }}</h1><div>{{ j.customer }}</div><div class="muted">{{ j.address }}</div>
+<div class="muted">{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}{% if j.scheduled_date %} &middot; Scheduled {{ j.scheduled_date }}{% endif %}</div>
+{% if j.job_type == 'Survey' %}<h2>Site Survey</h2><div class="card">{% if j.survey.want_desc %}<div><b>What you want:</b></div><div style="white-space:pre-wrap">{{ j.survey.want_desc }}</div>{% endif %}
+{% if j.survey.conditions %}<div style="margin-top:8px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ j.survey.conditions }}</div>{% endif %}</div>{% endif %}
+{% if j.plans %}<h2>{{ 'Plan and Devices' if j.job_type == 'Survey' else 'As-Built Plan' }}</h2>{% for fn in j.plans %}<div class="plan"><img src="{{ signed(fn) }}" alt="plan">{% for d in j.devices if d.plan == fn %}<span class="pin" style="left:{{ d.x }}%;top:{{ d.y }}%;background:{{ DEV_COLORS[d.type] }}">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
+{% if j.devices %}<div><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+<table><tr><th>Label</th><th>Device</th><th>Note</th>{% if j.job_type != 'Survey' %}<th>Status</th>{% endif %}</tr>{% for d in j.devices %}<tr><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td><td>{{ d.note }}</td>{% if j.job_type != 'Survey' %}<td>{{ 'Installed' if d.installed else 'Planned' }}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
+{% if j.photos %}<h2>Photos</h2><div class="ph">{% for p in j.photos %}<a href="{{ signed(p.filename) }}" target="_blank"><img src="{{ signed(p.filename) }}" alt="photo"></a>{% endfor %}</div>{% endif %}
+{% if j.job_type not in ('Survey','Office Task') and j.status == 'completed' and j.signature and j.signature.startswith('data:image/') %}<h2>Completion Signature</h2><img src="{{ j.signature }}" alt="signature" style="width:260px;max-width:100%;border:1px solid #ddd">{% if j.completed_at %}<div class="muted">Completed {{ j.completed_at[:10] }}</div>{% endif %}{% endif %}
+{% if j.job_type == 'Survey' %}<h2>Estimate</h2>{% if j.hub_approved_at %}<div class="ok">&#10003; Estimate approved by {{ j.hub_approved_name or 'client' }} on {{ j.hub_approved_at }}</div>
+{% else %}<form method="post" action="/hub/{{ j.id|urlencode }}/approve" onsubmit="return confirm('Approve the estimate?')"><input type="hidden" name="t" value="{{ t }}"><input name="name" placeholder="Your name" required maxlength="100"><button class="btn" type="submit">Approve Estimate</button></form>
+<div class="muted" style="margin-top:6px">Tapping Approve tells True Sense Security you approve the estimate you were sent.</div>{% endif %}{% endif %}
+<div class="muted" style="margin-top:24px;text-align:center">True Sense Security</div></body></html>'''
+
+def hub_job(job_id):
+    if not hmac.compare_digest(request.values.get('t',''), hub_token(job_id)): return None, None
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return None, None
+    return conn, row
+
+@app.route('/hub/<job_id>')
+def hub_page(job_id):
+    conn,row=hub_job(job_id)
+    if not row: return ('Link not valid',404)
+    j=job_full(conn,row); conn.close()
+    return render_template_string(HUB_HTML, j=j, t=hub_token(job_id), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
+
+@app.route('/hub/<job_id>/approve', methods=['POST'])
+def hub_approve(job_id):
+    conn,row=hub_job(job_id)
+    if not row: return ('Link not valid',404)
+    if row['job_type']=='Survey' and not row['hub_approved_at']:
+        conn.execute('UPDATE jobs SET hub_approved_at=?,hub_approved_name=? WHERE id=?',(now_local_str(),(request.form.get('name') or '').strip()[:100],job_id)); conn.commit()
+    conn.close()
+    return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id))
 
 @app.route('/techs')
 def techs_page():
