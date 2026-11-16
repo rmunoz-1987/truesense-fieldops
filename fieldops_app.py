@@ -644,6 +644,9 @@ def init_db():
     if not conn.execute('SELECT 1 FROM agreements').fetchone():
         conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',('1.2',AGREEMENT_V12,now_local_str(),'Seed'))
     conn.execute("UPDATE agreements SET body=? WHERE created_by='Seed' AND version='1.2' AND body NOT LIKE '%[SUB:%'",(AGREEMENT_V12,))
+    conn.execute('''CREATE TABLE IF NOT EXISTS equipment (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, client TEXT, site TEXT, job_id TEXT, device TEXT, model TEXT, serial TEXT, mac TEXT, ip TEXT,
+        install_date TEXT, warranty_end TEXT, asbuilt_label TEXT, password TEXT, notes TEXT, created_at TEXT, updated_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS push_subs (
         endpoint TEXT PRIMARY KEY, sub TEXT, p256dh TEXT, auth TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
@@ -752,7 +755,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/equipment" class="big-btn gray">Equipment</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -850,7 +853,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
-<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div>
+<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
 <div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
@@ -2172,6 +2175,110 @@ def search_page():
     if not cl and not hits and not out: body+='<div class="card">Nothing found for "%s".</div>'%h(q)
     return ops_page('Search', body)
 SEARCH_HOOKS = []
+
+EQ_FIELDS = [('client','Client'),('site','Site address'),('device','Device'),('model','Model'),('serial','Serial'),('mac','MAC'),('ip','IP'),
+             ('install_date','Install date'),('warranty_end','Warranty ends'),('asbuilt_label','As-built label'),('job_id','Job ID'),('notes','Notes')]
+def warranty_tag(w):
+    try: d=datetime.strptime(w,'%Y-%m-%d').date()
+    except Exception: return ''
+    left=(d-today_local()).days
+    if left<0: return ' <span class="flag">Warranty ended</span>'
+    if left<=60: return ' <span class="flag">Warranty ends in %d days</span>'%left
+    return ' <span class="okf">Under warranty</span>'
+def eq_card(r, office, link=True):
+    bits=' &middot; '.join(h(x) for x in [r['model'] and 'Model '+r['model'], r['serial'] and 'SN '+r['serial'], r['mac'] and 'MAC '+r['mac'], r['ip'] and 'IP '+r['ip']] if x)
+    meta=' &middot; '.join(h(x) for x in [r['asbuilt_label'] and 'As-built '+r['asbuilt_label'], r['install_date'] and 'Installed '+r['install_date'], r['warranty_end'] and 'Warranty to '+r['warranty_end']] if x)
+    pw=(' &middot; Password: &bull;&bull;&bull;&bull;&bull;&bull;' if office and r['password'] else '')
+    inner='<b>%s</b>%s<div>%s</div><div class="muted">%s%s</div>'%(h(r['device'] or 'Device'),warranty_tag(r['warranty_end']),bits,meta,pw)
+    return ('<a class="card" href="/equipment/%d">%s</a>'%(r['id'],inner)) if (office and link) else '<div class="card">%s</div>'%inner
+
+@app.route('/equipment')
+def equipment_page():
+    if not is_office(): return redirect('/')
+    site=(request.args.get('site') or '').strip(); job=(request.args.get('job') or '').strip()
+    conn=get_db(); rows=conn.execute('SELECT * FROM equipment ORDER BY LOWER(client),LOWER(site),device').fetchall()
+    jrow=conn.execute('SELECT * FROM jobs WHERE id=?',(job,)).fetchone() if job else None; conn.close()
+    if site: rows=[r for r in rows if ckey(r['site'])==ckey(site)]
+    body=''
+    if jrow: body+='<form method="post" action="/equipment/import/%s"><button class="big-btn">Add devices from this job as-built</button></form>'%h(jrow['id'])
+    body+='<a class="big-btn gray" href="/equipment/new?%s">+ Add Equipment</a>'%urllib.parse.urlencode({'site':site or (jrow['address'] if jrow else ''),'client':(jrow['customer'] if jrow else ''),'job_id':job})
+    if site: body+='<a class="big-btn gray" href="/equipment">Show all sites</a>'
+    groups={}
+    for r in rows: groups.setdefault((r['client'] or '', r['site'] or ''),[]).append(r)
+    for (c,st),rs in groups.items():
+        body+='<h2>%s</h2><div class="muted">%s</div>'%(h(c or 'No client'),h(st))+''.join(eq_card(r,True) for r in rs)
+    if not rows: body+='<div class="card">No equipment yet.</div>'
+    return ops_page('Equipment'+(' at '+site if site else ''), body, back=('/?job='+urllib.parse.quote(job)) if job else '/', msg=request.args.get('msg',''))
+
+@app.route('/equipment/<eid>', methods=['GET','POST'])
+def equipment_edit(eid):
+    if not is_office(): return redirect('/')
+    conn=get_db(); r=conn.execute('SELECT * FROM equipment WHERE id=?',(eid,)).fetchone() if eid!='new' else None
+    if eid!='new' and not r: conn.close(); return redirect('/equipment')
+    if request.method=='POST':
+        f=request.form
+        if f.get('delete')=='1' and r:
+            conn.execute('DELETE FROM equipment WHERE id=?',(eid,)); conn.commit(); conn.close(); return redirect('/equipment?msg=Deleted')
+        vals={k:(f.get(k) or '').strip()[:300] for k,_ in EQ_FIELDS}
+        for k in ('install_date','warranty_end'):
+            if vals[k]:
+                try: datetime.strptime(vals[k],'%Y-%m-%d')
+                except ValueError: vals[k]=''
+        pw=(f.get('password') or '')[:200]
+        if r:
+            if f.get('clear_pw')=='1': pw=''
+            elif not pw: pw=r['password'] or ''
+            conn.execute('UPDATE equipment SET %s,password=?,updated_at=? WHERE id=?'%','.join(k+'=?' for k,_ in EQ_FIELDS),tuple(vals.values())+(pw,now_local_str(),eid))
+        else:
+            conn.execute('INSERT INTO equipment (%s,password,created_at,updated_at) VALUES (%s)'%(','.join(k for k,_ in EQ_FIELDS),','.join('?'*(len(EQ_FIELDS)+3))),tuple(vals.values())+(pw,now_local_str(),now_local_str()))
+        conn.commit(); conn.close(); return redirect('/equipment?'+urllib.parse.urlencode({'site':vals['site'],'msg':'Saved'}))
+    conn.close(); src=r or request.args
+    body='<form method="post">'
+    for k,lab in EQ_FIELDS:
+        typ='date' if k in ('install_date','warranty_end') else 'text'
+        body+='<label>%s</label><input type="%s" name="%s" value="%s">'%(lab,typ,k,h((src[k] if r else src.get(k,'')) or ''))
+    body+='<label>Device password (office only)</label>'
+    if r and r['password']:
+        if request.args.get('show')=='1': body+='<div class="card"><b>%s</b></div>'%h(r['password'])
+        else: body+='<div class="card">&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull; <a href="/equipment/%s?show=1">Show</a></div>'%h(eid)
+        body+='<input type="password" name="password" placeholder="Type a new password to change it" autocomplete="new-password"><label><input type="checkbox" name="clear_pw" value="1" style="width:auto"> Remove password</label>'
+    else: body+='<input type="password" name="password" placeholder="Optional" autocomplete="new-password">'
+    body+='<button class="big-btn">Save</button></form>'
+    if r: body+='<form method="post" onsubmit="return confirm(\'Delete this device?\')"><input type="hidden" name="delete" value="1"><button class="big-btn red">Delete</button></form>'
+    return ops_page('Edit Equipment' if r else 'Add Equipment', body, back='/equipment'+('?'+urllib.parse.urlencode({'site':r['site']}) if r else ''))
+
+@app.route('/equipment/import/<job_id>', methods=['POST'])
+def equipment_import(job_id):
+    if not is_office(): return redirect('/')
+    conn=get_db(); j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not j: conn.close(); return redirect('/equipment')
+    have={r['asbuilt_label'] for r in conn.execute('SELECT asbuilt_label FROM equipment WHERE job_id=?',(job_id,)).fetchall()}
+    day=(j['completed_at'] or '')[:10] or today_local().isoformat(); n=0
+    for d in parse_devices(j['survey_devices']):
+        if d['label'] in have: continue
+        conn.execute('INSERT INTO equipment (client,site,job_id,device,mac,ip,install_date,asbuilt_label,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                     (j['customer'] or '',j['address'] or '',job_id,d['type'],d['mac'],d['ip'],day,d['label'],' '.join(x for x in [d['port'] and 'Port '+d['port'], d['clabel'] and 'Cable '+d['clabel'], d['note']] if x),now_local_str(),now_local_str()))
+        n+=1
+    conn.commit(); conn.close()
+    return redirect('/equipment?'+urllib.parse.urlencode({'site':j['address'] or '','job':job_id,'msg':'Added %d devices from the as-built'%n}))
+
+@app.route('/job/<job_id>/equipment')
+def job_equipment(job_id):
+    conn=get_db(); j=page_job(conn, job_id)
+    if not j: conn.close(); return redirect('/')
+    if is_office(): conn.close(); return redirect('/equipment?'+urllib.parse.urlencode({'site':j['address'] or '','job':job_id}))
+    rows=[r for r in conn.execute('SELECT * FROM equipment ORDER BY device').fetchall() if j['address'] and ckey(r['site'])==ckey(j['address'])]; conn.close()
+    body=''.join(eq_card(r,False) for r in rows) or '<div class="card">No equipment saved for this site yet.</div>'
+    return ops_page('Equipment at this site', '<div class="muted">%s</div>'%h(j['address'] or '')+body, back='/?job='+urllib.parse.quote(job_id))
+
+def eq_search(conn, like, hit, out, office):
+    rows=conn.execute("SELECT * FROM equipment WHERE LOWER(IFNULL(device,'')||' '||IFNULL(model,'')||' '||IFNULL(serial,'')||' '||IFNULL(mac,'')||' '||IFNULL(ip,'')||' '||IFNULL(asbuilt_label,'')) LIKE ? LIMIT 40",(like,)).fetchall()
+    if office:
+        if rows: out.append('<h2>Equipment</h2>'+''.join(eq_card(r,True) for r in rows))
+    else:
+        for r in rows:
+            if r['job_id']: hit(r['job_id'],'Equipment: '+(r['device'] or '')+' '+(r['serial'] or ''))
+SEARCH_HOOKS.append(eq_search)
 
 @app.route('/clients')
 def clients_page():
