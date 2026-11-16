@@ -200,7 +200,7 @@ def job_dict(row):
     d['devices'] = parse_devices(d.pop('survey_devices', None))
     d['map'] = parse_map(d.pop('map_data', None))
     if not is_office():
-        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at'): d.pop(k, None)
+        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at','sale_amount'): d.pop(k, None)
     return d
 
 def nice_name(n): return ' '.join((n or '').split()).title()
@@ -227,7 +227,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path=='/api/tech-support/reply': return
+    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -495,7 +495,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -529,6 +529,7 @@ def init_db():
         try: conn.execute(f'ALTER TABLE agreement_signs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS qbo_monthly (month TEXT PRIMARY KEY, invoiced REAL, paid REAL, synced_at TEXT, source TEXT)''')
     if not conn.execute('SELECT 1 FROM agreements').fetchone():
         conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',('1.2',AGREEMENT_V12,now_local_str(),'Seed'))
     conn.execute("UPDATE agreements SET body=? WHERE created_by='Seed' AND version='1.2' AND body NOT LIKE '%[SUB:%'",(AGREEMENT_V12,))
@@ -617,7 +618,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
@@ -695,7 +696,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="row" style="align-items:center"><input type="text" id="mat-new" placeholder="Add material (e.g. 2x Maglock)" onkeydown="if(event.key==='Enter')addMat()"><button class="big-btn" style="flex:0 0 70px" onclick="addMat()">Add</button></div></div></div>
 <div id="sec-time"><div class="job"><div style="font-weight:600">Time</div><div id="totals" style="font-size:1.1rem;margin:6px 0"></div>
 <input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal">
-<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div>{% if office %}<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px"><div style="font-weight:600">Labor cost (office only)</div><div id="labor"></div></div>{% endif %}</div></div>
+<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div>{% if office %}<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px"><div style="font-weight:600">Invoice amount (office only)</div><div class="row" style="align-items:center"><input type="number" id="sale-amt" step="0.01" min="0" inputmode="decimal" placeholder="$ billed for this job"><button class="big-btn gray" style="flex:0 0 90px" onclick="saveSale()">Save</button></div>
+<div style="font-weight:600;margin-top:8px">Labor cost (office only)</div><div id="labor"></div></div>{% endif %}</div></div>
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
@@ -867,7 +869,8 @@ async function saveMats(){await fetch('/api/jobs/'+encodeURIComponent(currentJob
 function addMat(){const n=document.getElementById('mat-new');const t=n.value.trim();if(!t)return;(currentJob.materials_list=currentJob.materials_list||[]).push({text:t,used:false});n.value='';renderMats();saveMats()}
 function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs';renderLabor()}
 const money=n=>'$'+Number(n||0).toFixed(2);
-function renderLabor(){const el=document.getElementById('labor');if(!el||!currentJob.labor)return;const L=currentJob.labor;
+async function saveSale(){const v=document.getElementById('sale-amt').value;const r=await post('/sale',{sale_amount:v});if(r.ok){currentJob.sale_amount=(await r.json()).sale_amount;alert('Saved')}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+function renderLabor(){const sa=document.getElementById('sale-amt');if(sa)sa.value=currentJob.sale_amount==null?'':currentJob.sale_amount;const el=document.getElementById('labor');if(!el||!currentJob.labor)return;const L=currentJob.labor;
 el.innerHTML=L.lines.map(l=>'<div>'+esc(l.sub)+': '+l.hours+' hrs'+(l.no_rate?' &middot; <b style="color:#b00020">No rate set</b>':(l.rate_hourly!=null?' x '+money(l.rate_hourly)+'/hr':'')+(l.rate_flat!=null?' + '+money(l.rate_flat)+' flat':'')+' = <b>'+money(l.cost)+'</b>')+'</div>').join('')+'<div style="font-size:1.2rem;font-weight:700;margin-top:4px">Total labor: '+money(L.total)+'</div>'+(L.locked?'<div class="muted">Rates locked when the job was completed.</div>':'<div class="muted">Uses current rates until the job is completed.</div>')}
 async function saveTime(mode){const h=document.getElementById('hours');if(!h.value)return;
 const body={mode:mode,hours:h.value,miles:mode==='set'?(currentJob.total_miles||0):0};
@@ -2546,6 +2549,129 @@ def agreement_new():
     conn=get_db(); a=current_agreement(conn); v=(request.form.get('version') or '').strip()[:20] or bump_version(a['version'])
     conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',(v,body.replace('\r\n','\n')[:200000],now_local_str(),me())); conn.commit(); conn.close()
     return redirect('/agreement')
+
+@app.route('/api/jobs/<job_id>/sale', methods=['POST'])
+def save_sale(job_id):
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    v=str((request.get_json(silent=True) or {}).get('sale_amount') or '').replace('$','').replace(',','').strip()
+    try: amt=round(float(v),2) if v else None
+    except ValueError: return jsonify({'error':'Numbers only'}),400
+    if amt is not None and not (0<=amt<1e8): return jsonify({'error':'Numbers only'}),400
+    conn=get_db(); n=conn.execute('UPDATE jobs SET sale_amount=? WHERE id=?',(amt,job_id)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True,'sale_amount':amt}) if n else ('',404))
+
+def month_keys(n=12):
+    t=today_local(); y,m=t.year,t.month; out=[]
+    for _ in range(n): out.append('%04d-%02d'%(y,m)); m-=1; y,m=(y-1,12) if m==0 else (y,m)
+    return out[::-1]
+
+def local_month(iso):
+    try:
+        dt=datetime.fromisoformat(iso[:19])
+        from zoneinfo import ZoneInfo
+        from datetime import timezone
+        return dt.replace(tzinfo=timezone.utc).astimezone(ZoneInfo('America/Chicago')).strftime('%Y-%m')
+    except Exception: return (iso or '')[:7]
+
+def parse_qbo_rows(rows):
+    out=[]
+    for r in rows:
+        mo=str(r.get('month') or '').strip().strip('"\'').strip()[:7]
+        if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', mo): raise ValueError('Bad month: '+mo)
+        vals=[]
+        for k in ('invoiced','paid'):
+            v=str(r.get(k) if r.get(k) is not None else '').replace('$','').replace(',','').strip().strip('"\'').strip()
+            try: vals.append(round(float(v),2) if v else None)
+            except ValueError: raise ValueError('Numbers only for '+mo)
+        out.append((mo,vals[0],vals[1]))
+    return out
+
+def save_qbo_rows(rows, source):
+    conn=get_db(); now=now_local_str()
+    for mo,inv,paid in rows: conn.execute('INSERT OR REPLACE INTO qbo_monthly (month,invoiced,paid,synced_at,source) VALUES (?,?,?,?,?)',(mo,inv,paid,now,source))
+    conn.commit(); conn.close(); return now
+
+@app.route('/api/qbo-monthly', methods=['POST'])
+def qbo_monthly_api():
+    key=os.environ.get('QBO_SYNC_KEY') or ''
+    if not key: return jsonify({'error':'QBO_SYNC_KEY is not set'}),503
+    if not hmac.compare_digest((request.headers.get('X-Sync-Key') or '').encode(), key.encode()): return jsonify({'error':'bad key'}),403
+    d=request.get_json(silent=True) or {}
+    try: rows=parse_qbo_rows(d.get('months') or [])
+    except (ValueError, TypeError) as e: return jsonify({'error':str(e)[:100]}),400
+    if not rows: return jsonify({'error':'months required'}),400
+    return jsonify({'ok':True,'saved':len(rows),'synced_at':save_qbo_rows(rows,'api')})
+
+REV_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Revenue</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:900px;margin:auto;padding:12px}h2{color:#a49f2a;margin:8px 0;text-align:center}
+.job{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}.muted{color:#666}.btn{display:block;width:100%;background:#f0f0f0;color:#111;padding:16px;border:0;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;font-size:1.05rem;margin:8px 0}.gold{background:#a49f2a;color:#fff}
+.wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}table{border-collapse:collapse;width:100%;font-size:1rem}td,th{border-bottom:1px solid #eee;padding:10px 6px;text-align:right;white-space:nowrap}td:first-child,th:first-child{text-align:left}tr.tot td{font-weight:700;border-top:2px solid #111}
+.big{display:flex;gap:8px;flex-wrap:wrap}.big div{flex:1 1 140px;border:2px solid #e5e5e5;border-radius:12px;padding:12px;text-align:center}.big b{display:block;font-size:1.5rem}
+.key{display:flex;gap:14px;flex-wrap:wrap;font-weight:600;margin:6px 0}.key span:before{content:"";display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:-2px;background:var(--c)}
+textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<h2>Revenue (office only)</h2><a class="btn" href="/">Back to Jobs</a>
+<div class="big"><div>Field Ops sales {{ year }}<b>{{ money(ytd.fo) }}</b></div><div>QuickBooks invoiced {{ year }}<b>{{ money(ytd.qi) }}</b></div><div>QuickBooks paid {{ year }}<b>{{ money(ytd.qp) }}</b></div><div>Field Ops margin {{ year }}<b>{{ money(ytd.fo - ytd.lab) }}</b></div></div>
+<div class="job"><div style="font-weight:700;font-size:1.1rem">Last 12 months</div>
+<div class="key"><span style="--c:#a49f2a">Field Ops sales</span><span style="--c:#1565c0">QuickBooks invoiced</span><span style="--c:#2e7d32">QuickBooks paid</span></div>
+<div class="wrap"><svg viewBox="0 0 {{ W }} {{ H }}" style="min-width:640px;width:100%;height:auto" role="img" aria-label="Monthly revenue chart">
+{% for g in grid %}<line x1="70" x2="{{ W-10 }}" y1="{{ g.y }}" y2="{{ g.y }}" stroke="#eee"/><text x="64" y="{{ g.y+5 }}" text-anchor="end" font-size="14" fill="#666">{{ g.label }}</text>{% endfor %}
+{% for b in bars %}<rect x="{{ b.x }}" y="{{ b.y }}" width="{{ b.w }}" height="{{ b.h }}" fill="{{ b.c }}"><title>{{ b.t }}</title></rect>{% endfor %}
+{% for m in rows %}<text x="{{ m.cx }}" y="{{ H-12 }}" text-anchor="middle" font-size="15" fill="#111">{{ m.short }}</text>{% endfor %}
+<line x1="70" x2="{{ W-10 }}" y1="{{ base }}" y2="{{ base }}" stroke="#111"/></svg></div>
+<div class="muted">QuickBooks last synced: {{ synced or 'never' }}</div></div>
+<div class="job wrap"><table><tr><th>Month</th><th>Field Ops sales</th><th>Sub labor</th><th>Margin</th><th>Jobs</th><th>QB invoiced</th><th>QB paid</th></tr>
+{% for m in rows %}<tr><td>{{ m.label }}</td><td>{{ money(m.fo) }}</td><td>{{ money(m.lab) }}</td><td>{{ money(m.fo - m.lab) }}</td><td>{{ m.n }}{% if m.missing %} <span style="color:#b00020" title="Approved jobs with no invoice amount">({{ m.missing }} no $)</span>{% endif %}</td><td>{{ '-' if m.qi is none else money(m.qi) }}</td><td>{{ '-' if m.qp is none else money(m.qp) }}</td></tr>{% endfor %}
+<tr class="tot"><td>12 months</td><td>{{ money(tot.fo) }}</td><td>{{ money(tot.lab) }}</td><td>{{ money(tot.fo - tot.lab) }}</td><td>{{ tot.n }}</td><td>{{ money(tot.qi) }}</td><td>{{ money(tot.qp) }}</td></tr>
+<tr class="tot"><td>{{ year }} so far</td><td>{{ money(ytd.fo) }}</td><td>{{ money(ytd.lab) }}</td><td>{{ money(ytd.fo - ytd.lab) }}</td><td>{{ ytd.n }}</td><td>{{ money(ytd.qi) }}</td><td>{{ money(ytd.qp) }}</td></tr></table>
+<div class="muted" style="margin-top:6px">Field Ops sales = the invoice amount on each approved job, by month the work was finished. Sub labor uses rates locked at approval.</div></div>
+<form method="post" action="/revenue/qbo-import" class="job"><div style="font-weight:700">Update QuickBooks numbers</div><div class="muted">Paste one line per month: month,invoiced,paid (example: 2026-05,10793.83,5250.13). Lines replace that month.</div>
+<textarea name="csv" rows="6" placeholder="2026-05,10793.83,5250.13"></textarea>{% if msg %}<div style="font-weight:700;color:{{ '#2e7d32' if ok else '#b00020' }}">{{ msg }}</div>{% endif %}<button class="btn gold" type="submit">Save QuickBooks Numbers</button></form>
+</body></html>"""
+
+def revenue_data():
+    keys=month_keys(12); year=today_local().year; conn=get_db()
+    rows={k:{'month':k,'fo':0.0,'lab':0.0,'n':0,'missing':0,'qi':None,'qp':None} for k in keys}
+    for j in conn.execute("SELECT * FROM jobs WHERE status='completed' AND COALESCE(job_type,'') NOT IN ('Survey','Office Task') AND completed_at IS NOT NULL").fetchall():
+        k=local_month(j['completed_at'])
+        if k in rows:
+            r=rows[k]; r['n']+=1; r['fo']+=j['sale_amount'] or 0; r['lab']+=job_labor(conn,j)['total']
+            if j['sale_amount'] is None: r['missing']+=1
+    synced=None
+    for q in conn.execute('SELECT * FROM qbo_monthly').fetchall():
+        if q['month'] in rows: rows[q['month']]['qi']=q['invoiced']; rows[q['month']]['qp']=q['paid']
+        if q['synced_at'] and (synced is None or q['synced_at']>synced): synced=q['synced_at']
+    conn.close()
+    out=[rows[k] for k in keys]
+    for r in out:
+        d=datetime.strptime(r['month'],'%Y-%m'); r['label']=d.strftime('%b %Y'); r['short']=d.strftime('%b')
+    def total(rs): return {'fo':sum(r['fo'] for r in rs),'lab':sum(r['lab'] for r in rs),'n':sum(r['n'] for r in rs),'qi':sum(r['qi'] or 0 for r in rs),'qp':sum(r['qp'] or 0 for r in rs)}
+    return out, total(out), total([r for r in out if r['month'].startswith(str(year))]), year, synced
+
+@app.route('/revenue', methods=['GET'])
+def revenue_page(msg=None, ok=True):
+    if not is_office(): return redirect('/')
+    rows,tot,ytd,year,synced=revenue_data()
+    W,H,base,top=760,330,290,20; mx=max([r['fo'] for r in rows]+[r['qi'] or 0 for r in rows]+[r['qp'] or 0 for r in rows]+[1])
+    step=10**max(0,len(str(int(mx)))-1); nice=next(m*step for m in (1,2,2.5,5,10) if m*step>=mx); sc=(base-top)/nice
+    def short(v): return '$%gk'%(v/1000) if v>=1000 else '$%d'%v
+    grid=[{'y':base-sc*nice*i/4,'label':short(nice*i/4)} for i in range(5)]
+    slot=(W-80)/12; bw=slot/4; bars=[]
+    for i,r in enumerate(rows):
+        x0=80+slot*i+bw*0.5; r['cx']=80+slot*i+slot/2
+        for k,(v,c,nm) in enumerate([(r['fo'],'#a49f2a','Field Ops sales'),(r['qi'] or 0,'#1565c0','QuickBooks invoiced'),(r['qp'] or 0,'#2e7d32','QuickBooks paid')]):
+            h=v*sc; bars.append({'x':round(x0+bw*k,1),'y':round(base-h,1),'w':round(bw*0.9,1),'h':round(h,1),'c':c,'t':'%s %s: $%s'%(r['label'],nm,format(v,',.2f'))})
+    return render_template_string(REV_HTML, rows=rows, tot=tot, ytd=ytd, year=year, synced=synced, grid=grid, bars=bars, W=W, H=H, base=base, msg=msg, ok=ok, money=lambda v: '$'+format(v or 0,',.2f'))
+
+@app.route('/revenue/qbo-import', methods=['POST'])
+def revenue_qbo_import():
+    if not is_office(): return ('',403)
+    lines=[l.strip() for l in (request.form.get('csv') or '').splitlines() if l.strip() and not l.strip().lower().startswith('month')]
+    import csv
+    try: rows=parse_qbo_rows([dict(zip(('month','invoiced','paid'),[c.strip() for c in cells]+['',''])) for cells in csv.reader(lines) if cells])
+    except (ValueError, TypeError) as e: return revenue_page(msg='Not saved. '+str(e)[:80], ok=False)
+    if not rows: return revenue_page(msg='Paste at least one line', ok=False)
+    save_qbo_rows(rows,'paste'); return revenue_page(msg='Saved %d month%s'%(len(rows),'' if len(rows)==1 else 's'))
 
 @app.route('/to-order')
 def to_order():
