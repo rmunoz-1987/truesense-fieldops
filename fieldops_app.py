@@ -178,7 +178,8 @@ def job_dict(row):
     d['help_open'] = d.get('help_flag') == 'open'
     d['devices'] = parse_devices(d.pop('survey_devices', None))
     d['map'] = parse_map(d.pop('map_data', None))
-    if not is_office(): d.pop('private_notes', None)
+    if not is_office():
+        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name'): d.pop(k, None)
     return d
 
 def me():
@@ -337,7 +338,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
@@ -346,7 +347,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="text" id="n-customer" placeholder="Customer">
 <input type="text" id="n-address" placeholder="Address">
 <input type="tel" id="n-phone" placeholder="Customer phone">
-<select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% else %}<option value="">No techs set in Render</option>{% endfor %}</select>
+<select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% else %}<option value="">No subs set in Render</option>{% endfor %}</select>
 <select id="n-type" onchange="tplOpts()" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
 <select id="n-tpl" onchange="tplPick()" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff"></select>
 <textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
@@ -413,7 +414,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal">
 <div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div></div></div>
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
-<div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned tech only. Not on client printouts.</div><div id="punch"></div>
+<div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
 <div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div>
 <div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
@@ -431,7 +432,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-finish"><button class="big-btn green" id="finish">Finish Job</button></div>
 <div id="sec-more"><button class="big-btn gray" id="more-btn" onclick="toggleMore()">Show more</button><div id="more-box" class="hidden"></div></div>
 <div id="sec-admin">{% if office %}<select id="r-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select>
-<div class="row"><button class="big-btn gray" onclick="reassignJob()">Reassign Tech</button><button class="big-btn gray" onclick="assignMe()">Assign to Me</button></div>
+<div class="row"><button class="big-btn gray" onclick="reassignJob()">Reassign Sub</button><button class="big-btn gray" onclick="assignMe()">Assign to Me</button></div>
 <button class="big-btn gray" onclick="copyJob()">Copy Job</button>
 <button class="big-btn" style="background:#b00020" onclick="deleteJob()">Delete Job</button>{% endif %}
 <button class="big-btn gray" onclick="showList()">Back</button></div>
@@ -711,7 +712,7 @@ function finishRun(){if(!mpRun||mpRun.pts.length<2){alert('Tap at least 2 points
 async function mapSave(sel){const m=mjob();const c=mpL?mpL.getCenter():null;const r=await post('/map',{cameras:m.cameras,runs:m.runs,view:c?{lat:c.lat,lng:c.lng,zoom:mpL.getZoom()}:m.view});
 if(r.ok){const d=(await r.json()).map;currentJob.map=Object.assign(d,{geo:m.geo});if(sel==='cam'){const x=d.cameras[d.cameras.length-1];if(x)mpSel={k:'cam',id:x.id}}if(sel==='run'){const x=d.runs[d.runs.length-1];if(x)mpSel={k:'run',id:x.id}}}else alert('Error, not saved');mapRender()}
 async function surveyToJob(){const id=prompt('New Install Job ID (leave blank to auto-number)','');if(id===null)return;const r=await post('/to-job',{id:id.trim()});const d=await r.json().catch(()=>({}));
-if(r.ok){alert('Install job '+d.id+' created. Set its date and tech.');openJob(d.id)}else alert(d.error||'Error')}
+if(r.ok){alert('Install job '+d.id+' created. Set its date and sub.');openJob(d.id)}else alert(d.error||'Error')}
 async function uploadPlans(inp){if(!inp.files.length)return;const fd=new FormData();[...inp.files].forEach(f=>fd.append('files',f));inp.value='';
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;renderDevices()}else alert(d.error||'Error')}
 async function removePlan(fn){if(!confirm('Remove this plan and all its devices?'))return;const r=await post('/plans/delete',{filename:fn});if(r.ok){const d=await r.json();currentJob.plans=d.plans;currentJob.devices=d.devices;devSel=null;devMove=null;renderDevices()}else alert('Error')}
@@ -1414,7 +1415,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;width:auto;object-fit:contain;margin:0 auto 4px;display:block;border-radius:0">
 {% macro bplist(j) %}{% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints ({{ j.blueprints|length }})</div>{% for b in j.blueprints %}<div style="margin:4px 0"><a href="/uploads/{{ b.filename|urlencode }}" target="_blank">{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint" style="width:56px;height:56px;vertical-align:middle">{% else %}&#128196;{% endif %} {{ b.name }}</a></div>{% endfor %}{% endif %}{% endmacro %}
 {% macro photogroups(j) %}{% if j.job_type == 'Survey' %}{% for p in j.photos %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="photo"></a>{% else %}<div class="muted">None</div>{% endfor %}{% else %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if loop.index <= 3 or g %}<div class="muted" style="font-size:.85rem;margin-top:4px">{{ lbl }} ({{ g|length }})</div>{% endif %}{% for p in g %}<a href="/uploads/{{ p.filename|urlencode }}" target="_blank"><img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}"></a>{% endfor %}{% endfor %}{% endif %}{% endmacro %}
-{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> {% if office and j.help_open %}<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span> {% endif %}<span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Tech: {{ j.tech or '-' }}{% if j.job_type not in ('Survey','Office Task') %} &middot; {{ j.hours }} hrs{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
+{% macro jobcard(j, open) %}<details class="job"{% if open %} open{% endif %}><summary><span class="job-id">{{ j.id }}</span> {% if office and j.help_open %}<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span> {% endif %}<span class="badge">{{ j.status_label }}</span>{% if j.job_type %} <span class="badge">{{ j.job_type }}</span>{% endif %} <b>{{ j.title }}</b><div class="muted" style="font-size:.85rem">Sub: {{ j.tech or '-' }}{% if j.job_type not in ('Survey','Office Task') %} &middot; {{ j.hours }} hrs{% endif %}{% if j.scheduled_date %} &middot; {{ j.scheduled_date }}{% endif %}{% if j.completed_at %} &middot; Done {{ j.completed_at[:10] }}{% endif %}{% if j.created_by %} &middot; Created by {{ j.created_by }}{% endif %}</div></summary>
 {% if office and j.help_open %}<div style="border:2px solid #b00020;background:#fff5f5;border-radius:10px;padding:8px;margin-top:8px"><div style="color:#b00020;font-weight:700">&#9888; Needs Help</div><div class="muted" style="font-size:.8rem">{{ j.help_by }} &middot; {{ j.help_at }}</div><div style="white-space:pre-wrap">{{ j.help_note }}</div>{% if j.help_photo %}<a href="/uploads/{{ j.help_photo|urlencode }}" target="_blank"><img src="/uploads/{{ j.help_photo|urlencode }}" alt="help photo"></a>{% endif %}</div>{% endif %}
 {% if j.job_type == 'Survey' %}<a class="btn" style="background:#6a1b9a;color:#fff" href="/?job={{ j.id|urlencode }}">Open Survey</a>{% endif %}
 {% if j.scope %}<div class="sec">Scope</div><div style="white-space:pre-wrap">{{ j.scope }}</div>{% endif %}
@@ -1478,7 +1479,7 @@ def clients_page():
 
 def client_jobs(conn, name):
     rows=conn.execute("SELECT * FROM jobs WHERE LOWER(TRIM(customer))=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(ckey(name),)).fetchall()
-    return [job_full(conn, r) for r in rows]
+    return [job_full(conn, r) for r in rows if can_see(r)]
 
 def job_full(conn, r):
     d=job_dict(r)
@@ -1585,12 +1586,12 @@ ORDER_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <ul style="margin:6px 0 0;padding-left:20px">{% for m in j.need %}<li>{{ m.text }}</li>{% endfor %}</ul></div>{% else %}<div class="job">Nothing to order</div>{% endfor %}
 </body></html>'''
 
-TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Techs</title>
+TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subs</title>
 <style>body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:12px}
 .job{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-bottom:10px}.job-id{color:#a49f2a;font-weight:700;font-size:.8rem}.muted{color:#666}
 .btn{display:block;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}h2{color:#a49f2a;margin:8px 0}h3{margin:18px 0 6px;border-bottom:2px solid #a49f2a;padding-bottom:4px}a{color:#111}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
-<h2>Techs</h2><a class="btn" href="/">Back to Jobs</a>
+<h2>Subs</h2><a class="btn" href="/">Back to Jobs</a>
 {% for t, jobs in techs %}<h3>{{ t }} &middot; {{ jobs|length }} open job{{ '' if jobs|length == 1 else 's' }}</h3>
 {% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.customer or j.title }}</b></a>{% if j.help_open %} <span style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.title }} &middot; {{ j.scheduled_date or 'No date' }} &middot; {{ j.status_label }}</div></div>{% else %}<div class="job muted">No open jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
@@ -1647,7 +1648,7 @@ td.drop{cursor:pointer}td.drop.hot{background:#fbfaf0;outline:2px dashed #a49f2a
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
 <h2>Schedule</h2><a class="btn" href="/">Back to Jobs</a>
 <div style="display:flex;gap:8px"><a class="btn" href="/schedule?start={{ prev }}">&larr; Prev</a><a class="btn" href="/schedule">This Week</a><a class="btn" href="/schedule?start={{ next }}">Next &rarr;</a></div>
-<div style="color:#666">Drag a job to a day and tech. On a phone, tap the job, then tap the box where it goes.</div>
+<div style="color:#666">Drag a job to a day and sub. On a phone, tap the job, then tap the box where it goes.</div>
 <div id="bar" class="hidden"></div>
 <div class="wrap"><table><tr><th>Tech</th><th>No date</th>{% for d in days %}<th class="{{ 'today' if d.today else '' }}">{{ d.label }}</th>{% endfor %}</tr>
 {% for t in techs %}<tr><td class="tech">{{ t }}</td>{% for d in [{'iso':''}] + days %}<td class="drop" data-date="{{ d.iso }}" data-tech="{{ t }}">{% for j in jobs if (j.tech or '').strip().lower() == t.lower() and (j.scheduled_date or '') == d.iso %}<div class="card" draggable="true" data-id="{{ j.id }}"><div class="id">{{ j.id }}</div><div><b>{{ j.customer or j.title }}</b></div><div>{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}</div><a href="/?job={{ j.id|urlencode }}" onclick="event.stopPropagation()">Open</a></div>{% endfor %}</td>{% endfor %}</tr>{% endfor %}
@@ -1865,8 +1866,8 @@ def delete_job(job_id):
 @app.route('/uploads/<path:fn>')
 def uploads(fn):
     if not is_office():
-        conn=get_db(); r=conn.execute('SELECT j.customer FROM photos p JOIN jobs j ON j.id=p.job_id WHERE p.filename=?',(fn,)).fetchone()
-        ok=bool(r) and tech_has_client(conn, r['customer']); conn.close()
+        conn=get_db(); r=conn.execute('SELECT j.tech FROM photos p JOIN jobs j ON j.id=p.job_id WHERE p.filename=?',(fn,)).fetchone()
+        ok=bool(r) and can_see(r); conn.close()
         if not ok: return ('',403)
     return send_from_directory(app.config['UPLOAD_FOLDER'], secure_filename(fn))
 
