@@ -2,6 +2,20 @@ services:
   - type: web
     name: truesense-fieldops
     runtime: python
-    plan: free
+    region: oregon
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT fieldops_app:app
+    startCommand: python fieldops_app.py
+    autoDeployTrigger: commit
+    healthCheckPath: /healthz
+    disk:
+      name: fieldops-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: DB_PATH
+        value: /var/data/fieldops.db
+      - key: UPLOAD_FOLDER
+        value: /var/data/uploads

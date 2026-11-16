@@ -5,7 +5,8 @@ from datetime import datetime
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+DATA_DIR = os.environ.get('DATA_DIR') or ('/var/data' if os.path.isdir('/var/data') else '.')
+app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER') or os.path.join(DATA_DIR, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Each user gets a Render env var NAME_PASSWORD (e.g. ROLAND_PASSWORD, WOODY_RODRIGUEZ_PASSWORD); the login name is NAME (underscores = spaces).
@@ -501,7 +502,8 @@ COMPANY SIGNER
     Version accepted: 1.2
 '''
 
-DB_PATH = 'fieldops.db'
+DB_PATH = os.environ.get('DB_PATH') or os.path.join(DATA_DIR, 'fieldops.db')
+os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
