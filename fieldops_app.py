@@ -647,6 +647,11 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS equipment (
         id INTEGER PRIMARY KEY AUTOINCREMENT, client TEXT, site TEXT, job_id TEXT, device TEXT, model TEXT, serial TEXT, mac TEXT, ip TEXT,
         install_date TEXT, warranty_end TEXT, asbuilt_label TEXT, password TEXT, notes TEXT, created_at TEXT, updated_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS stock_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, sku TEXT, unit TEXT, cost REAL DEFAULT 0, low_at REAL DEFAULT 0, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS stock_levels (item_id INTEGER, location TEXT, qty REAL DEFAULT 0, PRIMARY KEY (item_id, location))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS stock_moves (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, location TEXT, qty REAL, job_id TEXT, who TEXT, note TEXT, unit_cost REAL, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS push_subs (
         endpoint TEXT PRIMARY KEY, sub TEXT, p256dh TEXT, auth TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
@@ -755,7 +760,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/equipment" class="big-btn gray">Equipment</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -829,6 +834,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div style="font-weight:600;margin-top:8px">What did you do today?</div><textarea id="pn-work" rows="3" style="font-size:1.15rem" autocapitalize="sentences" placeholder="Say or type it"></textarea>
 <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:8px">{% for c in ['Ran cable','Mounted devices','Programmed','Tested all','Trained client','Cleaned up'] %}<button type="button" class="big-btn gray" style="flex:1 1 30%;padding:12px;font-size:1rem" data-c="{{ c }}" onclick="chip(this.dataset.c)">{{ c }}</button>{% endfor %}</div>
 <div style="font-weight:600">Materials used</div><input type="text" id="pn-mat" placeholder="500 ft Cat6, 2 cameras" list="mat-list"><datalist id="mat-list"></datalist>
+<div id="parts-box" class="hidden"><div style="font-weight:600">Parts from stock</div><select id="pt-item" style="width:100%;padding:14px;border:1px solid #ccc;border-radius:10px;font-size:1rem;background:#fff;margin:4px 0"></select>
+<div class="row"><select id="pt-loc" style="flex:1 1 50%;padding:14px;border:1px solid #ccc;border-radius:10px;font-size:1rem;background:#fff"></select><input type="number" id="pt-qty" value="1" min="0" step="any" inputmode="decimal" style="flex:0 0 80px"><button type="button" class="big-btn" style="flex:0 0 90px" onclick="partUse()">Use</button></div><div id="pt-list"></div></div>
 <div style="font-weight:600">Problems or delays</div><input type="text" id="pn-issues" placeholder="None">
 <button class="big-btn" id="pn-save" style="font-size:1.25rem" onclick="pnSave()">Save</button><div id="pn-today" class="muted" style="text-align:center"></div></div></div>
 <div id="sec-done"><div class="job"><button class="big-btn green" id="done-btn" style="font-size:1.4rem;padding:22px" onclick="finishTap()">Finish</button><div id="done-why" class="stp-why"></div><div class="muted" style="text-align:center" id="done-note">Clocks you out and marks the job done.</div></div></div>
@@ -1054,7 +1061,19 @@ else if(!sv&&!f.safety){b.innerHTML='<div style="font-weight:800;font-size:1.2re
 '<textarea id="fs-hz" class="hidden" rows="2" placeholder="What is the problem?"></textarea><div style="font-weight:600;margin-top:6px">Sign with your finger</div><canvas id="fs-sig" class="fs-sig" width="600" height="180"></canvas><div class="row"><button class="big-btn gray" style="flex:0 0 30%" onclick="fsClear()">Clear</button><button class="big-btn" style="flex:1" onclick="fsSubmit(this)">Submit</button></div>';fsPad()}
 else b.innerHTML='<div class="ok" style="font-weight:700;text-align:center;color:#2e7d32">&#10003; Started '+esc(f.start_local||'')+(sv?'':' &middot; Safety signed')+'</div>';
 fastMisc(f)}
-function fastMisc(f){const pt=document.getElementById('pn-today');if(pt)pt.textContent=f.log_today?'Saved for today. Save again to add more.':'';
+let ptKey='';
+async function partsLoad(force){if(!currentJob)return;if(!force&&ptKey===currentJob.id)return;ptKey=currentJob.id;
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/parts');if(!r.ok)return;const d=await r.json();const box=document.getElementById('parts-box');if(!box)return;
+box.classList.toggle('hidden',!d.items.length);const sel=document.getElementById('pt-item'),lsel=document.getElementById('pt-loc');const keep=sel.value,lk=lsel.value;
+lsel.innerHTML=d.locations.map(l=>'<option>'+esc(l)+'</option>').join('');if(lk)lsel.value=lk;if(!lsel.value)lsel.selectedIndex=0;
+const L=lsel.value;sel.innerHTML='<option value="">Pick a part</option>'+d.items.map(i=>'<option value="'+i.id+'">'+esc(i.name)+' ('+(i.here[L]||0)+' '+esc(i.unit)+' here)</option>').join('');if(keep)sel.value=keep;
+lsel.onchange=()=>{ptKey='';partsLoad(true)};
+document.getElementById('pt-list').innerHTML=d.used.map(u=>'<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eee"><div style="flex:1">'+esc(u.qty+' '+u.unit+' '+u.name)+'<div class="muted">'+esc(u.location+' - '+u.who)+'</div></div>'+(u.mine?'<button type="button" class="big-btn gray" style="flex:0 0 90px;padding:10px" data-m="'+u.id+'" onclick="partUndo(this.dataset.m)">Undo</button>':'')+'</div>').join('')}
+async function partUse(){const id=document.getElementById('pt-item').value,q=document.getElementById('pt-qty').value;if(!id){toast('Pick a part');return}
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/parts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({item_id:id,qty:q,location:document.getElementById('pt-loc').value})});
+const d=await r.json().catch(()=>({}));if(!r.ok){toast(d.error||'Error');return}if(d.queued)return;document.getElementById('pt-qty').value=1;toast('Part used');partsLoad(true)}
+async function partUndo(m){if(!confirm('Undo this part?'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/parts/'+m,{method:'DELETE'});if(r.ok){toast('Undone');partsLoad(true)}}
+function fastMisc(f){partsLoad();const pt=document.getElementById('pn-today');if(pt)pt.textContent=f.log_today?'Saved for today. Save again to add more.':'';
 const st=(currentJob.steps||[]).find(s=>s.label==='Finish');document.getElementById('done-why').textContent=st&&!st.done&&st.why?st.why:''}
 function fsProb(){const p=[...document.querySelectorAll('#start-box select')].some(s=>s.value==='Problem');document.getElementById('fs-hz').classList.toggle('hidden',!p)}
 function fsPad(){const c=document.getElementById('fs-sig'),x=c.getContext('2d');x.lineWidth=3;x.lineCap='round';let d=false;c.dataset.ink='';const pt=e=>{const r=c.getBoundingClientRect();return[(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height]};
@@ -1350,10 +1369,12 @@ def index():
     tpls=[]
     if is_office():
         conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
-    agr=None
+    agr=None; low_n=0
+    if is_office():
+        conn=get_db(); low_n=len(low_stock(conn)); conn.close()
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    return render_template_string(HTML, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
+    return render_template_string(HTML, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -2127,7 +2148,8 @@ def sub_companies(conn): return {r['key']:r['company'] for r in conn.execute("SE
 def tech_has_client(conn, customer):
     return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE LOWER(TRIM(customer))=?',(ckey(customer),)).fetchall())
 
-from markupsafe import escape as h, Markup
+from markupsafe import escape as _esc, Markup
+def h(v): return str(_esc('' if v is None else v))
 OPS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
 <style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:760px;margin:auto;padding:14px;overflow-wrap:anywhere}
 h1{font-size:1.4rem;margin:8px 0}h2{font-size:1.15rem;color:#a49f2a;border-bottom:2px solid #a49f2a;margin:22px 0 8px}
@@ -2137,7 +2159,7 @@ input,select,textarea{width:100%;padding:13px;border:1px solid #ccc;border-radiu
 label{display:block;font-weight:600;margin-top:6px}.card{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:8px 0;background:#fff}
 a.card{display:block;color:#111;text-decoration:none}.muted{color:#666;font-size:.9rem}.flag{background:#fdecea;color:#c62828;border-radius:8px;padding:2px 8px;font-weight:700}
 .okf{background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 8px;font-weight:700}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top}
-th{font-size:.85rem;color:#666}.num{text-align:right;white-space:nowrap}.msg{background:#e8f5e9;border-radius:10px;padding:10px;margin:8px 0;font-weight:600}</style></head><body>
+th{font-size:.85rem;color:#666}td:first-child{min-width:120px}.num{text-align:right;white-space:nowrap}.msg{background:#e8f5e9;border-radius:10px;padding:10px;margin:8px 0;font-weight:600}</style></head><body>
 <a href="{{ back or '/' }}" class="big-btn gray">&larr; Back</a><h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
 def ops_page(title, body, back='/', msg=''): return render_template_string(OPS_HTML, title=title, body=Markup(body), back=back, msg=msg)
 def money(v):
@@ -2279,6 +2301,101 @@ def eq_search(conn, like, hit, out, office):
         for r in rows:
             if r['job_id']: hit(r['job_id'],'Equipment: '+(r['device'] or '')+' '+(r['serial'] or ''))
 SEARCH_HOOKS.append(eq_search)
+
+def stock_locations(): return ['Shop']+['Truck: '+n for n in sub_logins()]
+def my_truck(): return 'Truck: '+me()
+def stock_move(conn, item_id, loc, qty, job_id='', note=''):
+    it=conn.execute('SELECT * FROM stock_items WHERE id=?',(item_id,)).fetchone()
+    if not it or not qty: return False
+    conn.execute('INSERT INTO stock_levels (item_id,location,qty) VALUES (?,?,0) ON CONFLICT(item_id,location) DO NOTHING',(item_id,loc))
+    conn.execute('UPDATE stock_levels SET qty=qty+? WHERE item_id=? AND location=?',(qty,item_id,loc))
+    conn.execute('INSERT INTO stock_moves (item_id,location,qty,job_id,who,note,unit_cost,created_at) VALUES (?,?,?,?,?,?,?,?)',(item_id,loc,qty,job_id or None,me(),note[:200],it['cost'] or 0,now_local_str()))
+    return True
+def low_stock(conn):
+    tot={r['item_id']:r['t'] for r in conn.execute('SELECT item_id,SUM(qty) t FROM stock_levels GROUP BY item_id')}
+    return [r for r in conn.execute('SELECT * FROM stock_items').fetchall() if (r['low_at'] or 0)>0 and (tot.get(r['id']) or 0)<=r['low_at']]
+def fnum(v, d=0.0):
+    try: x=float(v); return x if math.isfinite(x) else d
+    except (TypeError, ValueError): return d
+
+@app.route('/stock', methods=['GET','POST'])
+def stock_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); msg=''; locs=stock_locations()
+    if request.method=='POST':
+        f=request.form; a=f.get('action')
+        if a=='add' and (f.get('name') or '').strip():
+            cur=conn.execute('INSERT INTO stock_items (name,sku,unit,cost,low_at,created_at) VALUES (?,?,?,?,?,?)',(f['name'].strip()[:120],(f.get('sku') or '').strip()[:60],(f.get('unit') or 'each').strip()[:20],max(0,fnum(f.get('cost'))),max(0,fnum(f.get('low_at'))),now_local_str()))
+            q=fnum(f.get('qty'))
+            if q: stock_move(conn,cur.lastrowid,'Shop',q,note='Starting stock')
+            msg='Added '+f['name'].strip()
+        elif a=='edit':
+            conn.execute('UPDATE stock_items SET name=?,sku=?,unit=?,cost=?,low_at=? WHERE id=?',((f.get('name') or '').strip()[:120] or 'Item',(f.get('sku') or '').strip()[:60],(f.get('unit') or 'each').strip()[:20],max(0,fnum(f.get('cost'))),max(0,fnum(f.get('low_at'))),f.get('item_id')))
+            msg='Saved'
+        elif a=='adjust' and f.get('location') in locs:
+            if stock_move(conn,f.get('item_id'),f['location'],fnum(f.get('qty')),note=(f.get('note') or 'Adjust').strip()): msg='Stock updated'
+        elif a=='move' and f.get('from') in locs and f.get('to') in locs and f['from']!=f['to']:
+            q=abs(fnum(f.get('qty')))
+            if q and stock_move(conn,f.get('item_id'),f['from'],-q,note='Moved to '+f['to']): stock_move(conn,f.get('item_id'),f['to'],q,note='Moved from '+f['from']); msg='Moved'
+        conn.commit()
+    items=conn.execute('SELECT * FROM stock_items ORDER BY LOWER(name)').fetchall()
+    lv={(r['item_id'],r['location']):r['qty'] for r in conn.execute('SELECT * FROM stock_levels')}
+    for (_,l) in lv:
+        if l not in locs: locs.append(l)
+    low={r['id'] for r in low_stock(conn)}
+    moves=conn.execute('SELECT m.*,i.name,i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id ORDER BY m.id DESC LIMIT 30').fetchall(); conn.close()
+    fq=lambda x:('%g'%round(x or 0,2))
+    opt=''.join('<option value="%d">%s</option>'%(i['id'],h(i['name'])) for i in items); lopt=''.join('<option>%s</option>'%h(l) for l in locs)
+    body=''
+    if low: body+='<div class="card"><span class="flag">Low stock</span> '+h(', '.join(i['name'] for i in items if i['id'] in low))+'</div>'
+    body+='<div style="overflow-x:auto"><table><tr><th>Item</th>'+''.join('<th class="num">%s</th>'%h(l) for l in locs)+'<th class="num">Total</th><th>Cost</th></tr>'
+    for i in items:
+        tot=sum(lv.get((i['id'],l),0) for l in locs)
+        body+='<tr><td><a href="/stock/%d"><b>%s</b></a>%s<div class="muted">%s</div></td>'%(i['id'],h(i['name']),' <span class="flag">Low</span>' if i['id'] in low else '',h(' '.join(x for x in [i['sku'] or '', i['unit'] or ''] if x)))
+        body+=''.join('<td class="num"%s>%s</td>'%(' style="color:#c62828;font-weight:700"' if lv.get((i['id'],l),0)<0 else '',fq(lv.get((i['id'],l),0))) for l in locs)
+        body+='<td class="num"><b>%s</b></td><td class="num">%s</td></tr>'%(fq(tot),money(i['cost']))
+    body+='</table></div>' if items else '</table></div><div class="card">No stock items yet. Add one below.</div>'
+    if items:
+        body+='<h2>Add or remove stock</h2><form method="post"><input type="hidden" name="action" value="adjust"><select name="item_id">%s</select><select name="location">%s</select><input name="qty" type="number" step="any" inputmode="decimal" placeholder="Qty (use - to remove)" required><input name="note" placeholder="Note (bought, counted, broken)"><button class="big-btn">Update Stock</button></form>'%(opt,lopt)
+        body+='<h2>Move stock</h2><form method="post"><input type="hidden" name="action" value="move"><select name="item_id">%s</select><div class="row"><select name="from">%s</select><select name="to">%s</select></div><input name="qty" type="number" step="any" min="0" inputmode="decimal" placeholder="Qty" required><button class="big-btn">Move</button></form>'%(opt,lopt,''.join('<option%s>%s</option>'%(' selected' if n==1 else '',h(l)) for n,l in enumerate(locs)))
+    body+='<h2>New item</h2><form method="post"><input type="hidden" name="action" value="add"><input name="name" placeholder="Name (Cat6 cable, 4MP dome)" required><div class="row"><input name="sku" placeholder="Part number"><input name="unit" placeholder="Unit (each, ft, box)"></div><div class="row"><input name="cost" type="number" step="0.01" min="0" placeholder="Cost each $"><input name="low_at" type="number" step="any" min="0" placeholder="Low alert at"></div><input name="qty" type="number" step="any" placeholder="Starting qty in Shop"><button class="big-btn">Add Item</button></form>'
+    if moves:
+        body+='<h2>Recent</h2><table>'+''.join('<tr><td>%s<div class="muted">%s %s</div></td><td>%s %s<div class="muted">%s</div></td><td class="num"><b>%s</b></td></tr>'%(h(m['name']),h(m['created_at'] or ''),h(m['who'] or ''),h(m['location']),('Job '+h(m['job_id'])) if m['job_id'] else '',h(m['note'] or ''),('+' if m['qty']>0 else '')+fq(m['qty'])) for m in moves)+'</table>'
+    return ops_page('Parts and Stock', body, msg=msg)
+
+@app.route('/stock/<int:iid>', methods=['GET'])
+def stock_item(iid):
+    if not is_office(): return redirect('/')
+    conn=get_db(); i=conn.execute('SELECT * FROM stock_items WHERE id=?',(iid,)).fetchone(); conn.close()
+    if not i: return redirect('/stock')
+    body='<form method="post" action="/stock"><input type="hidden" name="action" value="edit"><input type="hidden" name="item_id" value="%d"><label>Name</label><input name="name" value="%s"><label>Part number</label><input name="sku" value="%s"><label>Unit</label><input name="unit" value="%s"><label>Cost each ($)</label><input name="cost" type="number" step="0.01" min="0" value="%s"><label>Low alert at (total)</label><input name="low_at" type="number" step="any" min="0" value="%s"><button class="big-btn">Save</button></form>'%(
+        i['id'],h(i['name']),h(i['sku'] or ''),h(i['unit'] or ''),'%g'%(i['cost'] or 0),'%g'%(i['low_at'] or 0))
+    return ops_page('Edit Item', body, back='/stock')
+
+@app.route('/api/jobs/<job_id>/parts', methods=['GET','POST'])
+def job_parts(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    locs=stock_locations() if is_office() else [my_truck(),'Shop']
+    if request.method=='POST':
+        d=request.get_json(silent=True) or {}; q=abs(fnum(d.get('qty'))); loc=d.get('location') if d.get('location') in locs else locs[0]
+        if not q or q>100000: conn.close(); return jsonify({'error':'Enter how many'}),400
+        if not stock_move(conn,d.get('item_id'),loc,-q,job_id,'Used on job'): conn.close(); return jsonify({'error':'Pick a part'}),400
+        conn.commit()
+    lv={(r['item_id'],r['location']):r['qty'] for r in conn.execute('SELECT * FROM stock_levels')}
+    items=[{'id':i['id'],'name':i['name'],'unit':i['unit'] or '','here':{l:round(lv.get((i['id'],l),0),2) for l in locs}} for i in conn.execute('SELECT * FROM stock_items ORDER BY LOWER(name)')]
+    used=[{'id':m['id'],'name':m['name'],'unit':m['unit'] or '','qty':-m['qty'],'location':m['location'],'who':m['who'],'mine':is_office() or ckey(m['who'])==ckey(me())}
+          for m in conn.execute('SELECT m.*,i.name,i.unit FROM stock_moves m JOIN stock_items i ON i.id=m.item_id WHERE m.job_id=? AND m.qty<0 ORDER BY m.id',(job_id,))]
+    conn.close(); return jsonify({'items':items,'used':used,'locations':locs})
+
+@app.route('/api/jobs/<job_id>/parts/<int:mid>', methods=['DELETE'])
+def job_part_undo(job_id, mid):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    m=conn.execute('SELECT * FROM stock_moves WHERE id=? AND job_id=? AND qty<0',(mid,job_id)).fetchone()
+    if not m or not (is_office() or ckey(m['who'])==ckey(me())): conn.close(); return jsonify({'error':'not found'}),404
+    conn.execute('UPDATE stock_levels SET qty=qty-? WHERE item_id=? AND location=?',(m['qty'],m['item_id'],m['location']))
+    conn.execute('DELETE FROM stock_moves WHERE id=?',(mid,)); conn.commit(); conn.close(); return jsonify({'ok':True})
 
 @app.route('/clients')
 def clients_page():
