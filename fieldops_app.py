@@ -242,7 +242,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -423,7 +423,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-follow">{% if office %}<div class="job"><div style="font-weight:600">Follow-ups (office only)</div><div id="fu-list"></div>
 <div style="font-size:.85rem;color:#666;margin-top:8px">Remind me on</div><input type="date" id="fu-date"><input type="text" id="fu-note" placeholder="What to follow up on (e.g. call about estimate)"><button class="big-btn" onclick="addFollow()">Add Follow-up</button></div>{% endif %}</div>
 <div id="sec-hub">{% if office %}<div class="job"><div style="font-weight:600">Client Link (office only)</div><div class="muted" style="font-size:.9rem">Anyone with this link can see this job's summary, plan, photos and signature. Copy it and send it yourself.</div>
-<input type="text" id="hub-url" readonly onclick="this.select()"><button class="big-btn gray" onclick="copyHub()">Copy Link</button><div id="hub-appr" style="font-weight:700;font-size:1.1rem;color:#2e7d32"></div></div>{% endif %}</div>
+<input type="text" id="hub-url" readonly onclick="this.select()"><div id="hub-exp" style="font-weight:600"></div><div class="row"><button class="big-btn gray" onclick="copyHub()">Copy Link</button><button class="big-btn gray" onclick="newHub()">New Link</button></div><div id="hub-appr" style="font-weight:700;font-size:1.1rem;color:#2e7d32"></div></div>{% endif %}</div>
 <div id="sec-private">{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
 <textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}</div>
 <div id="sec-sig"><div class="job"><div style="font-weight:600">Customer Signature</div><canvas id="sig"></canvas>
@@ -504,8 +504,10 @@ r.append(s,mk('Copy','gray',async()=>{try{await navigator.clipboard.writeText(x.
 const r2=document.createElement('div');r2.className='row';r2.appendChild(mk('Open Job','gray',()=>openJob(x.job_id)));d.append(h,j,w,ph,bd,r,r2);el.appendChild(d)})}
 async function onMyWay(){if(!confirm('Tell the office you are on your way?'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/onmyway',{method:'POST'});
 if(r.ok)alert('Done. The office will check the text and send it.');else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
-function renderHub(){const u=document.getElementById('hub-url');if(!u)return;u.value=currentJob.hub_url?location.origin+currentJob.hub_url:'';
+function renderHub(){const u=document.getElementById('hub-url');if(!u)return;u.value=currentJob.hub_url?location.origin+currentJob.hub_url:'';document.getElementById('hub-exp').textContent=currentJob.hub_expires?'Link works until '+currentJob.hub_expires:'';
 document.getElementById('hub-appr').textContent=currentJob.hub_approved_at?'Estimate approved by '+(currentJob.hub_approved_name||'client')+' on '+currentJob.hub_approved_at:(currentJob.job_type==='Survey'?'Estimate not approved yet':'')}
+async function newHub(){if(!confirm('Make a new link? The old link will stop working.'))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/hub-new',{method:'POST'});
+if(!r.ok)return alert('Error');Object.assign(currentJob,await r.json());renderHub();alert('New link made. Copy it and send it yourself.')}
 async function copyHub(){const u=document.getElementById('hub-url');try{await navigator.clipboard.writeText(u.value);alert('Link copied')}catch(e){u.select();document.execCommand('copy');alert('Link copied')}}
 async function loadFollow(){const el=document.getElementById('fu-list');if(!el)return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/followups');const u=r.ok?await r.json():[];el.innerHTML='';const today=ymd(new Date());
 u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5;'+(x.done?'color:#999':'');const h=document.createElement('div');h.style.cssText='font-weight:700;'+(!x.done&&x.due<today?'color:#b00020':'');h.textContent=x.done?'Done \u00b7 was due '+dayLabel(x.due).replace(/^Overdue, /,''):fuLabel(x.due,today);
@@ -892,8 +894,12 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row); conn.close()
-    extra={'hub_url':'/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id)} if is_office() else {}
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
+    extra={}
+    if is_office():
+        n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
+        extra=hub_info(job_id,n,c)
+    conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
@@ -1274,7 +1280,20 @@ def support_list(job_id):
     rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at,IFNULL(kind,'') AS kind FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
     return jsonify(rows)
 
-def hub_token(job_id): return hmac.new(app.secret_key.encode(), ('hub:'+job_id).encode(), hashlib.sha256).hexdigest()[:32]
+HUB_DAYS = 30
+def hub_token(job_id, nonce, created): return hmac.new(app.secret_key.encode(), ('hub:'+job_id+':'+nonce+':'+created).encode(), hashlib.sha256).hexdigest()[:32]
+def hub_now(): return datetime.utcnow()
+def hub_new(conn, job_id):
+    n=uuid.uuid4().hex[:12]; c=hub_now().replace(microsecond=0).isoformat()
+    conn.execute('UPDATE jobs SET hub_nonce=?,hub_created_at=? WHERE id=?',(n,c,job_id)); conn.commit()
+    return n, c
+def hub_info(job_id, n, c):
+    exp=datetime.fromisoformat(c)+timedelta(days=HUB_DAYS)
+    try:
+        from zoneinfo import ZoneInfo
+        el=exp.replace(tzinfo=__import__('datetime').timezone.utc).astimezone(ZoneInfo('America/Chicago'))
+    except Exception: el=exp
+    return {'hub_url':'/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id,n,c),'hub_expires':el.strftime('%b %d, %Y').replace(' 0',' ')}
 
 def help_photo_token(fn): return hmac.new(app.secret_key.encode(), ('help:'+fn).encode(), hashlib.sha256).hexdigest()[:32]
 
@@ -1691,27 +1710,41 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 <div class="muted" style="margin-top:6px">Tapping Approve tells True Sense Security you approve the estimate you were sent.</div>{% endif %}{% endif %}
 <div class="muted" style="margin-top:24px;text-align:center">True Sense Security</div></body></html>'''
 
+HUB_EXPIRED_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Link expired</title></head>
+<body style="font-family:-apple-system,sans-serif;max-width:640px;margin:auto;padding:24px;text-align:center;color:#111">
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px">
+<h1 style="font-size:1.4rem;margin-top:30px">This link has expired.</h1><p style="font-size:1.2rem">Contact True Sense for a new one.</p></body></html>'''
+
 def hub_job(job_id):
-    if not hmac.compare_digest(request.values.get('t',''), hub_token(job_id)): return None, None
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not row: conn.close(); return None, None
+    ok = row and row['hub_nonce'] and row['hub_created_at'] and hmac.compare_digest(request.values.get('t',''), hub_token(job_id,row['hub_nonce'],row['hub_created_at'])) \
+         and hub_now() < datetime.fromisoformat(row['hub_created_at'])+timedelta(days=HUB_DAYS)
+    if not ok: conn.close(); return None, None
     return conn, row
+
+@app.route('/api/jobs/<job_id>/hub-new', methods=['POST'])
+def hub_new_link(job_id):
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); row=conn.execute('SELECT id FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return ('',404)
+    n,c=hub_new(conn, job_id); conn.close()
+    return jsonify(hub_info(job_id,n,c))
 
 @app.route('/hub/<job_id>')
 def hub_page(job_id):
     conn,row=hub_job(job_id)
-    if not row: return ('Link not valid',404)
+    if not row: return (HUB_EXPIRED_HTML,410)
     j=job_full(conn,row); conn.close()
-    return render_template_string(HUB_HTML, j=j, t=hub_token(job_id), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
+    return render_template_string(HUB_HTML, j=j, t=request.values.get('t',''), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
 
 @app.route('/hub/<job_id>/approve', methods=['POST'])
 def hub_approve(job_id):
     conn,row=hub_job(job_id)
-    if not row: return ('Link not valid',404)
+    if not row: return (HUB_EXPIRED_HTML,410)
     if row['job_type']=='Survey' and not row['hub_approved_at']:
         conn.execute('UPDATE jobs SET hub_approved_at=?,hub_approved_name=? WHERE id=?',(now_local_str(),(request.form.get('name') or '').strip()[:100],job_id)); conn.commit()
     conn.close()
-    return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+hub_token(job_id))
+    return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+urllib.parse.quote(request.values.get('t','')))
 
 def draft_phone(r):
     p=(r['phone'] or '').strip()
