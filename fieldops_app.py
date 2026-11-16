@@ -236,6 +236,26 @@ def require_login():
         conn=get_db(); blocked=agreement_required(conn) and not signed_current(conn, me()); conn.close()
         if blocked: return (jsonify({'error':'Sign the Subcontractor Agreement first'}), 403) if request.path.startswith(('/api','/uploads')) else redirect('/agreement')
 
+TAP_CSS = """<style id="tap-css">
+button,a[href],[onclick],summary,select,label[for],label:has(input[type=checkbox]),label:has(input[type=radio]),label:has(input[type=file]),input[type=checkbox],input[type=radio],input[type=file],input[type=submit],input[type=button],[role=button],.tile,.stp,.big-btn,.btn,.leaflet-control a{cursor:pointer}
+button,.big-btn,.btn,.tile,.stp,[onclick]{transition:filter .12s ease,transform .06s ease}
+@media (hover:hover){button:not(:disabled):hover,a.big-btn:hover,a.btn:hover,.tile:hover,.stp:hover,[onclick]:not(:disabled):hover,label:has(input[type=file]):hover{filter:brightness(.93)}}
+button:not(:disabled):active,a.big-btn:active,a.btn:active,.tile:active,.stp:active,[onclick]:not(:disabled):active,label:has(input[type=file]):active{filter:brightness(.86);transform:translateY(1px)}
+:focus-visible{outline:3px solid #1565c0 !important;outline-offset:2px}
+button:disabled,input:disabled,select:disabled,textarea:disabled,[aria-disabled=true]{cursor:not-allowed !important;opacity:.55;filter:grayscale(.7)}
+</style>"""
+
+@app.after_request
+def add_tap_css(resp):
+    try:
+        if resp.mimetype=='text/html' and not resp.direct_passthrough and resp.status_code<400 or resp.mimetype=='text/html' and resp.status_code==503:
+            h=resp.get_data(as_text=True)
+            if 'id="tap-css"' not in h:
+                h=h.replace('</head>', TAP_CSS+'</head>', 1) if '</head>' in h else TAP_CSS+h
+                resp.set_data(h)
+    except Exception: pass
+    return resp
+
 @app.route('/healthz')
 def healthz(): return 'ok'
 
@@ -615,7 +635,7 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .big-btn.green{background:#2d6a4f}.big-btn.stop{background:#b00020}
 .hidden{display:none}#detail.guided>[id^="sec-"]:not(.focus){display:none}
 #steps-box{margin:8px 0}.stp-bar{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.stp{flex:1 1 30%;min-width:96px;padding:8px 6px;border-radius:8px;background:#eee;color:#333;font-size:.85rem;font-weight:600;text-align:center}
-.stp.done{background:#2e7d32;color:#fff}.stp.cur{outline:3px solid #a49f2a;background:#fff}#next-btn{font-size:1.4rem;padding:22px}#next-btn:disabled{background:#999}.stp-why{color:#b00020;font-weight:700;text-align:center;margin:4px 0;font-size:1.05rem}
+.stp.done{background:#2e7d32;color:#fff}.stp.cur{outline:3px solid #a49f2a;background:#fff}#next-btn{font-size:1.4rem;padding:22px}#toast{position:fixed;left:10px;right:10px;top:10px;z-index:60;pointer-events:none;background:#111;color:#fff;padding:16px;border-radius:12px;font-size:1.15rem;font-weight:700;text-align:center}.fs-row{display:flex;align-items:center;gap:8px;margin:6px 0}.fs-row span{flex:1;font-weight:600}.fs-row select{flex:0 0 120px;padding:10px;font-size:1rem}.fs-sig{width:100%;height:140px;border:2px solid #ddd;border-radius:10px;touch-action:none;background:#fff}#next-btn:disabled{background:#999}.stp-why{color:#b00020;font-weight:700;text-align:center;margin:4px 0;font-size:1.05rem}
 .chk{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:1rem}
 .chk input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
 .day{font-weight:700;color:var(--accent);margin:16px 0 6px}
@@ -669,6 +689,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn" onclick="addJob()">Add Job</button><button class="big-btn gray" onclick="toggleNew()">Cancel</button></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
 <div id="list"></div>
 {% if office %}</main>{% endif %}</div>
+<div id="toast" class="hidden"></div>
 <div id="detail" class="hidden">
 <button class="big-btn gray" style="font-size:1.3rem;margin-bottom:8px" onclick="showList()">&larr; Back</button>
 <div id="steps-box"><div class="stp-bar" id="stp-bar"></div><div class="stp-why" id="stp-why"></div><button class="big-btn" id="next-btn" onclick="nextStep()">Next Step</button><button class="big-btn gray" id="more-all" onclick="toggleGuided()">More</button></div>
@@ -714,6 +735,14 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
 <div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
 <button class="big-btn green" style="font-size:1.2rem;padding:18px" onclick="approveJob()">Approve</button></div>{% endif %}</div>
+<div id="sec-start"><div class="job" id="start-box"></div></div>
+<div id="sec-pn"><div class="job"><div style="font-weight:800;font-size:1.3rem">Photos and Notes</div><div class="muted">One save adds today's daily log, a job note and the photos.</div>
+<label class="big-btn gray" style="display:block;cursor:pointer;margin-top:8px">&#128247; Add Photos<input type="file" id="pn-photos" accept="image/*" multiple style="display:none" onchange="pnPicked()"></label><div id="pn-picked" class="muted" style="text-align:center"></div>
+<div style="font-weight:600;margin-top:8px">What did you do today?</div><textarea id="pn-work" rows="3" style="font-size:1.15rem" autocapitalize="sentences" placeholder="Say or type it"></textarea>
+<div style="font-weight:600">Materials used</div><input type="text" id="pn-mat" placeholder="500 ft Cat6, 2 cameras">
+<div style="font-weight:600">Problems or delays</div><input type="text" id="pn-issues" placeholder="None">
+<button class="big-btn" id="pn-save" style="font-size:1.25rem" onclick="pnSave()">Save</button><div id="pn-today" class="muted" style="text-align:center"></div></div></div>
+<div id="sec-done"><div class="job"><button class="big-btn green" id="done-btn" style="font-size:1.4rem;padding:22px" onclick="finishTap()">Finish</button><div id="done-why" class="stp-why"></div><div class="muted" style="text-align:center" id="done-note">Clocks you out and marks the job done.</div></div></div>
 <div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="dl-link" href="#">Daily Log</a><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="sf-link" href="#">Safety</a>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
 <div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
@@ -908,17 +937,56 @@ let guided=true;
 function stepNext(){const S=currentJob.steps||[];if(S.length&&S[S.length-1].done)return;let last=-1;S.forEach((s,i)=>{if(s.done)last=i});return S.slice(last+1).find(s=>!s.done)||S.find(s=>!s.done)}
 function renderSteps(refocus){const S=currentJob.steps||[],nx=stepNext(),det=document.getElementById('detail');
 const hd=document.getElementById('d-id').parentElement,box=document.getElementById('steps-box');if(hd.nextSibling!==box)hd.after(box);
-document.getElementById('stp-bar').innerHTML=S.map((s,i)=>'<div class="stp'+(s.done?' done':'')+(s===nx?' cur':'')+'">'+(s.done?'&#10003; ':(i+1)+'. ')+esc(s.label)+'</div>').join('');
+document.getElementById('stp-bar').innerHTML=S.map((s,i)=>'<div class="stp'+(s.done?' done':'')+(s===nx?' cur':'')+'" role="button" tabindex="0" onclick="goStep('+i+')">'+(s.done?'&#10003; ':(i+1)+'. ')+esc(s.label)+'</div>').join('');
 const b=document.getElementById('next-btn');b.disabled=!nx;b.textContent=nx?'Next Step: '+nx.label:'All steps done';
 document.getElementById('stp-why').textContent=nx&&nx.why?nx.why:'';
-det.classList.toggle('guided',guided);document.getElementById('more-all').textContent=guided?'More':'Less';
-if(refocus)focusSecs(currentJob.help_open?['help']:[])}
+det.classList.toggle('guided',guided);if({{ office|tojson }})['start','pn','done'].forEach(k=>document.getElementById('sec-'+k).classList.add('hidden'));else renderFast();document.getElementById('more-all').textContent=guided?'More':'Less';
+const nk=nx?nx.label:'';if(refocus||(!{{ office|tojson }}&&nk!==lastNext)){lastNext=nk;focusSecs(currentJob.help_open?['help']:(!{{ office|tojson }}&&nx&&!nx.href?nx.go:[]))}}
+let lastNext=null;
+function toast(m,ms){const t=document.getElementById('toast');t.textContent=m;t.classList.remove('hidden');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.add('hidden'),ms||2500)}
+function getLoc(){return new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:12000,maximumAge:60000})})}
+const FS_ITEMS={{ safety_items|tojson }};
+function renderFast(){const f=currentJob.flow||{},b=document.getElementById('start-box');if(!b)return;const sv=currentJob.job_type==='Survey';
+const key=currentJob.id+':'+(!f.started?'start':(!sv&&!f.safety)?'safety':'done:'+(f.start_local||''));if(b.dataset.key===key){fastMisc(f);return}b.dataset.key=key;
+if(!f.started){b.innerHTML='<button class="big-btn green" style="font-size:1.5rem;padding:24px" onclick="startTap(this)">Start</button><div class="muted" style="text-align:center">Tells the office you are on the way and clocks you in.</div>'}
+else if(!sv&&!f.safety){b.innerHTML='<div style="font-weight:800;font-size:1.2rem">Safety Check</div><div class="muted">All OK? Change any line if not, then sign.</div>'+FS_ITEMS.map(([k,l])=>'<div class="fs-row"><span>'+esc(l)+'</span><select data-k="'+k+'" onchange="fsProb()"><option>OK</option><option>Problem</option><option>N/A</option></select></div>').join('')+
+'<textarea id="fs-hz" class="hidden" rows="2" placeholder="What is the problem?"></textarea><div style="font-weight:600;margin-top:6px">Sign with your finger</div><canvas id="fs-sig" class="fs-sig" width="600" height="180"></canvas><div class="row"><button class="big-btn gray" style="flex:0 0 30%" onclick="fsClear()">Clear</button><button class="big-btn" style="flex:1" onclick="fsSubmit(this)">Submit</button></div>';fsPad()}
+else b.innerHTML='<div class="ok" style="font-weight:700;text-align:center;color:#2e7d32">&#10003; Started '+esc(f.start_local||'')+(sv?'':' &middot; Safety signed')+'</div>';
+fastMisc(f)}
+function fastMisc(f){const pt=document.getElementById('pn-today');if(pt)pt.textContent=f.log_today?'Saved for today. Save again to add more.':'';
+const st=(currentJob.steps||[]).find(s=>s.label==='Finish');document.getElementById('done-why').textContent=st&&!st.done&&st.why?st.why:''}
+function fsProb(){const p=[...document.querySelectorAll('#start-box select')].some(s=>s.value==='Problem');document.getElementById('fs-hz').classList.toggle('hidden',!p)}
+function fsPad(){const c=document.getElementById('fs-sig'),x=c.getContext('2d');x.lineWidth=3;x.lineCap='round';let d=false;c.dataset.ink='';const pt=e=>{const r=c.getBoundingClientRect();return[(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height]};
+c.onpointerdown=e=>{d=true;c.setPointerCapture(e.pointerId);const[a,b]=pt(e);x.beginPath();x.moveTo(a,b)};c.onpointermove=e=>{if(!d)return;const[a,b]=pt(e);x.lineTo(a,b);x.stroke();c.dataset.ink='1'};c.onpointerup=()=>d=false}
+function fsClear(){const c=document.getElementById('fs-sig');c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.ink=''}
+async function reloadJob(){const id=currentJob.id;const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok||currentJob.id!==id)return;const j=await r.json();Object.assign(currentJob,j);renderPhotos();renderClock();renderTotals();renderTicks&&0;renderSteps(false)}
+async function startTap(b){b.disabled=true;b.textContent='Starting...';const loc=await getLoc();const r=await post('/clock',loc||{});const d=await r.json().catch(()=>({}));
+if(!r.ok&&!(d.error||'').includes('still clocked in on job '+currentJob.id)){toast(d.error||'Error',4000);b.disabled=false;b.textContent='Start';return}
+if(currentJob.job_type!=='Office Task')await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/onmyway',{method:'POST'});
+toast('Started. Office will send your On My Way text.'+(d.clock&&d.clock.in_flag?' Flag: '+d.clock.in_flag:''),3500);await reloadJob()}
+async function fsSubmit(b){const c=document.getElementById('fs-sig');if(!c.dataset.ink){toast('Please sign first');return}const fd=new FormData();
+document.querySelectorAll('#start-box select').forEach(s=>fd.append(s.dataset.k,s.value));fd.append('hazards',document.getElementById('fs-hz').value);fd.append('signature',c.toDataURL('image/png'));
+b.disabled=true;const r=await fetch('/job/'+encodeURIComponent(currentJob.id)+'/safety/daily?json=1',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));b.disabled=false;
+if(!r.ok){toast(d.error||'Error',4000);return}toast('Safety check saved');await reloadJob()}
+function pnPicked(){const n=document.getElementById('pn-photos').files.length;document.getElementById('pn-picked').textContent=n?n+' photo'+(n>1?'s':'')+' ready. Tap Save.':''}
+async function pnSave(){const f=document.getElementById('pn-photos'),w=document.getElementById('pn-work');if(!w.value.trim()&&!f.files.length){toast('Add a photo or say what you did');return}
+const fd=new FormData();fd.append('work_done',w.value);fd.append('materials',document.getElementById('pn-mat').value);fd.append('issues',document.getElementById('pn-issues').value);[...f.files].forEach(x=>fd.append('photos',x));
+const b=document.getElementById('pn-save');b.disabled=true;b.textContent='Saving...';const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/worklog',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));b.disabled=false;b.textContent='Save';
+if(!r.ok){toast(d.error||'Error',4000);return}f.value='';w.value='';document.getElementById('pn-mat').value='';document.getElementById('pn-issues').value='';pnPicked();toast('Saved');if(typeof loadUpdates==='function')loadUpdates();await reloadJob()}
+async function finishTap(){const b=document.getElementById('done-btn');await refreshSteps();const S=currentJob.steps||[];const fin=S.find(s=>s.label==='Finish');
+if(fin&&fin.why){toast(fin.why,4000);const e=focusSecs(fin.go||[]);if(e)e.scrollIntoView({behavior:'smooth',block:'start'});return}
+b.disabled=true;b.textContent='Finishing...';if(currentJob.clock&&currentJob.clock.open){const loc=await getLoc();const r=await post('/clock',loc||{});if(!r.ok){const d=await r.json().catch(()=>({}));toast(d.error||'Clock out failed',4000);b.disabled=false;b.textContent='Finish';return}}
+if(currentJob.job_type==='Survey'){b.disabled=false;b.textContent='Finish';document.getElementById('finish').onclick();return}
+const fd=new FormData();fd.append('notes',currentJob.notes||'');fd.append('materials',currentJob.materials||'');fd.append('hours',0);fd.append('miles',0);fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));b.disabled=false;b.textContent='Finish';
+if(!r.ok){toast(d.error||'Error',4000);await reloadJob();return}toast(d.status==='review'?'Done. The office will review it.':'Done');setTimeout(showList,1200)}
 function focusSecs(keys){document.querySelectorAll('#detail .focus').forEach(e=>e.classList.remove('focus'));const mb=document.getElementById('more-box');let first=null;
 keys.forEach(k=>{const e=document.getElementById('sec-'+k);if(!e)return;e.classList.add('focus');e.classList.remove('hidden');if(mb.contains(e)){document.getElementById('sec-more').classList.add('focus');mb.classList.remove('hidden')}first=first||e});return first}
+function goStep(i){const s=(currentJob.steps||[])[i];if(!s)return;if(s.href){location.href=s.href;return}const e=focusSecs(s.go||[]);if(e)setTimeout(()=>e.scrollIntoView({behavior:'smooth',block:'start'}),50)}
 function nextStep(){const nx=stepNext();if(!nx)return;if(nx.href){location.href=nx.href;return}
 const e=focusSecs(nx.go||[]);if(e)setTimeout(()=>e.scrollIntoView({behavior:'smooth',block:'start'}),50)}
 function toggleGuided(){guided=!guided;renderSteps(false);if(!guided)document.querySelectorAll('#detail .focus').forEach(e=>e.classList.remove('focus'))}
-async function refreshSteps(){if(!currentJob)return;const id=currentJob.id;const r=await fetch('/api/jobs/'+encodeURIComponent(id)+'/steps');if(!r.ok||!currentJob||currentJob.id!==id)return;currentJob.steps=(await r.json()).steps;renderSteps(false)}
+async function refreshSteps(){if(!currentJob)return;const id=currentJob.id;const r=await fetch('/api/jobs/'+encodeURIComponent(id)+'/steps');if(!r.ok||!currentJob||currentJob.id!==id)return;const sj=await r.json();currentJob.steps=sj.steps;currentJob.flow=sj.flow;renderSteps(false)}
 let stepT=null;const _fetch=window.fetch.bind(window);window.fetch=async(u,o)=>{const r=await _fetch(u,o);try{const m=((o&&o.method)||'GET').toUpperCase(),s=String(u);
 if(m!=='GET'&&currentJob&&(s.startsWith('/api/jobs/'+encodeURIComponent(currentJob.id)+'/')||s.startsWith('/api/jobs/'+currentJob.id+'/'))){clearTimeout(stepT);stepT=setTimeout(refreshSteps,400)}}catch(e){}return r};
 function renderClock(){const c=currentJob.clock||{},b=document.getElementById('clk-btn'),i=document.getElementById('clk-info');if(!b)return;b.disabled=false;
@@ -1085,14 +1153,14 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','omw','clock','survey','check','log','follow','hub','finish'],more:[]},
-Install:{show:['help','review','links','type','omw','clock','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
-Service:{show:['help','review','links','type','omw','clock','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
+const LAYOUT={Survey:{show:['help','links','type','start','done','omw','clock','survey','check','log','follow','hub','finish'],more:[]},
+Install:{show:['help','review','links','type','start','pn','done','omw','clock','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
+Service:{show:['help','review','links','type','start','pn','done','omw','clock','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','clock','omw','review','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','clock','start','pn','done','omw','review','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -1147,7 +1215,7 @@ def index():
     agr=None
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    return render_template_string(HTML, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
+    return render_template_string(HTML, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -1273,7 +1341,7 @@ def get_job(job_id):
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
         extra=hub_info(job_id,n,c); extra['labor']=job_labor(conn,row)
-    extra['clock']=clock_state(conn, job_id); extra['steps']=job_steps(conn, row)
+    extra['clock']=clock_state(conn, job_id); extra['steps']=job_steps(conn, row); extra['flow']=flow_state(conn, row)
     conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
@@ -3008,23 +3076,25 @@ def safety_submit(job_id, kind):
     if kind not in ('daily','talk'): return ('',404)
     conn=get_db(); row=page_job(conn, job_id)
     if not row: conn.close(); return ('',403)
-    sig=request.form.get('signature') or ''
-    if not sig_ok(sig): conn.close(); return safety_page(job_id, msg='Not saved. Please sign.', ok=False)
+    sig=request.form.get('signature') or ''; js=request.args.get('json')=='1'
+    def fail(m):
+        conn.close(); return (jsonify({'error':m}),400) if js else safety_page(job_id, msg='Not saved. '+m, ok=False)
+    if not sig_ok(sig): return fail('Please sign.')
     now=datetime.utcnow().isoformat(timespec='seconds'); day=today_local().isoformat()
     if kind=='daily':
         ans={k:request.form.get(k) for k,_ in SAFETY_ITEMS}
-        if any(v not in ('OK','Problem','N/A') for v in ans.values()): conn.close(); return safety_page(job_id, msg='Not saved. Answer every line.', ok=False)
+        if any(v not in ('OK','Problem','N/A') for v in ans.values()): return fail('Answer every line.')
         hz=(request.form.get('hazards') or '').strip()[:1000]
-        if 'Problem' in ans.values() and not hz: conn.close(); return safety_page(job_id, msg='Not saved. Tell us the problem.', ok=False)
+        if 'Problem' in ans.values() and not hz: return fail('Tell us the problem.')
         conn.execute('INSERT INTO safety_forms (job_id,kind,form_date,answers,hazards,signer,signature,created_at) VALUES (?,?,?,?,?,?,?,?)',(job_id,'daily',day,json.dumps(ans),hz,me(),sig,now))
     else:
         try: t=conn.execute('SELECT * FROM safety_topics WHERE id=?',(int(request.form.get('topic') or 0),)).fetchone()
         except ValueError: t=None
         crew=(request.form.get('crew') or '').strip()[:300]
-        if not t or not crew: conn.close(); return safety_page(job_id, msg='Not saved. Pick a topic and list who was there.', ok=False)
+        if not t or not crew: return fail('Pick a topic and list who was there.')
         conn.execute('INSERT INTO safety_forms (job_id,kind,form_date,topic_name,topic_points,crew,signer,signature,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(job_id,'talk',day,t['name'],t['points'],crew,me(),sig,now))
     conn.commit(); conn.close()
-    return safety_page(job_id, msg='Saved. Thank you.')
+    return jsonify({'ok':True}) if js else safety_page(job_id, msg='Saved. Thank you.')
 
 @app.route('/safety/form/<int:fid>')
 def safety_form_view(fid):
@@ -3109,37 +3179,57 @@ def job_steps(conn, row):
                 step('Review', st=='completed', ['review'], why='' if st=='review' else 'Waiting on the sub to finish'),
                 step('Invoice Draft', draft, ['review'], why='Approve the job in Review first' if st!='completed' else 'No invoice draft yet'),
                 step('Done and Archived', st=='completed' and draft and row['sale_amount'] is not None, ['time'], why='Enter the invoice amount' if st=='completed' else 'Approve the job first')]
-    omw=conn.execute("SELECT 1 FROM msg_drafts WHERE job_id=? AND kind='onmyway' AND ref_date=?",(jid,day)).fetchone()
-    pun=[p for p in conn.execute('SELECT in_at,out_at FROM time_punches WHERE job_id=? AND sub=?',(jid,who)).fetchall() if utc_to_local(p['in_at'],'%Y-%m-%d')==day]
-    is_in=any(p['out_at'] is None for p in pun); ins=bool(pun)
-    clk_out=ins and not is_in
+    f=flow_state(conn, row); pun_open=f['is_in']
     if t=='Survey':
         sv=clean_survey(row['survey_form']); filled=any(v for k,v in sv.items() if k!='obstacles' and isinstance(v,str))
         pics=job_photo_count(conn, jid, ('survey',))
-        return [step('On My Way', omw or ins or started or finished, ['omw']),
-                step('Clock In', ins or finished, ['clock']),
-                step('Fill Survey', filled, ['survey']),
-                step('Photos', pics, ['survey'], why='Add at least one photo'),
-                step('Clock Out', clk_out or (finished and not is_in), ['clock'], why='Clock in first' if not ins else ''),
-                step('Finish Survey', finished, ['clock'] if is_in else ['finish'], why='Clock out first' if is_in else '')]
+        return [step('Start', f['started'] or finished, ['start']),
+                step('Fill Survey and Photos', filled and pics, ['survey'], why='Fill the survey' if not filled else 'Add at least one photo'),
+                step('Finish', finished, ['done'])]
     pics=job_photo_count(conn, jid)
-    safety=conn.execute("SELECT 1 FROM safety_forms WHERE job_id=? AND kind='daily' AND form_date=?",(jid,day)).fetchone()
-    dlog=conn.execute('SELECT 1 FROM daily_logs WHERE job_id=? AND log_date=?',(jid,day)).fetchone()
-    why_done='Clock out first' if is_in else done_block(left, pics)
-    return [step('On My Way', omw or ins or started or finished, ['omw']),
-            step('Clock In', ins or finished, ['clock']),
-            step('Safety Check', safety or finished, href='/job/%s/safety' % enc),
+    why_done=done_block(left, pics)
+    return [step('Start', (f['started'] and f['safety']) or finished, ['start'], why='Sign the safety check' if f['started'] and not f['safety'] else ''),
             step('Checklist', not left, ['check'], why='%d checklist items left' % left if left else ''),
-            step('Photos and Notes', pics and notes, ['photos','log'], why='Add a photo' if not pics else 'Add a note'),
-            step('Daily Log', dlog or finished, href='/job/%s/daily' % enc),
-            step('Clock Out', clk_out or (finished and not is_in), ['clock'], why='Clock in first' if not ins else ''),
-            step('Mark Done', finished, ['clock'] if is_in else ['check'] if left else ['photos'] if not pics else ['sig','finish'], why=why_done)]
+            step('Photos and Notes', (pics and f['log_today']) or finished, ['pn'], why='Add a photo' if not pics else 'Say what you did today'),
+            step('Finish', finished, ['check'] if left else ['pn'] if not pics else ['done'], why=why_done)]
+
+def flow_state(conn, row):
+    jid=row['id']; day=today_local().isoformat(); who=ckey(me())
+    pun=[p for p in conn.execute('SELECT in_at,out_at FROM time_punches WHERE job_id=? AND sub=? ORDER BY id',(jid,who)).fetchall() if utc_to_local(p['in_at'],'%Y-%m-%d')==day]
+    safety=conn.execute("SELECT 1 FROM safety_forms WHERE job_id=? AND kind='daily' AND form_date=? AND signer=?",(jid,day,me())).fetchone()
+    dlog=conn.execute('SELECT 1 FROM daily_logs WHERE job_id=? AND log_date=?',(jid,day)).fetchone()
+    return {'started':bool(pun),'is_in':any(p['out_at'] is None for p in pun),'start_local':utc_to_local(pun[0]['in_at'],'%I:%M %p') if pun else '','safety':bool(safety),'log_today':bool(dlog)}
+
+@app.route('/api/jobs/<job_id>/worklog', methods=['POST'])
+def worklog(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    if row['status'] in ('review','completed') and not is_office(): conn.close(); return jsonify({'error':'This job is finished. Ask the office.'}),409
+    g=lambda k,n: (request.form.get(k) or '').strip()[:n]
+    work,mat,iss=g('work_done',3000),g('materials',2000),g('issues',2000)
+    files=[f for f in request.files.getlist('photos')[:20] if f and f.filename]
+    if not work and not files: conn.close(); return jsonify({'error':'Add a photo or say what you did'}),400
+    day=today_local().isoformat(); now=datetime.utcnow().isoformat(timespec='seconds'); new=[]
+    for f in files:
+        fn=secure_filename(f"{job_id}_during_{uuid.uuid4().hex[:8]}.jpg"); f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,'during',now)); new.append(fn)
+    if work: conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),work,now_local_str()))
+    old=conn.execute('SELECT * FROM daily_logs WHERE job_id=? AND log_date=?',(job_id,day)).fetchone()
+    join=lambda a,b: '\n'.join(x for x in ((a or '').strip(), b) if x)[:3000]
+    if old:
+        pics=json.loads(old['photos'] or '[]')+new
+        conn.execute('UPDATE daily_logs SET work_done=?,materials=?,issues=?,photos=?,author=?,updated_at=? WHERE id=?',
+                     (join(old['work_done'],work) or 'Photos added',join(old['materials'],mat),join(old['issues'],iss),json.dumps(pics),me(),now,old['id']))
+    else:
+        conn.execute('INSERT INTO daily_logs (job_id,log_date,author,work_done,crew,materials,issues,photos,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                     (job_id,day,me(),work or 'Photos added',me(),mat,iss,json.dumps(new),now,now))
+    conn.commit(); conn.close(); return jsonify({'ok':True,'photos':len(new)})
 
 @app.route('/api/jobs/<job_id>/steps')
 def job_steps_api(job_id):
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
-    out=job_steps(conn, row); conn.close(); return jsonify({'steps':out})
+    out=job_steps(conn, row); fl=flow_state(conn, row); conn.close(); return jsonify({'steps':out,'flow':fl})
 
 @app.route('/to-order')
 def to_order():
