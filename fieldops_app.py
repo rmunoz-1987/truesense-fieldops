@@ -259,6 +259,8 @@ def init_db():
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS job_updates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS followups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, due TEXT, note TEXT, done INTEGER DEFAULT 0, created_by TEXT, created_at TEXT, done_by TEXT, done_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -313,7 +315,7 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .tile b{display:block;font-size:2rem;color:var(--accent)}.tile.on{border-color:var(--accent);background:#fbfaf0}.tile.red{border-color:#b00020}.tile.red b{color:#b00020}
 .menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.menu .big-btn{margin:0;padding:18px 8px;box-sizing:border-box;font-family:inherit}
 .tech-h{font-weight:700;font-size:1.1rem;margin:18px 0 6px;padding-bottom:4px;border-bottom:2px solid var(--accent)}
-@media(min-width:900px){.dash{display:flex;gap:20px;align-items:flex-start}.menu{display:flex;flex-direction:column;flex:0 0 210px;position:sticky;top:12px}.dash main{flex:1;min-width:0}.tiles{grid-template-columns:repeat(4,1fr)}}
+@media(min-width:900px){.dash{display:flex;gap:20px;align-items:flex-start}.menu{display:flex;flex-direction:column;flex:0 0 210px;position:sticky;top:12px}.dash main{flex:1;min-width:0}.tiles{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 .pal{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0}.pal button{padding:12px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-size:.95rem;font-weight:600;color:var(--text)}.pal button.on{border-color:var(--text);background:#fbfaf0}
 .pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
 .plan{position:relative;margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}.plan img{width:100%;height:auto;display:block}
@@ -334,7 +336,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button></div>{% endif %}
+<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -415,6 +417,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
 <div id="sec-map"><button class="big-btn gray" onclick="mapOpen()">Site Map <span id="map-sum" style="font-weight:400;font-size:.9rem"></span></button></div>
+<div id="sec-follow">{% if office %}<div class="job"><div style="font-weight:600">Follow-ups (office only)</div><div id="fu-list"></div>
+<div style="font-size:.85rem;color:#666;margin-top:8px">Remind me on</div><input type="date" id="fu-date"><input type="text" id="fu-note" placeholder="What to follow up on (e.g. call about estimate)"><button class="big-btn" onclick="addFollow()">Add Follow-up</button></div>{% endif %}</div>
 <div id="sec-private">{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
 <textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}</div>
 <div id="sec-sig"><div class="job"><div style="font-weight:600">Customer Signature</div><canvas id="sig"></canvas>
@@ -464,8 +468,10 @@ const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=ass
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
-async function loadDash(){const [a,c]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json())]);
-const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey')};
+async function loadDash(){const [a,c,fu]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json())]);
+const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today)};
+document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));
+if(F==='follow'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return renderFollowList(fu,today)}
 Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});
 document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);
 const jobs=F?lists[F]:a;const g={};jobs.forEach(j=>{const k=(j.tech||'').trim()||'Unassigned';(g[k]=g[k]||[]).push(j)});
@@ -473,6 +479,19 @@ const keys=Object.keys(g).sort((x,y)=>x==='Unassigned'?-1:y==='Unassigned'?1:x.l
 keys.forEach(k=>g[k].sort((x,y)=>(x.scheduled_date||'9999').localeCompare(y.scheduled_date||'9999')));
 const title=F?'<div class="day">'+esc(document.querySelector('.tile[data-f="'+F+'"]').textContent.replace(/^\d+/,''))+' <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all)</a></div>':'';
 document.getElementById('list').innerHTML=title+(keys.map(k=>`<div class="tech-h">${esc(k)} &middot; ${g[k].length} job${g[k].length===1?'':'s'}</div>`+g[k].map(dcard).join('')).join('')||'<div class="job">No jobs</div>')}
+function fuLabel(d,today){return d<today?'Overdue, '+dayLabel(d).replace(/^Overdue, /,''):dayLabel(d)}
+function renderFollowList(fu,today){const el=document.getElementById('list');el.innerHTML='<div class="day">Follow-ups <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all jobs)</a></div>';
+if(!fu.length){el.innerHTML+='<div class="job">No follow-ups</div>';return}
+fu.forEach(x=>{const d=document.createElement('div');d.className='job';d.style.borderColor=x.due<today?'#b00020':x.due===today?'var(--accent)':'';const h=document.createElement('div');h.style.cssText='font-weight:700;color:'+(x.due<today?'#b00020':'var(--accent)');h.textContent=fuLabel(x.due,today);
+const j=document.createElement('div');j.style.fontWeight='600';j.textContent=x.job_id+' \u00b7 '+(x.customer||x.title||'');const n=document.createElement('div');n.style.cssText='white-space:pre-wrap;font-size:1.1rem';n.textContent=x.note;
+const r=document.createElement('div');r.className='row';const b1=document.createElement('button');b1.className='big-btn green';b1.textContent='Done';b1.onclick=async()=>{if((await fetch('/api/followups/'+x.id+'/done',{method:'POST'})).ok)load();else alert('Error')};
+const b2=document.createElement('button');b2.className='big-btn gray';b2.textContent='Open Job';b2.onclick=()=>openJob(x.job_id);r.append(b1,b2);d.append(h,j,n,r);el.appendChild(d)})}
+async function loadFollow(){const el=document.getElementById('fu-list');if(!el)return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/followups');const u=r.ok?await r.json():[];el.innerHTML='';const today=ymd(new Date());
+u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5;'+(x.done?'color:#999':'');const h=document.createElement('div');h.style.cssText='font-weight:700;'+(!x.done&&x.due<today?'color:#b00020':'');h.textContent=x.done?'Done \u00b7 was due '+dayLabel(x.due).replace(/^Overdue, /,''):fuLabel(x.due,today);
+const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=x.note;d.append(h,t);if(!x.done){const b=document.createElement('button');b.className='big-btn green';b.style.padding='10px';b.textContent='Mark Done';b.onclick=async()=>{if((await fetch('/api/followups/'+x.id+'/done',{method:'POST'})).ok)loadFollow();else alert('Error')};d.appendChild(b)}el.appendChild(d)});
+if(!u.length)el.innerHTML='<div class="muted">No follow-ups</div>'}
+async function addFollow(){const dt=document.getElementById('fu-date').value,n=document.getElementById('fu-note').value.trim();if(!dt||!n){alert('Pick a date and type a note');return}
+const r=await post('/followups',{due:dt,note:n});if(r.ok){document.getElementById('fu-note').value='';document.getElementById('fu-date').value='';loadFollow()}else alert('Error')}
 function ymd(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function dayLabel(k){if(!k)return 'No date';const t=new Date();const tm=new Date();tm.setDate(t.getDate()+1);
 const d=new Date(k+'T12:00:00');const nice=d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
@@ -684,14 +703,14 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','survey','log','finish'],more:[]},
-Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','private','sig','finish'],more:[]},
-Service:{show:['help','links','type','status','log','photos','mat','time','private','sig','finish'],more:['ab','map','check']},
-'Office Task':{show:['type','status','log','check','finish'],more:[]}};
+const LAYOUT={Survey:{show:['help','links','type','survey','log','follow','finish'],more:[]},
+Install:{show:['help','links','type','status','photos','mat','time','check','log','ab','map','follow','private','sig','finish'],more:[]},
+Service:{show:['help','links','type','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check']},
+'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','check','ab','map','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','check','ab','map','follow','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -711,7 +730,7 @@ renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -1120,6 +1139,34 @@ def copy_plans(conn, src_id, job_id, devs):
     for d in parse_devices(src['survey_devices']):
         if d['plan'] in mp: devs.append(dict(d,id='',plan=mp[d['plan']],installed=False,mac='',ip='',port='',clabel='',photo=''))
     return number_devices(devs)
+
+def fu_dict(r): return {'id':r['id'],'job_id':r['job_id'],'due':r['due'],'note':r['note'],'done':bool(r['done']),'done_by':r['done_by'],'done_at':r['done_at']}
+
+@app.route('/api/followups')
+def list_followups():
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); rows=conn.execute("SELECT f.*,j.customer,j.title FROM followups f JOIN jobs j ON j.id=f.job_id WHERE f.done=0 ORDER BY f.due,f.id").fetchall(); conn.close()
+    return jsonify([dict(fu_dict(r),customer=r['customer'] or '',title=r['title'] or '') for r in rows])
+
+@app.route('/api/jobs/<job_id>/followups', methods=['GET','POST'])
+def job_followups(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db()
+    if not conn.execute('SELECT 1 FROM jobs WHERE id=?',(job_id,)).fetchone(): conn.close(); return ('',404)
+    if request.method=='POST':
+        d=request.get_json(silent=True) or {}; note=str(d.get('note') or '').strip()[:1000]
+        try: due=datetime.strptime(str(d.get('due') or ''),'%Y-%m-%d').date().isoformat()
+        except ValueError: conn.close(); return jsonify({'error':'pick a date'}),400
+        if not note: conn.close(); return jsonify({'error':'note required'}),400
+        conn.execute('INSERT INTO followups (job_id,due,note,created_by,created_at) VALUES (?,?,?,?,?)',(job_id,due,note,me(),now_local_str())); conn.commit()
+    rows=conn.execute('SELECT * FROM followups WHERE job_id=? ORDER BY done,due,id',(job_id,)).fetchall(); conn.close()
+    return jsonify([fu_dict(r) for r in rows])
+
+@app.route('/api/followups/<int:fid>/done', methods=['POST'])
+def followup_done(fid):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); n=conn.execute('UPDATE followups SET done=1,done_by=?,done_at=? WHERE id=?',(me(),now_local_str(),fid)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>/to-job', methods=['POST'])
 def survey_to_job(job_id):
@@ -1572,7 +1619,7 @@ def delete_client():
         for ph in conn.execute('SELECT filename FROM photos WHERE job_id=?',(row['id'],)).fetchall():
             try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(ph['filename'])))
             except OSError: pass
-        for t in ('photos','job_updates','invoice_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
+        for t in ('photos','job_updates','invoice_drafts','followups'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
     conn.execute('DELETE FROM jobs WHERE LOWER(TRIM(customer))=?',(k,))
     conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,)); conn.commit(); conn.close()
     return redirect('/clients')
@@ -1603,7 +1650,7 @@ def delete_job(job_id):
     for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
         try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
         except OSError: pass
-    for t in ('photos','job_updates','invoice_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
+    for t in ('photos','job_updates','invoice_drafts','followups'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
     n=conn.execute('DELETE FROM jobs WHERE id=?',(job_id,)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
 
