@@ -2621,9 +2621,19 @@ def qbo_page():
         tag={'queued':'<span class="flag" style="background:#fff8e1;color:#8d6e00">Waiting for bot</span>','created':'<span class="okf" style="background:#e3f2fd;color:#1565c0">In QuickBooks</span>','paid':'<span class="okf">Paid</span>','error':'<span class="flag">Problem</span>'}.get(x['status'],'')
         out='<div class="card"><b>%s</b> %s <span class="muted">%s</span><div>%s%s</div><div class="muted">Queued %s%s</div>'%(h((r['customer'] if r else '') or p.get('customer',{}).get('name','')),tag,h(x['job_id']),money(x['total'] if x['total'] is not None else p.get('total')),(' &middot; QuickBooks #'+h(x['doc_number'] or x['qbo_invoice_id'])) if (x['doc_number'] or x['qbo_invoice_id']) else '',h(x['queued_at']),(' &middot; '+h(x['note'])) if x['note'] else '')
         if x['status'] in ('queued','error'): out+='<form method="post"><input type="hidden" name="action" value="unqueue"><input type="hidden" name="job" value="%s"><button class="big-btn gray">Take off the queue</button></form>'%h(x['job_id'])
-        if r and x['status'] in ('created','paid'):
-            out+='<form method="post"><input type="hidden" name="action" value="paylink"><input type="hidden" name="job" value="%s"><label>QuickBooks pay link (shows a Pay Now button on the client portal)</label><input name="pay_link" value="%s" placeholder="https://connect.intuit.com/..."><button class="big-btn gray">Save Pay Link</button></form>'%(h(x['job_id']),h(r['pay_link'] or ''))
+        if r and x['status'] in ('created','paid'): out+='<div class="muted">Pay Now button: <b>%s</b></div>'%('ON' if (r['pay_link'] or '').startswith('https://') else 'off. Paste the link in Pay Now links above.')
         return out+'</div>'
+    payjobs=[jobs[x['job_id']] for x in q.values() if x['status']=='created' and x['job_id'] in jobs]
+    body+='<h2 id="pay">Pay Now links</h2><div class="card" style="background:#fffdf0"><b>How to add a Pay Now button for a client</b><ol style="margin:6px 0 0 18px;padding:0;line-height:1.6"><li>In QuickBooks, open the invoice and tap <b>Share link</b> (or Send, then Copy link).</li><li>Tap <b>Paste</b> next to the job below.</li><li>Tap <b>Save</b>. The client portal then shows a Pay Now button.</li></ol><div class="muted" style="margin-top:6px">Nothing is sent to the client. They see it only when they open their portal link.</div></div>'
+    if payjobs:
+        for r in payjobs:
+            on=(r['pay_link'] or '').startswith('https://')
+            body+=('<form method="post" class="card"><input type="hidden" name="action" value="paylink"><input type="hidden" name="job" value="%s"><b>%s</b> <span class="muted">%s</span> %s'
+                   '<input name="pay_link" id="pl-%s" value="%s" placeholder="Paste the QuickBooks invoice link" inputmode="url" autocomplete="off">'
+                   '<div class="row"><button type="button" class="big-btn gray" onclick="plPaste(\'pl-%s\')">Paste</button><button class="big-btn">Save</button></div></form>')%(
+                   h(r['id']),h(r['customer'] or r['id']),h(r['id']),'<span class="okf">Pay Now ON</span>' if on else '<span class="flag">No link yet</span>',h(r['id']),h(r['pay_link'] or ''),h(r['id']))
+        body+='<script>async function plPaste(id){var i=document.getElementById(id);try{var t=(await navigator.clipboard.readText()||"").trim();if(t){i.value=t;return}}catch(e){}i.focus();alert("Long-press the box and choose Paste.")}</script>'
+    else: body+='<div class="muted">No invoices in QuickBooks yet. After your bot creates one, it shows up here for its pay link.</div>'
     for st,title in (('queued','Waiting for the bot'),('error','Problems'),('created','In QuickBooks, not paid'),('paid','Paid')):
         xs=[x for x in q.values() if x['status']==st]
         if xs: body+='<h2>%s</h2>'%title+''.join(row_html(x) for x in sorted(xs,key=lambda x:x['updated_at'] or '',reverse=True))
@@ -3315,9 +3325,9 @@ function go(){const bx=document.querySelectorAll('.sbox');if(bx.length&&![...bx]
 AGR_OFFICE_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement</h2><a class="btn" href="/">Back to Jobs</a>
 <div class="job" id="pending" style="border:2px solid {{ '#b00020' if pend else '#ddd' }}"><div style="font-weight:700;font-size:1.1rem">Needs Your Signature ({{ pend|length }})</div>
 {% for p in pend %}<div style="border-top:1px solid #eee;padding:8px 0"><b>{{ p.sub|title }}</b> signed v{{ p.version }} on {{ p.signed_at }}<a class="btn go" href="/agreement/countersign/{{ p.id }}">Review and Sign</a></div>{% else %}<div class="muted">Nothing waiting.</div>{% endfor %}</div>
-{% if done %}<div class="job"><div style="font-weight:700">Fully signed copies</div>{% if not smtp %}<div style="color:#b00020;font-weight:700;margin:4px 0">Email not set up. Add SMTP settings in Render to email copies.</div>{% endif %}
+{% if done %}<div class="job"><div style="font-weight:700">Fully signed copies</div>{% if not smtp %}<div style="color:#b00020;font-weight:700;margin:4px 0">Email not set up. Use Download / Print to save or print a signed copy.</div>{% endif %}
 {% for d in done %}<div style="border-top:1px solid #eee;padding:8px 0"><b>{{ d.sub|title }}</b> v{{ d.version }} &middot; fully signed {{ d.co_signed_at }}<div class="muted">Email: {{ d.email_status or 'Not sent' }}{% if d.email_at %} ({{ d.email_at }}){% endif %}</div>
-<div style="display:flex;gap:8px"><a class="btn" href="/agreement/copy/{{ d.id }}">Open Copy</a><form method="post" action="/agreement/email/{{ d.id }}" style="flex:1;margin:0" onsubmit="return confirm('Email the signed copy to the sub and to you?')"><button class="btn gold" type="submit">Email copy</button></form></div></div>{% endfor %}</div>{% endif %}
+<div style="display:flex;gap:8px"><a class="btn" href="/agreement/copy/{{ d.id }}">Open Copy</a><a class="btn gold" href="/agreement/copy/{{ d.id }}?print=1">Download / Print</a>{% if smtp %}<form method="post" action="/agreement/email/{{ d.id }}" style="flex:1;margin:0" onsubmit="return confirm('Email the signed copy to the sub and to you?')"><button class="btn gold" type="submit">Email copy</button></form>{% endif %}</div></div>{% endfor %}</div>{% endif %}
 <form method="post" action="/agreement/require" class="job" style="border:2px solid {{ '#2e7d32' if required else '#ddd' }}"><div style="font-weight:700;font-size:1.1rem">Require subs to sign: {{ 'ON' if required else 'OFF' }}</div>
 <div class="muted">{{ 'Subs must sign the current version before they can open jobs.' if required else 'Subs are not blocked. They can still sign from a link on their home screen.' }}</div>
 <input type="hidden" name="on" value="{{ '0' if required else '1' }}"><button class="btn {{ '' if required else 'gold' }}" type="submit">{{ 'Turn OFF' if required else 'Turn ON' }}</button></form>
@@ -3337,7 +3347,7 @@ AGR_OFFICE_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement</h2><a c
 <button class="btn gold" type="submit">Save New Version</button></form></body></html>"""
 
 AGR_COPY_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement: Signed Copy</h2>
-{% if not standalone %}<div class="noprint"><button class="btn gold" onclick="print()">Print</button><a class="btn" href="/agreement">Back</a></div>{% endif %}
+{% if autoprint %}<script>addEventListener('load',function(){setTimeout(function(){print()},300)})</script>{% endif %}{% if not standalone %}<div class="noprint"><div class="muted" style="margin:4px 0">To save a PDF: tap Print, then choose Save as PDF.</div><button class="btn gold" onclick="print()">Print or Save PDF</button><a class="btn" href="/agreement">Back</a></div>{% endif %}
 <div class="job"><div style="font-weight:700;font-size:1.1rem;color:{{ '#2e7d32' if s.co_signed_at else '#b26a00' }}">{{ 'Fully signed' if s.co_signed_at else 'Awaiting company signature' }}</div><div><b>Version:</b> {{ s.version }}</div><div><b>Signed by:</b> {{ s.typed_name }} (login: {{ s.sub|title }})</div><div><b>Date and time:</b> {{ s.signed_at }}</div></div>
 <div class="text">{{ agr(segs, 'copy', vals, s) }}</div>
 <div class="job" style="page-break-inside:avoid"><div style="font-weight:700">Subcontractor Signature</div><div><b>Typed name:</b> {{ s.typed_name }}</div><div>&#9745; I AGREE to version {{ s.version }}</div>
@@ -3522,7 +3532,7 @@ def agreement_copy(sid):
     a=conn.execute('SELECT body FROM agreements WHERE id=?',(s['agreement_id'],)).fetchone(); conn.close()
     try: vals=json.loads(s['fields'] or '{}')
     except Exception: vals={}
-    return render_template_string(AGR_COPY_HTML, s=s, segs=agr_parse(a['body'] if a else ''), vals=vals, standalone=False)
+    return render_template_string(AGR_COPY_HTML, s=s, segs=agr_parse(a['body'] if a else ''), vals=vals, standalone=False, autoprint=request.args.get('print')=='1')
 
 @app.route('/agreement/require', methods=['POST'])
 def agreement_require():
