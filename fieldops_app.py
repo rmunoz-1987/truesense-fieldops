@@ -613,7 +613,9 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .big-btn{display:block;width:100%;background:var(--accent);color:#fff;border:none;padding:16px;border-radius:10px;font-size:1.05rem;font-weight:600;margin:8px 0;text-align:center;text-decoration:none}
 .big-btn.gray{background:#f0f0f0;color:var(--text)}
 .big-btn.green{background:#2d6a4f}.big-btn.stop{background:#b00020}
-.hidden{display:none}
+.hidden{display:none}#detail.guided>[id^="sec-"]:not(.focus){display:none}
+#steps-box{margin:8px 0}.stp-bar{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.stp{flex:1 1 30%;min-width:96px;padding:8px 6px;border-radius:8px;background:#eee;color:#333;font-size:.85rem;font-weight:600;text-align:center}
+.stp.done{background:#2e7d32;color:#fff}.stp.cur{outline:3px solid #a49f2a;background:#fff}#next-btn{font-size:1.4rem;padding:22px}#next-btn:disabled{background:#999}.stp-why{color:#b00020;font-weight:700;text-align:center;margin:4px 0;font-size:1.05rem}
 .chk{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:1rem}
 .chk input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
 .day{font-weight:700;color:var(--accent);margin:16px 0 6px}
@@ -669,6 +671,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 {% if office %}</main>{% endif %}</div>
 <div id="detail" class="hidden">
 <button class="big-btn gray" style="font-size:1.3rem;margin-bottom:8px" onclick="showList()">&larr; Back</button>
+<div id="steps-box"><div class="stp-bar" id="stp-bar"></div><div class="stp-why" id="stp-why"></div><button class="big-btn" id="next-btn" onclick="nextStep()">Next Step</button><button class="big-btn gray" id="more-all" onclick="toggleGuided()">More</button></div>
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div><div id="d-created" style="color:#666;font-size:.85rem;margin-top:6px"></div></div>
 <div id="sec-help">{% if office %}<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
 <div id="help-meta" class="muted" style="font-size:.85rem"></div><div id="help-text" style="white-space:pre-wrap;margin:6px 0"></div><div id="help-img"></div>
@@ -901,6 +904,23 @@ function addMat(){const n=document.getElementById('mat-new');const t=n.value.tri
 function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs';renderLabor()}
 const money=n=>'$'+Number(n||0).toFixed(2);
 async function saveSale(){const v=document.getElementById('sale-amt').value;const r=await post('/sale',{sale_amount:v});if(r.ok){currentJob.sale_amount=(await r.json()).sale_amount;alert('Saved')}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+let guided=true;
+function stepNext(){const S=currentJob.steps||[];if(S.length&&S[S.length-1].done)return;let last=-1;S.forEach((s,i)=>{if(s.done)last=i});return S.slice(last+1).find(s=>!s.done)||S.find(s=>!s.done)}
+function renderSteps(refocus){const S=currentJob.steps||[],nx=stepNext(),det=document.getElementById('detail');
+const hd=document.getElementById('d-id').parentElement,box=document.getElementById('steps-box');if(hd.nextSibling!==box)hd.after(box);
+document.getElementById('stp-bar').innerHTML=S.map((s,i)=>'<div class="stp'+(s.done?' done':'')+(s===nx?' cur':'')+'">'+(s.done?'&#10003; ':(i+1)+'. ')+esc(s.label)+'</div>').join('');
+const b=document.getElementById('next-btn');b.disabled=!nx;b.textContent=nx?'Next Step: '+nx.label:'All steps done';
+document.getElementById('stp-why').textContent=nx&&nx.why?nx.why:'';
+det.classList.toggle('guided',guided);document.getElementById('more-all').textContent=guided?'More':'Less';
+if(refocus)focusSecs(currentJob.help_open?['help']:[])}
+function focusSecs(keys){document.querySelectorAll('#detail .focus').forEach(e=>e.classList.remove('focus'));const mb=document.getElementById('more-box');let first=null;
+keys.forEach(k=>{const e=document.getElementById('sec-'+k);if(!e)return;e.classList.add('focus');e.classList.remove('hidden');if(mb.contains(e)){document.getElementById('sec-more').classList.add('focus');mb.classList.remove('hidden')}first=first||e});return first}
+function nextStep(){const nx=stepNext();if(!nx)return;if(nx.href){location.href=nx.href;return}
+const e=focusSecs(nx.go||[]);if(e)setTimeout(()=>e.scrollIntoView({behavior:'smooth',block:'start'}),50)}
+function toggleGuided(){guided=!guided;renderSteps(false);if(!guided)document.querySelectorAll('#detail .focus').forEach(e=>e.classList.remove('focus'))}
+async function refreshSteps(){if(!currentJob)return;const id=currentJob.id;const r=await fetch('/api/jobs/'+encodeURIComponent(id)+'/steps');if(!r.ok||!currentJob||currentJob.id!==id)return;currentJob.steps=(await r.json()).steps;renderSteps(false)}
+let stepT=null;const _fetch=window.fetch.bind(window);window.fetch=async(u,o)=>{const r=await _fetch(u,o);try{const m=((o&&o.method)||'GET').toUpperCase(),s=String(u);
+if(m!=='GET'&&currentJob&&(s.startsWith('/api/jobs/'+encodeURIComponent(currentJob.id)+'/')||s.startsWith('/api/jobs/'+currentJob.id+'/'))){clearTimeout(stepT);stepT=setTimeout(refreshSteps,400)}}catch(e){}return r};
 function renderClock(){const c=currentJob.clock||{},b=document.getElementById('clk-btn'),i=document.getElementById('clk-info');if(!b)return;b.disabled=false;
 b.textContent=c.open?'Clock Out':'Clock In';b.className='big-btn '+(c.open?'stop':'green');let h='';
 if(c.open)h+='<b>Clocked in '+esc(c.in_local)+'</b>'+(c.in_dist?'<br>'+esc(c.in_dist):'')+(c.in_flag?'<br><b style="color:#b00020">'+esc(c.in_flag)+'</b>':'');
@@ -1077,7 +1097,7 @@ L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
 document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementById('markup'));document.getElementById('mk-title').textContent=sv?'4. Devices and Map':'Plan and Devices';
-document.getElementById('log-title').textContent={Survey:'Notes',Service:'Problem & What Was Done','Office Task':'Notes'}[t]||'Notes & Updates';
+document.getElementById('log-title').textContent={Survey:'Notes',Service:'Problem & What Was Done','Office Task':'Notes'}[t]||'Notes & Updates';renderSteps(true);
 document.getElementById('mat-title').textContent=t==='Service'?'Parts Used':'Materials';document.getElementById('mat-new').placeholder=t==='Service'?'Add part (e.g. 1x 4TB hard drive)':'Add material (e.g. 2x Maglock)';
 document.getElementById('mat-legacy').textContent=currentJob.materials?'Earlier note: '+currentJob.materials:'';
 document.getElementById('punch-wrap').classList.toggle('hidden',t==='Office Task'||t==='Survey');
@@ -1088,7 +1108,7 @@ async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
-renderPhotos();renderBlueprints();renderHelp();renderClock();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
+guided=true;renderPhotos();renderBlueprints();renderHelp();renderClock();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -1108,7 +1128,7 @@ fd.append('materials',currentJob.materials||'');
 fd.append('hours',document.getElementById('hours').value||0);fd.append('miles',0);
 fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signature',canvas.toDataURL());
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
-if(r.ok){const d=await r.json().catch(()=>({}));alert(currentJob.job_type==='Office Task'?'Task done':d.status==='review'?'Job finished. The office will review it.':'Job finished');showList()}else alert('Error')};
+if(r.ok){const d=await r.json().catch(()=>({}));alert(currentJob.job_type==='Office Task'?'Task done':d.status==='review'?'Job finished. The office will review it.':'Job finished');showList()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
 const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
@@ -1253,7 +1273,7 @@ def get_job(job_id):
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
         extra=hub_info(job_id,n,c); extra['labor']=job_labor(conn,row)
-    extra['clock']=clock_state(conn, job_id)
+    extra['clock']=clock_state(conn, job_id); extra['steps']=job_steps(conn, row)
     conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
@@ -1295,6 +1315,12 @@ def complete(job_id):
             items=json.loads(chk_raw)
             conn.execute('UPDATE jobs SET checklist=? WHERE id=?',(json.dumps([{'text':str(i.get('text',''))[:200],'done':bool(i.get('done'))} for i in items if isinstance(i,dict) and i.get('text')]),job_id))
         except Exception: pass
+    if needs_review(row) and not is_office():
+        cur=conn.execute('SELECT checklist FROM jobs WHERE id=?',(job_id,)).fetchone()['checklist']
+        left=sum(1 for i in parse_checklist(cur, row['job_type']) if not i['done'])
+        pics=job_photo_count(conn, job_id)+sum(1 for t in PHOTO_TYPES for f in request.files.getlist(t) if f and f.filename)
+        why=done_block(left, pics)
+        if why: conn.close(); return jsonify({'error':why}),400
     if row['job_type']=='Survey':
         conn.execute('UPDATE jobs SET status=?,notes=?,completed_at=? WHERE id=?',('completed',notes,now,job_id))
         conn.execute('UPDATE jobs SET kelly_at=?,kelly_by=? WHERE id=?',(now_local_str(),me(),job_id))
@@ -3039,6 +3065,81 @@ def safety_topic_delete(tid):
     if not is_office(): return ('',403)
     conn=get_db(); conn.execute('DELETE FROM safety_topics WHERE id=?',(tid,)); conn.commit(); conn.close()
     return redirect('/safety')
+
+def job_photo_count(conn, job_id, types=('before','during','after')):
+    return conn.execute('SELECT COUNT(*) FROM photos WHERE job_id=? AND photo_type IN (%s)' % ','.join('?'*len(types)),(job_id,)+tuple(types)).fetchone()[0]
+
+def done_block(left, pics):
+    if left: return 'Finish the checklist first (%d left)' % left
+    if not pics: return 'Add at least one photo first'
+    return ''
+
+def step(label, done, go=None, href=None, why=''):
+    return {'label':label,'done':bool(done),'go':go or [],'href':href,'why':'' if done else why}
+
+def job_steps(conn, row):
+    jid=row['id']; t=row['job_type'] or 'Install'; st=row['status'] or 'assigned'; day=today_local().isoformat(); who=ckey(me())
+    q=lambda sql,*a: conn.execute(sql,a).fetchone()[0]
+    left=sum(1 for i in parse_checklist(row['checklist'], row['job_type']) if not i['done'])
+    notes=bool((row['notes'] or '').strip()) or q('SELECT COUNT(*) FROM job_updates WHERE job_id=?',jid)>0
+    started=st in ('in_progress','review','completed')
+    finished=st in ('review','completed') if needs_review(row) else st=='completed'
+    enc=urllib.parse.quote(jid, safe='')
+    if t=='Office Task':
+        return [step('Checklist', not left, ['check'], why='%d checklist items left' % left if left else ''),
+                step('Notes', notes, ['log']),
+                step('Done', st=='completed', ['check'] if left else ['finish'], why='Finish the checklist first (%d left)' % left if left else '')]
+    if is_office():
+        sched=bool(row['scheduled_date'] and ckey(row['tech']))
+        if t=='Survey':
+            return [step('Schedule and Assign Sub', sched, href='/schedule'),
+                    step('Survey Done', st=='completed', ['survey'], why='' if st=='completed' else 'Waiting on the sub to finish the survey'),
+                    step('Estimate (Kelly)', row['kelly_at'], ['survey'], why='Finish the survey first' if st!='completed' else 'Waiting on Kelly'),
+                    step('Client Approves', row['hub_approved_at'], ['hub'], why='Send the client link for approval')]
+        cust=ckey(row['customer']); addr=(row['address'] or '').strip().lower()
+        sv=conn.execute("SELECT status,kelly_at FROM jobs WHERE job_type='Survey' AND id!=? AND ((?!='' AND LOWER(TRIM(IFNULL(customer,'')))=?) OR (?!='' AND LOWER(TRIM(IFNULL(address,'')))=?))",(jid,cust,cust,addr,addr)).fetchall()
+        sv_done=any(r['status']=='completed' for r in sv) or bool(conn.execute("SELECT 1 FROM photos WHERE job_id=? AND photo_type='plan'",(jid,)).fetchone())
+        draft=conn.execute('SELECT 1 FROM invoice_drafts WHERE job_id=?',(jid,)).fetchone()
+        punched=conn.execute('SELECT 1 FROM time_punches WHERE job_id=?',(jid,)).fetchone()
+        return [step('Survey', sv_done, ['ab'], why='No finished survey for this client yet'),
+                step('Estimate (Kelly)', any(r['kelly_at'] for r in sv), ['links'], why='Finish the survey first' if not sv_done else 'Waiting on Kelly'),
+                step('Client Approves', row['hub_approved_at'], ['hub'], why='Send the client link for approval'),
+                step('Schedule and Assign Sub', sched, href='/schedule'),
+                step('Work in Progress', started or punched, ['status'], why='Waiting on the sub to start'),
+                step('Review', st=='completed', ['review'], why='' if st=='review' else 'Waiting on the sub to finish'),
+                step('Invoice Draft', draft, ['review'], why='Approve the job in Review first' if st!='completed' else 'No invoice draft yet'),
+                step('Done and Archived', st=='completed' and draft and row['sale_amount'] is not None, ['time'], why='Enter the invoice amount' if st=='completed' else 'Approve the job first')]
+    omw=conn.execute("SELECT 1 FROM msg_drafts WHERE job_id=? AND kind='onmyway' AND ref_date=?",(jid,day)).fetchone()
+    pun=[p for p in conn.execute('SELECT in_at,out_at FROM time_punches WHERE job_id=? AND sub=?',(jid,who)).fetchall() if utc_to_local(p['in_at'],'%Y-%m-%d')==day]
+    is_in=any(p['out_at'] is None for p in pun); ins=bool(pun)
+    clk_out=ins and not is_in
+    if t=='Survey':
+        sv=clean_survey(row['survey_form']); filled=any(v for k,v in sv.items() if k!='obstacles' and isinstance(v,str))
+        pics=job_photo_count(conn, jid, ('survey',))
+        return [step('On My Way', omw or ins or started or finished, ['omw']),
+                step('Clock In', ins or finished, ['clock']),
+                step('Fill Survey', filled, ['survey']),
+                step('Photos', pics, ['survey'], why='Add at least one photo'),
+                step('Clock Out', clk_out or (finished and not is_in), ['clock'], why='Clock in first' if not ins else ''),
+                step('Finish Survey', finished, ['clock'] if is_in else ['finish'], why='Clock out first' if is_in else '')]
+    pics=job_photo_count(conn, jid)
+    safety=conn.execute("SELECT 1 FROM safety_forms WHERE job_id=? AND kind='daily' AND form_date=?",(jid,day)).fetchone()
+    dlog=conn.execute('SELECT 1 FROM daily_logs WHERE job_id=? AND log_date=?',(jid,day)).fetchone()
+    why_done='Clock out first' if is_in else done_block(left, pics)
+    return [step('On My Way', omw or ins or started or finished, ['omw']),
+            step('Clock In', ins or finished, ['clock']),
+            step('Safety Check', safety or finished, href='/job/%s/safety' % enc),
+            step('Checklist', not left, ['check'], why='%d checklist items left' % left if left else ''),
+            step('Photos and Notes', pics and notes, ['photos','log'], why='Add a photo' if not pics else 'Add a note'),
+            step('Daily Log', dlog or finished, href='/job/%s/daily' % enc),
+            step('Clock Out', clk_out or (finished and not is_in), ['clock'], why='Clock in first' if not ins else ''),
+            step('Mark Done', finished, ['clock'] if is_in else ['check'] if left else ['photos'] if not pics else ['sig','finish'], why=why_done)]
+
+@app.route('/api/jobs/<job_id>/steps')
+def job_steps_api(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    out=job_steps(conn, row); conn.close(); return jsonify({'steps':out})
 
 @app.route('/to-order')
 def to_order():
