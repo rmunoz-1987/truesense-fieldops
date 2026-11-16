@@ -1776,7 +1776,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 
 def ckey(name): return (name or '').strip().lower()
 
-SUB_DOCS = [('insurance', 'Insurance'), ('license', 'License')]
+SUB_DOCS = [('insurance', 'Insurance')]  # license rows stay in the DB but are hidden
 def sub_names(conn):
     n=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
     for r in conn.execute("SELECT DISTINCT TRIM(tech) t FROM jobs WHERE status!='completed' AND IFNULL(TRIM(tech),'')!=''").fetchall():
@@ -1786,7 +1786,7 @@ def doc_alerts(conn):
     soon=(today_local()+timedelta(days=30)).isoformat(); t=today_local().isoformat(); out=[]
     names={x.lower() for x in sub_names(conn)}
     for r in conn.execute("SELECT * FROM sub_docs WHERE IFNULL(expires,'')!='' AND expires<=? ORDER BY expires",(soon,)).fetchall():
-        if r['sub'] in names: out.append({'sub':r['sub'].title(),'kind':dict(SUB_DOCS).get(r['kind'],r['kind']),'expires':r['expires'],'expired':r['expires']<t,'missing':False})
+        if r['sub'] in names and r['kind'] in dict(SUB_DOCS): out.append({'sub':r['sub'].title(),'kind':dict(SUB_DOCS)[r['kind']],'expires':r['expires'],'expired':r['expires']<t,'missing':False})
     have={(r['sub'],r['kind']) for r in conn.execute("SELECT sub,kind FROM sub_docs WHERE IFNULL(filename,'')!=''").fetchall()}
     for n in sub_names(conn):
         for k,l in SUB_DOCS:
