@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
 import re, sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request, urllib.parse, math, time
 from datetime import timedelta
+try:
+    from zoneinfo import ZoneInfo
+except Exception: ZoneInfo=None
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
@@ -400,7 +403,7 @@ body.office.view-jobs .tile b{font-size:1rem;display:inline}
 .fo-veil{position:fixed;inset:0;background:rgba(20,21,14,.38);z-index:70;opacity:0;pointer-events:none;transition:opacity .2s}
 .fo-veil.on{opacity:1;pointer-events:auto}
 .fo-sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:#fff;border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 30px rgba(0,0,0,.15);max-width:640px;margin:0 auto}
-.fo-sheet.on{transform:none}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
+.fo-sheet{visibility:hidden}.fo-sheet.on{transform:none;visibility:visible}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
 .fo-sheet h3{margin:4px 0 10px;font-size:1.1rem}.fo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .fo-tile{display:flex;align-items:center;gap:10px;padding:16px 14px;border-radius:14px;background:var(--soft);border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:700;font-size:1rem;min-height:60px;text-align:left;width:100%;font-family:inherit}
 .fo-tile svg{flex:0 0 24px;color:var(--brand)}
@@ -418,6 +421,26 @@ html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var
 .fo-card svg{color:var(--brand)}.fo-card b{display:block;font-size:1.08rem;margin-top:8px}.fo-card small{display:block;color:var(--muted);margin-top:2px;font-size:.86rem}
 .fo-skel{background:linear-gradient(90deg,#f0efe8 0,#faf9f4 40%,#f0efe8 80%);background-size:200% 100%;animation:fo-shim 1.2s linear infinite;border-radius:12px}
 @keyframes fo-shim{to{background-position:-200% 0}}
+.fo-hello h1{font-size:1.6rem;margin:2px 0 2px;letter-spacing:-.3px}.fo-hello{margin-bottom:12px}
+.fo-prog{margin:0 0 14px}.fo-bar{display:flex;height:12px;border-radius:12px;background:#eeede4;overflow:hidden}.fo-bar i{display:block;height:100%;transition:width .6s ease}
+.fo-legend{display:flex;gap:16px;margin-top:6px;color:var(--muted);font-size:.9rem}.fo-legend b{color:var(--ink)}
+.fo-kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px}
+.fo-kpi{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px;text-decoration:none;color:var(--ink);min-height:108px;position:relative;overflow:hidden}
+.fo-kpi small{display:block;color:var(--muted);font-weight:650;font-size:.85rem}.fo-kpi b{display:block;font-size:1.9rem;letter-spacing:-.5px;margin-top:4px;line-height:1.1}
+.fo-kpi.hot b{color:#b3261e}.fo-cap{display:block;font-style:normal;color:var(--muted);font-size:.72rem;margin-top:2px}.fo-spark{display:block;width:100%;height:30px;margin-top:6px}
+.fo-h{font-size:1.1rem!important;color:var(--ink)!important;border:0!important;margin:22px 0 10px!important;letter-spacing:-.2px}
+.fo-act{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:12px;margin-bottom:10px;color:var(--ink);text-decoration:none;min-height:64px}
+.fo-ai{flex:0 0 42px;height:42px;border-radius:12px;background:var(--soft);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:1.3rem}
+.fo-act.red .fo-ai{background:#fdecea;color:#b3261e}.fo-act.ok .fo-ai{background:#e8f5e9;color:#2e7d32}
+.fo-at{flex:1;min-width:0}.fo-at b{display:block}.fo-at em{font-style:normal;background:var(--ink);color:#fff;border-radius:10px;padding:0 8px;font-size:.8rem;margin-left:4px;vertical-align:2px}
+.fo-act.red .fo-at em{background:#b3261e}.fo-at small{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fo-ab{flex:0 0 auto;background:linear-gradient(145deg,var(--gold),var(--brand));color:#fff;font-weight:700;border-radius:12px;padding:10px 14px;min-width:72px;text-align:center}
+#fo-map{height:240px;border-radius:var(--r);overflow:hidden;margin-bottom:10px;border:1px solid var(--line)}
+.fo-row{padding:12px 4px;border-bottom:1px solid var(--line);cursor:pointer}.fo-row:last-child{border-bottom:0}
+.fo-pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32;margin-right:8px;box-shadow:0 0 0 0 rgba(46,125,50,.5);animation:fo-pl 1.8s infinite}
+@keyframes fo-pl{70%{box-shadow:0 0 0 10px rgba(46,125,50,0)}100%{box-shadow:0 0 0 0 rgba(46,125,50,0)}}
+@media(min-width:900px){.fo-kpis{grid-template-columns:repeat(4,1fr)}#today{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}#today>.fo-hello,#today>.fo-prog,#today>.fo-kpis{grid-column:1/-1}}
+
 @keyframes fo-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 html.fo-shell body>*:not(.fo-sh){animation:fo-in .28s ease both}
 /* desktop: left rail */
@@ -583,6 +606,66 @@ def utc_day(iso):
         d=datetime.fromisoformat(str(iso).replace('Z','')[:26])
         return d.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Chicago')).date().isoformat()
     except Exception: return str(iso)[:10]
+
+# ---------- Today dashboard ----------
+def week_start(d): return d-timedelta(days=d.weekday())
+@app.route('/api/today')
+def api_today():
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); t=today_local(); ti=t.isoformat(); mo=ti[:7]
+    try: make_reminders(conn)
+    except Exception: pass
+    open_rows=conn.execute("SELECT * FROM jobs WHERE status!='completed'").fetchall()
+    done_rows=conn.execute("SELECT id,job_type,sale_amount,completed_at,scheduled_date FROM jobs WHERE status='completed'").fetchall()
+    today=[job_dict(r) for r in open_rows if r['scheduled_date']==ti]
+    today.sort(key=lambda j:(j['status']!='in_progress', (j.get('tech') or '').lower()))
+    done_today=sum(1 for r in done_rows if r['scheduled_date']==ti or utc_day(r['completed_at'])==ti)
+    prog={'togo':sum(1 for j in today if j['status']!='in_progress'),'active':sum(1 for j in today if j['status']=='in_progress'),'done':done_today}
+    in_prog=[r for r in open_rows if r['status']=='in_progress']
+    review=[r for r in open_rows if r['status']=='review']
+    help_=[r for r in open_rows if r['help_flag']=='open']
+    sign=pending_countersign(conn)
+    queued={r['job_id']:r['status'] for r in conn.execute('SELECT job_id,status FROM qbo_queue')}
+    ready=[r for r in conn.execute("SELECT d.job_id,j.customer FROM invoice_drafts d JOIN jobs j ON j.id=d.job_id WHERE d.status='ready_for_review'") if r['job_id'] not in queued]
+    follow=conn.execute("SELECT COUNT(*) FROM followups WHERE done=0 AND due<=?",(ti,)).fetchone()[0]
+    texts=conn.execute("SELECT COUNT(*) FROM msg_drafts WHERE status='pending'").fetchone()[0]
+    docs=doc_alerts(conn); low=low_stock(conn)
+    qq=sum(1 for v in queued.values() if v=='queued'); qerr=sum(1 for v in queued.values() if v=='error')
+    def one(rows, label):
+        return {'href':'/?job='+urllib.parse.quote(rows[0]['id']),'btn':'Open'} if len(rows)==1 else {'href':'/jobs?f='+label,'btn':'Show'}
+    acts=[]
+    def add(n,title,detail,icon,href,btn,tone=''):
+        if n: acts.append({'n':n,'title':title,'detail':detail,'icon':ICONS[icon],'href':href,'btn':btn,'tone':tone})
+    if help_: add(len(help_),'Sub needs help',', '.join((r['customer'] or r['id']) for r in help_[:3]),'alert',one(help_,'help')['href'],'Help','red')
+    add(len(sign),'Needs your signature',', '.join(nice_name(r['sub']) for r in sign[:3])+' signed the agreement','pen','/agreement#pending','Sign','red')
+    if review: o=one(review,'review'); add(len(review),'Needs review',', '.join((r['customer'] or r['id']) for r in review[:3]),'check',o['href'],'Review')
+    add(len(ready),'Ready to invoice',', '.join((r['customer'] or r['job_id']) for r in ready[:3]),'money','/qbo','Export')
+    add(follow,'Follow-ups due','Calls to make today','bell','/jobs?f=follow','Call list')
+    add(texts,'Texts to review','Drafts waiting for your OK. Nothing sends on its own.','note','/jobs?f=texts','Review')
+    add(len(docs),'Sub docs due',', '.join('%s %s'%(d['sub'],'missing' if d['missing'] else ('expired' if d['expired'] else 'expires '+d['expires'])) for d in docs[:3]),'doc','/techs','Check')
+    add(len(low),'Low stock',', '.join(r['name'] for r in low[:3]),'box','/stock','Restock')
+    add(qq+qerr,'QuickBooks queue','%d waiting%s'%(qq,', %d failed'%qerr if qerr else ''),'qbo','/qbo','Open','red' if qerr else '')
+    # sparklines: last 8 weeks, completed jobs and sales
+    ws=week_start(t); weeks=[(ws-timedelta(weeks=7-i)).isoformat() for i in range(8)]
+    sj=[0]*8; sm=[0.0]*8; month=0.0
+    for r in done_rows:
+        d=utc_day(r['completed_at'])
+        if not d: continue
+        if d[:7]==mo: month+=fnum(r['sale_amount'])
+        try: w=week_start(datetime.strptime(d,'%Y-%m-%d').date()).isoformat()
+        except ValueError: continue
+        if w in weeks: i=weeks.index(w); sj[i]+=1; sm[i]+=fnum(r['sale_amount'])
+    live=[]
+    for p in conn.execute("SELECT p.*,j.customer,j.title,j.address FROM time_punches p LEFT JOIN jobs j ON j.id=p.job_id WHERE p.out_at IS NULL ORDER BY p.in_at DESC").fetchall():
+        live.append({'sub':nice_name(p['sub']),'job':p['job_id'],'customer':p['customer'] or '','title':p['title'] or '','address':p['address'] or '','lat':p['in_lat'],'lng':p['in_lng'],'since':p['in_at'],'flag':p['in_flag'] or ''})
+    feed=[{'job':r['job_id'],'author':r['author'] or '','note':(r['note'] or '')[:140],'at':r['created_at'] or '','customer':r['customer'] or ''} for r in
+          conn.execute('SELECT u.*,j.customer FROM job_updates u LEFT JOIN jobs j ON j.id=u.job_id ORDER BY u.id DESC LIMIT 8')]
+    conn.close()
+    hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
+    return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
+        'today':today,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm},
+        'actions':acts,'live':live,'feed':feed})
+# ---------- end Today ----------
 
 @app.route('/healthz')
 def healthz(): return 'ok'
@@ -1022,7 +1105,16 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
+{% if office and view=='today' %}<div id="today">
+<div class="fo-hello"><h1 id="fo-hello">{{ 'Hello' }}, {{ name }}</h1><div class="muted" id="fo-hello2">Loading your day...</div></div>
+<div class="fo-prog" id="fo-prog"><div class="fo-skel" style="height:14px"></div></div>
+<div class="fo-kpis" id="fo-kpis">{% for i in range(4) %}<div class="fo-kpi fo-skel" style="height:108px;border:0"></div>{% endfor %}</div>
+<section><h2 class="fo-h">Needs you</h2><div id="fo-acts">{% for i in range(3) %}<div class="fo-skel" style="height:68px;margin-bottom:10px"></div>{% endfor %}</div>
+<h2 class="fo-h">Today's jobs</h2><div id="fo-tjobs"><div class="fo-skel" style="height:96px"></div></div></section>
+<section><h2 class="fo-h">Subs on the clock</h2><div id="fo-live"></div>
+<h2 class="fo-h">Recent activity</h2><div id="fo-feed"></div></section>
+</div>{% endif %}
+<div class="tiles"{% if view=='today' %} style="display:none"{% endif %}><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
@@ -1041,7 +1133,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
 <textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
 <button class="big-btn" onclick="addJob()">Add Job</button><button class="big-btn gray" onclick="toggleNew()">Cancel</button></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
-<div id="list"></div>
+<div id="list"{% if office and view=='today' %} class="hidden"{% endif %}></div>
 {% if office %}</main>{% endif %}</div>
 <div id="toast" class="hidden"></div>
 <div id="detail" class="hidden">
@@ -1168,6 +1260,26 @@ const OFFICE={{ office|tojson }};const VIEW={{ view|tojson }};let F=new URLSearc
 const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div>${j.company?'<div style="color:#666">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div>${j.company?'<div class="muted">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
+const $id=x=>document.getElementById(x);
+function spark(a,money){const w=120,h=34,m=Math.max(...a,1),n=a.length-1;const pts=a.map((v,i)=>[(i*w/n).toFixed(1),(h-3-(v/m)*(h-6)).toFixed(1)]);
+return '<svg class="fo-spark" viewBox="0 0 '+w+' '+h+'" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,'+h+' '+pts.map(p=>p.join(',')).join(' ')+' '+w+','+h+'" fill="rgba(186,162,5,.16)"/><polyline points="'+pts.map(p=>p.join(',')).join(' ')+'" fill="none" stroke="#7a7a12" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/></svg>'}
+function fwhen(s){if(!s)return'';const d=new Date(/Z|[+-]\d\d:?\d\d$/.test(s)||!/T/.test(s)?s:s+'Z');if(isNaN(d))return s;const t=new Date();const same=d.toDateString()===t.toDateString();return (same?'':d.toLocaleDateString([], {month:'short',day:'numeric'})+' ')+d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})}
+let liveMap=null;
+async function loadToday(){let d;try{d=await (await fetch('/api/today')).json()}catch(e){return}
+$id('fo-hello').textContent=d.hello+', '+d.name;const n=d.kpi.today;$id('fo-hello2').textContent=n?'You have '+n+' job'+(n===1?'':'s')+' today.':'No jobs on the schedule today.';
+const p=d.prog,tot=p.togo+p.active+p.done||1;
+$id('fo-prog').innerHTML='<div class="fo-bar"><i style="width:'+(p.done/tot*100)+'%;background:#2e7d32"></i><i style="width:'+(p.active/tot*100)+'%;background:var(--gold)"></i></div><div class="fo-legend"><span><b>'+p.togo+'</b> to go</span><span><b>'+p.active+'</b> active</span><span><b>'+p.done+'</b> done</span></div>';
+const k=d.kpi;$id('fo-kpis').innerHTML=[['/jobs?f=today','Jobs today',k.today,spark(k.spark_jobs)+'<i class="fo-cap">Jobs done, 8 weeks</i>'],['/jobs?f=progress','In progress',k.progress,''],['#fo-acts','Waiting on you',k.waiting,''],['/money','Money in '+k.month,k.money,spark(k.spark_money)+'<i class="fo-cap">Sales, 8 weeks</i>']]
+.map(x=>'<a class="fo-kpi'+(x[1]==='Waiting on you'&&x[2]?' hot':'')+'" href="'+x[0]+'"><small>'+esc(x[1])+'</small><b>'+esc(String(x[2]))+'</b>'+x[3]+'</a>').join('');
+$id('fo-acts').innerHTML=d.actions.length?d.actions.map(a=>'<a class="fo-act '+a.tone+'" href="'+esc(a.href)+'"><span class="fo-ai">'+a.icon+'</span><span class="fo-at"><b>'+esc(a.title)+' <em>'+a.n+'</em></b><small>'+esc(a.detail)+'</small></span><span class="fo-ab">'+esc(a.btn)+'</span></a>').join(''):'<div class="fo-act ok"><span class="fo-ai">&#10003;</span><span class="fo-at"><b>All caught up</b><small>Nothing needs you right now.</small></span></div>';
+$id('fo-tjobs').innerHTML=d.today.length?d.today.map(dcard).join(''):'<div class="muted">Nothing scheduled today. Tap + to add a job.</div>';
+const lv=d.live.filter(x=>x.lat!=null&&x.lng!=null);
+$id('fo-live').innerHTML=(d.live.length?(lv.length?'<div id="fo-map"></div>':'')+d.live.map(x=>'<div class="fo-row" data-id="'+esc(x.job)+'" onclick="openJob(this.dataset.id)"><span class="fo-pulse"></span><b>'+esc(x.sub)+'</b> <span class="muted">at '+esc(x.customer||x.title)+' since '+esc(fwhen(x.since))+(x.lat==null?' (no GPS)':'')+'</span></div>').join(''):'<div class="muted">No one is clocked in right now.</div>');
+if(lv.length&&await loadLeaflet()){if(liveMap){liveMap.remove();liveMap=null}liveMap=L.map('fo-map',{zoomControl:false,attributionControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(liveMap);
+const b=[];lv.forEach(x=>{L.circleMarker([x.lat,x.lng],{radius:9,color:'#fff',weight:3,fillColor:'#7a7a12',fillOpacity:1}).addTo(liveMap).bindTooltip(x.sub,{permanent:true,direction:'top',offset:[0,-8]});b.push([x.lat,x.lng])});
+if(b.length===1)liveMap.setView(b[0],14);else liveMap.fitBounds(b,{padding:[30,30]})}
+$id('fo-feed').innerHTML=d.feed.length?d.feed.map(f=>'<div class="fo-row" data-id="'+esc(f.job)+'" onclick="openJob(this.dataset.id)"><b>'+esc(f.author)+'</b> <span class="muted">'+esc(f.customer||f.job)+' &middot; '+esc(fwhen(f.at))+'</span><div>'+esc(f.note)+'</div></div>').join(''):'<div class="muted">No activity yet.</div>'}
+
 const TPLS={{ tpls|tojson }};
 function tplOpts(){const t=document.getElementById('n-type').value,s=document.getElementById('n-tpl');if(!s)return;s.innerHTML='';const o=new Option('Checklist: none (type your own below)','');s.add(o);
 TPLS.filter(x=>!x.job_type||x.job_type===t).forEach(x=>s.add(new Option('Checklist: '+x.name,String(x.id))));
@@ -1189,7 +1301,7 @@ if(c){if(!n('address').value)n('address').value=c.address;if(!n('phone').value)n
 function goSearch(){const q=(document.getElementById('q').value||'').trim();if(q.length>1)location.href='/search?q='+encodeURIComponent(q);else{document.getElementById('q').value='';load()}}
 function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){quickFill();o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
-if(OFFICE&&!q)return loadDash();
+if(OFFICE&&!q)return VIEW==='today'?loadToday():loadDash();
 const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
