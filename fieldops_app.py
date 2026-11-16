@@ -259,6 +259,8 @@ def init_db():
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS job_updates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, author TEXT, note TEXT, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
         job_id TEXT PRIMARY KEY, package TEXT, status TEXT DEFAULT 'ready_for_review', created_at TEXT)''')
     count = conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
@@ -331,7 +333,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
@@ -341,7 +343,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="text" id="n-address" placeholder="Address">
 <input type="tel" id="n-phone" placeholder="Customer phone">
 <select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% else %}<option value="">No techs set in Render</option>{% endfor %}</select>
-<select id="n-type" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+<select id="n-type" onchange="tplOpts()" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for t in job_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}</select>
+<select id="n-tpl" onchange="tplPick()" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff"></select>
 <textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
 <div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
 <textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
@@ -450,7 +453,11 @@ const OFFICE={{ office|tojson }};let F='';
 const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div><button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div><div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
-function toggleNew(){const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
+const TPLS={{ tpls|tojson }};
+function tplOpts(){const t=document.getElementById('n-type').value,s=document.getElementById('n-tpl');if(!s)return;s.innerHTML='';const o=new Option('Checklist: none (type your own below)','');s.add(o);
+TPLS.filter(x=>!x.job_type||x.job_type===t).forEach(x=>s.add(new Option('Checklist: '+x.name,String(x.id))))}
+function tplPick(){const id=document.getElementById('n-tpl').value;const x=TPLS.find(k=>String(k.id)===id);if(x)document.getElementById('n-checklist').value=x.items.join('\\n')}
+function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
 if(OFFICE&&!q)return loadDash();
 const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=assigned');const jobs=await r.json();
@@ -731,7 +738,10 @@ const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 @app.route('/')
 def index():
     techs=[(k.title(),k.title()) for k in sorted(USERS) if k not in OFFICE_NAMES]+[(k.title(),k.title()+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
-    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES)
+    tpls=[]
+    if is_office():
+        conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
+    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -1465,6 +1475,45 @@ TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 {% for t, jobs in techs %}<h3>{{ t }} &middot; {{ jobs|length }} open job{{ '' if jobs|length == 1 else 's' }}</h3>
 {% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.customer or j.title }}</b></a>{% if j.help_open %} <span style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.title }} &middot; {{ j.scheduled_date or 'No date' }} &middot; {{ j.status_label }}</div></div>{% else %}<div class="job muted">No open jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
+
+CHK_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Checklists</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:480px;margin:auto;padding:12px}
+.job{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin-bottom:10px}.muted{color:#666}h2{color:#a49f2a;margin:8px 0}
+.btn{display:block;width:100%;background:#f0f0f0;color:#111;padding:14px;border:0;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;font-size:1rem;margin:8px 0}
+.go{background:#a49f2a;color:#fff}.red{background:#b00020;color:#fff}input,select,textarea{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin:6px 0;font-size:1rem;background:#fff}summary{font-weight:700;font-size:1.1rem;padding:4px 0}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<h2>Checklists</h2><a class="btn" href="/">Back to Jobs</a><div class="muted">Pick one of these when you add a job to fill its checklist.</div>
+{% macro tform(t) %}<form method="post" action="/checklists/save"><input type="hidden" name="id" value="{{ t.id if t else '' }}"><input name="name" placeholder="Name (e.g. Camera install)" value="{{ t.name if t else '' }}" required>
+<select name="job_type"><option value="">Any job type</option>{% for jt in job_types %}<option value="{{ jt }}"{% if t and t.job_type == jt %} selected{% endif %}>{{ jt }}</option>{% endfor %}</select>
+<textarea name="items" rows="6" placeholder="One item per line" required>{{ t['items']|join('\n') if t else '' }}</textarea><button class="btn go" type="submit">Save Checklist</button></form>{% endmacro %}
+<details class="job"{% if not tpls %} open{% endif %}><summary>+ New Checklist</summary>{{ tform(none) }}</details>
+{% for t in tpls %}<details class="job"><summary>{{ t.name }} <span class="muted" style="font-weight:400">({{ t.job_type or 'Any type' }}, {{ t['items']|length }} items)</span></summary>{{ tform(t) }}
+<form method="post" action="/checklists/delete" onsubmit="return confirm('Delete this checklist? Jobs already made keep their items.')"><input type="hidden" name="id" value="{{ t.id }}"><button class="btn red" type="submit">Delete</button></form></details>
+{% endfor %}</body></html>'''
+
+@app.route('/checklists')
+def checklists_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
+    return render_template_string(CHK_HTML, tpls=tpls, job_types=JOB_TYPES)
+
+@app.route('/checklists/save', methods=['POST'])
+def checklists_save():
+    if not is_office(): return ('',403)
+    name=(request.form.get('name') or '').strip()[:100]; jt=request.form.get('job_type') or ''; jt=jt if jt in JOB_TYPES else ''
+    items=[x.strip()[:200] for x in (request.form.get('items') or '').splitlines() if x.strip()][:100]
+    if not name or not items: return redirect('/checklists')
+    conn=get_db(); tid=request.form.get('id') or ''
+    if tid.isdigit(): conn.execute('UPDATE checklist_templates SET name=?,job_type=?,items=? WHERE id=?',(name,jt,json.dumps(items),int(tid)))
+    else: conn.execute('INSERT INTO checklist_templates (name,job_type,items,created_at) VALUES (?,?,?,?)',(name,jt,json.dumps(items),datetime.utcnow().isoformat()))
+    conn.commit(); conn.close(); return redirect('/checklists')
+
+@app.route('/checklists/delete', methods=['POST'])
+def checklists_delete():
+    if not is_office(): return ('',403)
+    tid=request.form.get('id') or ''
+    if tid.isdigit(): conn=get_db(); conn.execute('DELETE FROM checklist_templates WHERE id=?',(int(tid),)); conn.commit(); conn.close()
+    return redirect('/checklists')
 
 @app.route('/techs')
 def techs_page():
