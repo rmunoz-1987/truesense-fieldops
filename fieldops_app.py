@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
-import sqlite3, os, uuid, hmac, hashlib, json, threading, urllib.request
+import sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request
 from datetime import timedelta
 from datetime import datetime
 from werkzeug.utils import secure_filename
@@ -78,7 +78,9 @@ def parse_devices(raw):
         except (TypeError, ValueError): continue
         out.append({'id': secure_filename(str(i.get('id') or ''))[:20], 'plan': secure_filename(str(i.get('plan') or '')), 'type': i['type'],
                     'label': str(i.get('label') or '')[:10], 'x': round(x, 2), 'y': round(y, 2), 'note': str(i.get('note') or '').strip()[:500],
-                    'height': str(i.get('height') or '').strip()[:50], 'cable': str(i.get('cable') or '').strip()[:100]})
+                    'height': str(i.get('height') or '').strip()[:50], 'cable': str(i.get('cable') or '').strip()[:100],
+                    'installed': bool(i.get('installed')), 'mac': str(i.get('mac') or '').strip()[:60], 'ip': str(i.get('ip') or '').strip()[:45],
+                    'port': str(i.get('port') or '').strip()[:40], 'clabel': str(i.get('clabel') or '').strip()[:60], 'photo': secure_filename(str(i.get('photo') or ''))[:100]})
     return out
 
 def number_devices(devs):
@@ -256,6 +258,9 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
 .plan{position:relative;margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}.plan img{width:100%;height:auto;display:block}
 .pin{position:absolute;transform:translate(-50%,-50%);min-width:32px;padding:0 4px;height:32px;line-height:28px;font-size:.85rem;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box}.pin.sel{outline:3px solid #111}
+#sk{position:fixed;inset:0;background:#fff;z-index:50;overflow:auto;padding:10px}#sk.hidden{display:none}
+.sk-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px}.sk-tools button{padding:14px 2px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}.sk-tools button.on{border-color:var(--text);background:#fbfaf0}
+
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body{% if office %} class="office"{% endif %}>
 <div class="header">
@@ -307,15 +312,18 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle" style="font-size:1.2rem">3. Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
 <div class="ptitle" style="font-size:1.2rem">4. Obstacles</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
 <textarea id="sv-obstacle_notes" rows="3" placeholder="Other obstacles / notes"></textarea>
-<div class="ptitle" style="font-size:1.2rem">5. Floor Plan Devices</div><div class="big-btn" id="plan-add" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Area Photo</div>
+<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div>
 <div id="plans"></div>
 <div id="dev-edit" class="job hidden" style="border:2px solid var(--accent)"><div id="dv-title" style="font-weight:800;font-size:1.3rem"></div>
+<label class="chk ab-only" style="font-size:1.3rem;font-weight:700"><input type="checkbox" id="dv-installed"><span>Installed</span></label>
 <input type="text" id="dv-note" placeholder="Note (optional)"><input type="text" id="dv-height" placeholder="Mount height (optional)"><input type="text" id="dv-cable" placeholder="Cable run (optional)">
+<div class="ab-only"><input type="text" id="dv-mac" placeholder="MAC / serial (optional)"><input type="text" id="dv-ip" placeholder="IP address (optional)"><input type="text" id="dv-port" placeholder="Switch port (optional)"><input type="text" id="dv-clabel" placeholder="Cable label (optional)">
+<div id="dv-photo"></div><div class="big-btn gray" id="dv-photo-btn" onclick="document.getElementById('dv-photo-file').click()">Add Device Photo</div><input type="file" id="dv-photo-file" accept="image/*" capture="environment" style="display:none" onchange="devPhoto(this)"></div>
 <div id="dv-btns"><button class="big-btn" onclick="devSave()">Save</button><div class="row"><button class="big-btn gray" onclick="devMoveStart()">Move</button><button class="big-btn" style="background:#b00020" onclick="devDelete()">Delete</button></div></div>
 <button class="big-btn gray" onclick="devSel=null;renderDevices()">Close</button></div>
-<div id="dev-counts"></div>
+<div id="dev-counts"></div></div></div>
 <div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 <div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
@@ -326,6 +334,12 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="job hidden" id="bp-card"><div style="font-weight:600;margin-bottom:6px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div>
+<div class="job hidden" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div></div>
+<div id="sk" class="hidden"><div style="font-weight:800;font-size:1.3rem;text-align:center;margin-bottom:6px">Draw Plan</div>
+<div class="sk-tools"><button data-t="pen" onclick="skTool(this.dataset.t)">Draw</button><button data-t="line" onclick="skTool(this.dataset.t)">Line</button><button data-t="erase" onclick="skTool(this.dataset.t)">Eraser</button><button data-t="text" onclick="skTool(this.dataset.t)">Room Label</button><button onclick="skUndo()">Undo</button></div>
+<canvas id="sk-c" width="1200" height="900" style="height:auto;max-height:70vh;object-fit:contain;border:2px solid #ccc;border-style:solid"></canvas>
+<div id="sk-hint" class="muted" style="text-align:center;font-size:1.05rem"></div>
+<div class="row"><button class="big-btn gray" onclick="skClose()">Cancel</button><button class="big-btn green" onclick="skSave()">Save Plan</button></div></div>
 <div class="job ns"><div style="font-weight:600;margin-bottom:6px">Photos</div>
 <div class="row"><div class="big-btn" onclick="document.getElementById('before').click()">Before</div><div class="big-btn" onclick="document.getElementById('during').click()">During</div><div class="big-btn" onclick="document.getElementById('after').click()">After</div></div>
 <input type="file" id="before" accept="image/*" multiple capture="environment" style="display:none">
@@ -463,10 +477,11 @@ const SV_TEXT=['want_desc','contact_name','contact_phone','current_system','powe
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
 let svEditing=false;
 const DEVS={{ dev_types|tojson }};let devType='',devSel=null,devMove=null;
-function devLock(){return currentJob.status==='completed'&&!svEditing}
+function devLock(){return currentJob.job_type==='Survey'&&currentJob.status==='completed'&&!svEditing}
+function isAB(){return currentJob.job_type!=='Survey'}
 function devColor(t){const d=DEVS.find(x=>x[0]===t);return d?d[2]:'#333'}
 function devPrefix(t){const d=DEVS.find(x=>x[0]===t);return d?d[1]:'?'}
-function renderDevices(){if(!currentJob||currentJob.job_type!=='Survey')return;const lock=devLock();const plans=currentJob.plans||[];const devs=currentJob.devices=currentJob.devices||[];
+function renderDevices(){if(!currentJob||currentJob.job_type==='Office Task')return;const ab=isAB();const lock=devLock();const plans=currentJob.plans||[];const devs=currentJob.devices=currentJob.devices||[];
 if(lock){devType='';devMove=null}
 document.getElementById('plan-add').classList.toggle('hidden',lock);
 const pal=document.getElementById('dev-palette');pal.classList.toggle('hidden',lock||!plans.length);pal.innerHTML='';
@@ -474,24 +489,51 @@ DEVS.forEach(([n,p,c])=>{const b=document.createElement('button');b.className=de
 document.getElementById('dev-hint').textContent=lock||!plans.length?'':devMove?'Tap the new spot on the plan':devType?'Tap the plan to drop a '+devType:'Pick a device, then tap the plan';
 const w=document.getElementById('plans');w.innerHTML='';
 plans.forEach((fn,pi)=>{const box=document.createElement('div');box.className='plan';const img=document.createElement('img');img.src='/uploads/'+encodeURIComponent(fn);img.alt='floor plan';box.appendChild(img);
-devs.filter(d=>d.plan===fn).forEach(d=>{const pin=document.createElement('div');pin.className='pin'+(devSel===d.id?' sel':'');pin.style.left=d.x+'%';pin.style.top=d.y+'%';pin.style.background=devColor(d.type);pin.textContent=d.label||devPrefix(d.type);
+devs.filter(d=>d.plan===fn).forEach(d=>{const pin=document.createElement('div');pin.className='pin'+(devSel===d.id?' sel':'');pin.style.left=d.x+'%';pin.style.top=d.y+'%';pin.style.background=devColor(d.type);if(ab&&!d.installed){pin.style.background='#fff';pin.style.color=devColor(d.type);pin.style.borderColor=devColor(d.type)}pin.textContent=d.label||devPrefix(d.type);
 pin.onclick=e=>{e.stopPropagation();if(devMove)return planTap(e,fn,box);devSel=d.id;devType='';renderDevices();document.getElementById('dev-edit').scrollIntoView({behavior:'smooth',block:'center'})};box.appendChild(pin)});
 box.onclick=e=>planTap(e,fn,box);w.appendChild(box);
 if(!lock){const rb=document.createElement('button');rb.className='big-btn gray';rb.textContent='Remove Plan '+(pi+1);rb.onclick=()=>removePlan(fn);w.appendChild(rb)}});
 const d=devs.find(x=>x.id===devSel);const ed=document.getElementById('dev-edit');ed.classList.toggle('hidden',!d);
-if(d){document.getElementById('dv-title').textContent=d.label+' \u00b7 '+d.type;['note','height','cable'].forEach(k=>{const el=document.getElementById('dv-'+k);el.value=d[k]||'';el.disabled=lock});document.getElementById('dv-btns').classList.toggle('hidden',lock)}
+if(d){document.getElementById('dv-title').textContent=d.label+' \u00b7 '+d.type;['note','height','cable'].forEach(k=>{const el=document.getElementById('dv-'+k);el.value=d[k]||'';el.disabled=lock});document.getElementById('dv-btns').classList.toggle('hidden',lock);
+document.querySelectorAll('#dev-edit .ab-only').forEach(e=>e.classList.toggle('hidden',!ab));
+if(ab){['mac','ip','port','clabel'].forEach(k=>document.getElementById('dv-'+k).value=d[k]||'');document.getElementById('dv-installed').checked=!!d.installed;
+const ph=document.getElementById('dv-photo');ph.innerHTML='';if(d.photo){const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(d.photo);a.target='_blank';const i=document.createElement('img');i.src=a.href;i.style.cssText='width:120px;height:120px;object-fit:cover;border-radius:8px';a.appendChild(i);ph.appendChild(a)}
+document.getElementById('dv-photo-btn').textContent=d.photo?'Replace Device Photo':'Add Device Photo'}}
+const cp=document.getElementById('ab-copy');cp.innerHTML='';if(ab&&!lock&&!plans.length)(currentJob.survey_plan_sources||[]).forEach(x=>{const b=document.createElement('button');b.className='big-btn';b.style.background='#6a1b9a';b.textContent='Copy Survey Plan ('+x.id+')';b.onclick=()=>copyPlan(x.id);cp.appendChild(b)});
 const cnt={};devs.forEach(x=>cnt[x.type]=(cnt[x.type]||0)+1);const c=document.getElementById('dev-counts');c.innerHTML='';
-if(devs.length){const h=document.createElement('div');h.className='ptitle';h.textContent='Device Count ('+devs.length+' total)';c.appendChild(h);
-DEVS.forEach(([n,p,col])=>{if(!cnt[n])return;const r=document.createElement('div');r.style.cssText='font-size:1.15rem;padding:6px 0;border-bottom:1px solid #e5e5e5';const i=document.createElement('span');i.className='pin';i.style.cssText='position:static;transform:none;margin-right:8px;background:'+col;i.textContent=p;r.append(i,n+' x'+cnt[n]);c.appendChild(r)})}
+if(devs.length){const h=document.createElement('div');h.className='ptitle';h.textContent='Device Count ('+devs.length+' total'+(ab?', '+devs.filter(x=>x.installed).length+' installed':'')+')';c.appendChild(h);
+DEVS.forEach(([n,p,col])=>{if(!cnt[n])return;const r=document.createElement('div');r.style.cssText='font-size:1.15rem;padding:6px 0;border-bottom:1px solid #e5e5e5';const i=document.createElement('span');i.className='pin';i.style.cssText='position:static;transform:none;margin-right:8px;background:'+col;i.textContent=p;const inst=devs.filter(x=>x.type===n&&x.installed).length;r.append(i,n+' x'+cnt[n]+(ab?' ('+inst+' installed, '+(cnt[n]-inst)+' planned)':''));c.appendChild(r)})}
 else if(plans.length)c.innerHTML='<div class="muted">No devices yet</div>'}
 function planTap(e,fn,box){if(devLock())return;const r=box.querySelector('img').getBoundingClientRect();const x=(e.clientX-r.left)/r.width*100,y=(e.clientY-r.top)/r.height*100;if(x<0||x>100||y<0||y>100)return;
 if(devMove){const d=currentJob.devices.find(k=>k.id===devMove);devMove=null;if(d){d.x=x;d.y=y;d.plan=fn}saveDevices();return}
 if(!devType){alert('Pick a device first');return}
 currentJob.devices.push({type:devType,plan:fn,x:x,y:y});saveDevices()}
 async function saveDevices(){const r=await post('/devices',{devices:currentJob.devices});if(r.ok){currentJob.devices=(await r.json()).devices}else{alert('Error, not saved');const g=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id));if(g.ok)currentJob.devices=(await g.json()).devices}renderDevices()}
-function devSave(){const d=currentJob.devices.find(k=>k.id===devSel);if(!d)return;['note','height','cable'].forEach(k=>d[k]=document.getElementById('dv-'+k).value.trim());devSel=null;saveDevices()}
+function devSave(){const d=currentJob.devices.find(k=>k.id===devSel);if(!d)return;['note','height','cable'].concat(isAB()?['mac','ip','port','clabel']:[]).forEach(k=>d[k]=document.getElementById('dv-'+k).value.trim());if(isAB())d.installed=document.getElementById('dv-installed').checked;devSel=null;saveDevices()}
 function devMoveStart(){devMove=devSel;devSel=null;devType='';renderDevices();document.getElementById('dev-hint').scrollIntoView({behavior:'smooth',block:'center'})}
 function devDelete(){const d=currentJob.devices.find(k=>k.id===devSel);if(!d||!confirm('Delete '+d.label+'?'))return;currentJob.devices=currentJob.devices.filter(k=>k.id!==devSel);devSel=null;saveDevices()}
+async function devPhoto(inp){if(!inp.files.length||!devSel)return;const fd=new FormData();fd.append('photo',inp.files[0]);inp.value='';
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/devices/'+encodeURIComponent(devSel)+'/photo',{method:'POST',body:fd});if(r.ok){currentJob.devices=(await r.json()).devices;renderDevices()}else alert('Error')}
+async function copyPlan(src){if(!confirm('Copy the plan and devices from survey '+src+'?'))return;const r=await post('/plans/copy',{from:src});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;currentJob.devices=d.devices;renderDevices()}else alert(d.error||'Error')}
+let skOps=[],skT='pen',skCur=null;const skC=document.getElementById('sk-c'),skX=skC.getContext('2d');
+function skOpen(){skOps=[];skCur=null;document.getElementById('sk').classList.remove('hidden');skTool('pen');skDraw()}
+function skClose(){if(skOps.length&&!confirm('Throw away this drawing?'))return;document.getElementById('sk').classList.add('hidden')}
+function skTool(t){skT=t;document.querySelectorAll('.sk-tools button[data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===t));
+document.getElementById('sk-hint').textContent={pen:'Draw with your finger',line:'Drag to draw a straight line',erase:'Rub out lines',text:'Tap where the room name goes'}[t]}
+function skUndo(){skOps.pop();skDraw()}
+function skP(e){const r=skC.getBoundingClientRect();return{x:(e.clientX-r.left)*skC.width/r.width,y:(e.clientY-r.top)*skC.height/r.height}}
+function skDraw(){const L=document.createElement('canvas');L.width=skC.width;L.height=skC.height;const g=L.getContext('2d');g.lineCap='round';g.lineJoin='round';
+skOps.concat(skCur?[skCur]:[]).forEach(o=>{g.globalCompositeOperation=o.t==='erase'?'destination-out':'source-over';g.strokeStyle='#111';g.fillStyle='#111';
+if(o.t==='text'){g.font='bold 40px sans-serif';g.textAlign='center';g.fillText(o.s,o.x,o.y);return}
+g.lineWidth=o.t==='erase'?40:6;g.beginPath();g.moveTo(o.p[0].x,o.p[0].y);(o.t==='line'?[o.p[o.p.length-1]]:o.p).forEach(q=>g.lineTo(q.x,q.y));g.stroke()});
+skX.fillStyle='#fff';skX.fillRect(0,0,skC.width,skC.height);skX.strokeStyle='#dde6f0';skX.lineWidth=1;skX.beginPath();
+for(let x=0;x<=skC.width;x+=40){skX.moveTo(x,0);skX.lineTo(x,skC.height)}for(let y=0;y<=skC.height;y+=40){skX.moveTo(0,y);skX.lineTo(skC.width,y)}skX.stroke();skX.drawImage(L,0,0)}
+skC.addEventListener('pointerdown',e=>{e.preventDefault();const q=skP(e);if(skT==='text'){const s=prompt('Room name','');if(s&&s.trim()){skOps.push({t:'text',x:q.x,y:q.y,s:s.trim().slice(0,40)});skDraw()}return}
+try{skC.setPointerCapture(e.pointerId)}catch(_){}skCur={t:skT,p:[q,q]};skDraw()});
+skC.addEventListener('pointermove',e=>{if(!skCur)return;e.preventDefault();const q=skP(e);if(skCur.t==='line')skCur.p[1]=q;else skCur.p.push(q);skDraw()});
+['pointerup','pointercancel'].forEach(t=>skC.addEventListener(t,e=>{if(!skCur)return;skOps.push(skCur);skCur=null;skDraw()}));
+async function skSave(){if(!skOps.length){alert('Draw something first');return}skDraw();const blob=await new Promise(r=>skC.toBlob(r,'image/png'));const fd=new FormData();fd.append('files',blob,'sketch.png');
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;skOps=[];document.getElementById('sk').classList.add('hidden');renderDevices()}else alert(d.error||'Error')}
 async function uploadPlans(inp){if(!inp.files.length)return;const fd=new FormData();[...inp.files].forEach(f=>fd.append('files',f));inp.value='';
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;renderDevices()}else alert(d.error||'Error')}
 async function removePlan(fn){if(!confirm('Remove this plan and all its devices?'))return;const r=await post('/plans/delete',{filename:fn});if(r.ok){const d=await r.json();currentJob.plans=d.plans;currentJob.devices=d.devices;devSel=null;devMove=null;renderDevices()}else alert('Error')}
@@ -508,7 +550,8 @@ let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey';document.getElementById('survey-card').classList.toggle('hidden',!sv);document.querySelectorAll('#detail .ns').forEach(e=>e.classList.toggle('hidden',sv));
-document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
+document.getElementById('bp-card').classList.toggle('hidden',t==='Office Task');document.getElementById('ab-card').classList.toggle('hidden',sv||t==='Office Task');
+document.getElementById(sv?'sv-slot':'ab-slot').appendChild(document.getElementById('markup'));document.getElementById('mk-title').textContent=sv?'5. Floor Plan Devices':'Plan and Devices';renderDevices();const f=document.getElementById('finish');f.textContent=sv?'Complete Survey':'Finish Job';f.classList.toggle('hidden',sv&&currentJob.status==='completed');if(!sv)resize()}
 async function setType(t){if(!t)return;const r=await post('/type',{job_type:t});if(r.ok){const d=await r.json();currentJob.job_type=d.job_type;renderType()}else alert('Error')}
 function addPunch(){const n=document.getElementById('punch-new');const t=n.value.trim();if(!t)return;(currentJob.punch_list=currentJob.punch_list||[]).push({text:t,done:false});n.value='';renderTicks('punch',currentJob.punch_list,savePunch,true);savePunch()}
 async function saveQuick(){const r=await post('/quick-notes',{quick_notes:document.getElementById('quick-notes').value});alert(r.ok?'Saved':'Error')}
@@ -655,8 +698,8 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); conn.close()
-    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans))
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row); conn.close()
+    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
 def job_updates(job_id):
@@ -762,7 +805,7 @@ def upload_photos(job_id):
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
-    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]; conn.close()
+    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
 
 def blueprints(conn, job_id):
@@ -778,8 +821,8 @@ def plan_files(conn, job_id):
 def survey_edit_row(conn, job_id):
     row,err=own_job(conn, job_id)
     if err: return None, err
-    if row['job_type']!='Survey': return None, (jsonify({'error':'survey jobs only'}),400)
-    if row['status']=='completed' and not is_office(): return None, (jsonify({'error':'survey is complete; office can edit'}),403)
+    if row['job_type']=='Office Task': return None, (jsonify({'error':'not for Office Task jobs'}),400)
+    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): return None, (jsonify({'error':'survey is complete; office can edit'}),403)
     return row, None
 
 @app.route('/api/jobs/<job_id>/plans', methods=['POST'])
@@ -806,7 +849,7 @@ def delete_plan(job_id):
     if not fn or fn not in plan_files(conn, job_id): conn.close(); return ('',404)
     conn.execute("DELETE FROM photos WHERE job_id=? AND filename=? AND photo_type='plan'",(job_id,fn))
     devs=[d for d in parse_devices(row['survey_devices']) if d['plan']!=fn]
-    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit()
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); prune_devphotos(conn, job_id, devs); conn.commit()
     try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],fn))
     except OSError: pass
     plans=plan_files(conn, job_id); conn.close()
@@ -818,8 +861,62 @@ def save_devices(job_id):
     if err: conn.close(); return err
     plans=set(plan_files(conn, job_id))
     devs=number_devices([d for d in parse_devices((request.get_json(silent=True) or {}).get('devices') or []) if d['plan'] in plans])
-    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit(); conn.close()
+    dp=devphoto_files(conn, job_id)
+    for d in devs:
+        if d['photo'] not in dp: d['photo']=''
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); prune_devphotos(conn, job_id, devs); conn.commit(); conn.close()
     return jsonify({'ok':True,'devices':devs})
+
+def devphoto_files(conn, job_id):
+    return {r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='devphoto'",(job_id,)).fetchall()}
+
+def prune_devphotos(conn, job_id, devs):
+    keep={d['photo'] for d in devs if d['photo']}
+    for fn in devphoto_files(conn, job_id)-keep:
+        conn.execute("DELETE FROM photos WHERE job_id=? AND filename=? AND photo_type='devphoto'",(job_id,fn))
+        try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        except OSError: pass
+
+@app.route('/api/jobs/<job_id>/devices/<dev_id>/photo', methods=['POST'])
+def device_photo(job_id, dev_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    f=request.files.get('photo')
+    if not f or not f.filename: conn.close(); return jsonify({'error':'no file'}),400
+    devs=parse_devices(row['survey_devices']); d=next((x for x in devs if x['id']==dev_id),None)
+    if not d: conn.close(); return ('',404)
+    fn=secure_filename(f"{job_id}_devphoto_{uuid.uuid4().hex[:8]}.jpg"); f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+    conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,'devphoto',datetime.utcnow().isoformat()))
+    d['photo']=fn; conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); prune_devphotos(conn, job_id, devs); conn.commit(); conn.close()
+    return jsonify({'ok':True,'devices':devs})
+
+def survey_plan_sources(conn, row):
+    if row['job_type'] in ('Survey','Office Task'): return []
+    cust=ckey(row['customer']); addr=(row['address'] or '').strip().lower()
+    if not cust and not addr: return []
+    rows=conn.execute("SELECT id,title FROM jobs WHERE job_type='Survey' AND id!=? AND ((?!='' AND LOWER(TRIM(IFNULL(customer,'')))=?) OR (?!='' AND LOWER(TRIM(IFNULL(address,'')))=?)) AND EXISTS (SELECT 1 FROM photos p WHERE p.job_id=jobs.id AND p.photo_type='plan') ORDER BY created_at DESC",
+                      (row['id'],cust,cust,addr,addr)).fetchall()
+    return [{'id':r['id'],'title':r['title'] or ''} for r in rows]
+
+@app.route('/api/jobs/<job_id>/plans/copy', methods=['POST'])
+def copy_survey_plan(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    src_id=str((request.get_json(silent=True) or {}).get('from') or '')
+    if src_id not in [x['id'] for x in survey_plan_sources(conn, row)]: conn.close(); return jsonify({'error':'no matching survey plan'}),400
+    src=conn.execute('SELECT survey_devices FROM jobs WHERE id=?',(src_id,)).fetchone()
+    devs=parse_devices(row['survey_devices']); now=datetime.utcnow().isoformat(); mp={}
+    for fn in plan_files(conn, src_id):
+        nf=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{os.path.splitext(fn)[1]}")
+        try: shutil.copyfile(os.path.join(app.config['UPLOAD_FOLDER'],fn),os.path.join(app.config['UPLOAD_FOLDER'],nf))
+        except OSError: continue
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,nf,'plan',now,'From survey '+src_id)); mp[fn]=nf
+    if not mp: conn.close(); return jsonify({'error':'survey plan files are missing'}),400
+    for d in parse_devices(src['survey_devices']):
+        if d['plan'] in mp: devs.append(dict(d,id='',plan=mp[d['plan']],installed=False,mac='',ip='',port='',clabel='',photo=''))
+    devs=number_devices(devs)
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit(); plans=plan_files(conn, job_id); conn.close()
+    return jsonify({'ok':True,'plans':plans,'devices':devs})
 
 @app.route('/api/jobs/<job_id>/help', methods=['POST'])
 def need_help(job_id):
@@ -885,7 +982,7 @@ def notify_kelly(conn, job_id, event):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     if not j: return
     sv=clean_survey(j['survey_form']); base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
-    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]
+    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]
     mats=[m['text'] for m in parse_materials(j['materials_list'])]
     body={'event':event,'job_id':j['id'],'title':j['title'] or '','customer':j['customer'] or '','address':j['address'] or '',
           'phone':j['phone'] or '','scope':j['scope'] or '','sent_by':me(),
@@ -1057,7 +1154,7 @@ def client_jobs(conn, name):
 def job_full(conn, r):
     d=job_dict(r)
     d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
-    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(r['id'],)).fetchall()]
+    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(r['id'],)).fetchall()]
     d['blueprints']=blueprints(conn, r['id']); d['plans']=plan_files(conn, r['id'])
     return d
 
@@ -1119,9 +1216,9 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
 {% if j.updates %}<div class="sec">Daily Updates</div>{% for u in j.updates %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> {{ u.note }}</div>{% endfor %}{% endif %}{% endif %}
 {% if j.job_type == 'Survey' and j.photos %}<div class="sec">Photos</div>{% for p in j.photos %}<img src="/uploads/{{ p.filename|urlencode }}" alt="photo">{% endfor %}{% endif %}
-{% if j.job_type == 'Survey' and j.plans %}<div class="sec">Floor Plan Devices</div>{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
-{% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total)</div>
-<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #999"><th>Label</th><th>Device</th><th>Height</th><th>Cable run</th><th>Note</th></tr>{% for d in j.devices %}<tr style="border-bottom:1px solid #ddd"><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td><td>{{ d.height }}</td><td>{{ d.cable }}</td><td>{{ d.note }}</td></tr>{% endfor %}</table>{% endif %}{% endif %}
+{% set ab = j.job_type != 'Survey' %}{% if j.job_type != 'Office Task' and j.plans %}<div class="sec">{{ 'As-Built' if ab else 'Floor Plan Devices' }}</div>{% if ab %}<div class="muted">Solid pin = installed, white pin = planned</div>{% endif %}{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);{% if ab and not d.installed %}background:#fff;color:{{ DEV_COLORS[d.type] }};border:2px solid {{ DEV_COLORS[d.type] }};{% else %}background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;{% endif %}border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
+{% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if ab %} ({{ j.devices|selectattr('type','equalto',t)|selectattr('installed')|list|length }} installed){% endif %}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total{% if ab %}, {{ j.devices|selectattr('installed')|list|length }} installed{% endif %})</div>
+<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #999"><th>Label</th><th>Device</th>{% if ab %}<th>Installed</th><th>MAC / Serial</th><th>IP</th><th>Switch port</th><th>Cable label</th>{% endif %}<th>Height</th><th>Cable run</th><th>Note</th>{% if ab %}<th>Photo</th>{% endif %}</tr>{% for d in j.devices %}<tr style="border-bottom:1px solid #ddd"><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td>{% if ab %}<td>{{ 'Yes' if d.installed else 'Planned' }}</td><td>{{ d.mac }}</td><td>{{ d.ip }}</td><td>{{ d.port }}</td><td>{{ d.clabel }}</td>{% endif %}<td>{{ d.height }}</td><td>{{ d.cable }}</td><td>{{ d.note }}</td>{% if ab %}<td>{% if d.photo %}<img src="/uploads/{{ d.photo|urlencode }}" alt="{{ d.label }}" style="width:60px;height:60px">{% endif %}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
 {% if j.job_type != 'Survey' %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ lbl }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
 {% endif %}
 {% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints</div>{% for b in j.blueprints %}<div>{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint"><br>{% endif %}<a href="/uploads/{{ b.filename|urlencode }}">{{ b.name }}</a></div>{% endfor %}{% endif %}
