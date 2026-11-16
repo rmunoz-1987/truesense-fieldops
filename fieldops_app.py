@@ -211,6 +211,9 @@ def require_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
         return (jsonify({'error':'login required'}), 401) if request.path.startswith(('/api','/uploads')) else redirect('/login')
+    if not is_office() and request.path not in ('/agreement', '/agreement/sign', '/logout') and not request.path.startswith('/agreement/copy/'):
+        conn=get_db(); blocked=agreement_required(conn) and not signed_current(conn, me()); conn.close()
+        if blocked: return (jsonify({'error':'Sign the Subcontractor Agreement first'}), 403) if request.path.startswith(('/api','/uploads')) else redirect('/agreement')
 
 @app.route('/healthz')
 def healthz(): return 'ok'
@@ -232,6 +235,231 @@ def login():
 @app.route('/logout')
 def logout():
     session.clear(); return redirect('/login')
+AGREEMENT_V12 = '''TRUE SENSE SECURITY
+SUBCONTRACTOR AGREEMENT
+Low-Voltage and Security Systems Work
+
+Version 1.2 - Draft dated November 15, 2026
+
+====================================================================
+DRAFT FOR ATTORNEY REVIEW - NOT LEGAL ADVICE
+
+This draft is not legal advice and is not ready for use until a
+licensed Texas attorney has reviewed and approved it.
+====================================================================
+
+
+1. PARTIES
+
+This Agreement is between True Sense Security,
+[legal entity name: __________], Texas DPS Private Security
+license B31163401, Houston, Texas, 713-364-8409,
+info@truesensesecurity.com ("Company"),
+
+and the independent contractor below ("Subcontractor"):
+
+Legal name: [____________________]    DBA: [____________________]
+Entity type: [ ] LLC  [ ] Corporation  [ ] Sole proprietor
+             [ ] Other: [__________]
+Address: [____________________]
+Phone: [__________]    Email: [____________________]
+Tax ID (as on Form W-9): [____________________]
+
+For insurance, confidentiality, non-solicitation, and indemnity,
+"Company" also includes its owners, officers, and employees.
+The Effective Date is acceptance of this version in the Field
+Ops app.
+
+
+2. INDEPENDENT CONTRACTOR
+
+Subcontractor is an independent contractor, not an employee,
+partner, or agent of Company. Subcontractor controls how
+the work is done, supplies its own tools and vehicle unless a
+work order says otherwise, may accept or decline work orders, and
+may work for others. Subcontractor pays its own taxes, including
+self-employment tax, and is not eligible for Company benefits.
+Company will issue Form 1099-NEC as required. Subcontractor
+cannot bind Company.
+
+
+3. WORK ORDERS AND PAY
+
+Company may offer installs, service calls, and site surveys
+(cameras, access control, intercom, data cabling, fiber, and AV)
+through the Field Ops app. Each work order states the scope,
+schedule, and rate (fixed price or hourly). Subcontractor may
+accept or decline any work order. Accepting it accepts that rate
+and the duty to finish the job. Extra work needs a change
+approved in the app before it is done.
+
+Payment is due net [15] days after Company approves a completed
+work order with the required documentation. Hourly pay covers
+only authorized hours actually worked. Company may withhold
+amounts allowed by law for incomplete or defective work, missing
+documents, unreturned materials, or damage caused by
+Subcontractor.
+
+
+4. INSURANCE AND W-9
+
+Before the first job, Subcontractor will carry:
+
+(a) Commercial general liability insurance of at least $1,000,000
+per occurrence and $2,000,000 general aggregate, including
+completed operations;
+
+(b) Automobile liability insurance covering owned, hired, and
+non-owned vehicles used in the work, with a combined single limit
+of at least $[1,000,000] per accident; and
+
+(c) Workers' compensation at statutory limits if required by law
+or if Subcontractor has employees; or, if not required, an
+occupational accident policy with limits of at least
+$[__________], or a signed workers' compensation waiver.
+
+A Certificate of Insurance and a completed Form W-9 must be on
+file before the first job and before any payment, and coverage
+must stay in force through any warranty period.
+
+
+5. LICENSING
+
+Subcontractor and anyone it sends to a job will hold all licenses
+and registrations required for the work. For work regulated under
+Texas Occupations Code Chapter 1702, this includes the required
+Texas DPS Private Security Bureau license and individual
+registration (such as alarm installer). Required TDLR or other
+licenses, and any city permit assigned to Subcontractor, must be
+in place before that work begins.
+
+
+6. DOCUMENTATION, WARRANTY, AND CALLBACKS
+
+A work order is not complete, and payment is not due, until
+Subcontractor submits the required documentation in the Field Ops
+app, including photos of the completed work, as-builts or device
+locations, and any serial numbers or test results the work order
+requires.
+
+Subcontractor will do the work in a good and workmanlike manner
+and warrants its workmanship for [1 year] after approval. During
+that period, Subcontractor will correct its defective work,
+including labor, at no charge. This does not cover manufacturer
+defects, abuse, work by others, or later changes.
+
+
+7. CONFIDENTIALITY
+
+Subcontractor may learn client and Company confidential
+information, including site details, system designs, camera
+locations, access codes, passwords, and network information.
+Subcontractor will use it only to do the work, share it only with
+workers who need it, and return or destroy it when the work ends
+or Company asks. Subcontractor will not post photos or details of
+client sites or systems on social media or elsewhere without
+Company's written consent. These duties survive this Agreement
+and, for codes, credentials, network information, and camera
+locations, last as long as the information could affect a
+client's security.
+
+
+8. NON-SOLICITATION OF CLIENTS
+
+During this Agreement and for 12 months after it ends,
+Subcontractor will not solicit any client that Subcontractor was
+introduced to through Company, or served under this Agreement,
+for the same or substantially similar services. This does not
+prohibit general advertising, or work for a client who approaches
+Subcontractor without that solicitation. If a court finds this
+limit too broad, the parties ask that it be narrowed to the
+maximum enforceable scope under Texas law.
+
+
+9. INDEMNITY
+
+TO THE EXTENT PERMITTED BY TEXAS LAW, INCLUDING INSURANCE CODE
+CHAPTER 151 WHERE IT APPLIES, SUBCONTRACTOR SHALL DEFEND,
+INDEMNIFY, AND HOLD HARMLESS COMPANY AND ITS OWNERS,
+OFFICERS, AND EMPLOYEES FROM THIRD-PARTY CLAIMS, DAMAGES, LOSSES,
+AND REASONABLE ATTORNEYS' FEES TO THE EXTENT CAUSED BY THE
+NEGLIGENCE, WILLFUL MISCONDUCT, OR BREACH OF THIS AGREEMENT BY
+SUBCONTRACTOR OR ITS WORKERS. THIS DOES NOT REQUIRE SUBCONTRACTOR
+TO INDEMNIFY ANYONE FOR THAT PERSON'S OWN NEGLIGENCE OR WILLFUL
+MISCONDUCT. WHERE MORE THAN ONE PERSON IS AT FAULT, SUBCONTRACTOR
+IS RESPONSIBLE ONLY FOR ITS PROPORTIONATE SHARE OF FAULT.
+
+
+10. TERMINATION
+
+Either party may end this Agreement for convenience with [14]
+days' written notice. Company may also end a work order for
+convenience by notice in the app. Subcontractor will then be paid
+for work properly completed through the end date, less amounts
+withheld as allowed above. Either party may end this Agreement or
+a work order if the other materially breaches and does not cure
+within [7] days, or immediately for a safety, security, or
+licensing risk. When work ends, Subcontractor will stop as
+directed, leave the site safe, and return Company and customer
+property, unused materials, keys, badges, and documentation. Sections 2, 4 (as to amounts owed), and 6 through
+11 survive.
+
+
+11. TEXAS LAW AND E-SIGN
+
+This Agreement is governed by Texas law. Exclusive venue is
+Harris County, Texas, or the federal court in Houston. The
+parties consent to electronic signatures and records under the
+Texas Uniform Electronic Transactions Act (Business and Commerce
+Code Chapter 322) and the federal E-SIGN Act. Signing in the
+Field Ops app means typing a legal name, checking "I agree," and
+applying a finger or stylus signature, recorded with the version
+and the date and time. That record is as valid as a signed paper
+original. This is the entire agreement, together with accepted
+work orders. A new version binds Subcontractor only after
+acceptance in the app. Already-accepted work orders stay under
+the version then in effect. If any part is unenforceable, the
+rest remains in effect.
+
+
+12. SIGNATURE AND ACCEPTANCE
+
+By signing, each party agrees to this Agreement, Version 1.2 -
+Draft dated November 15, 2026.
+
+SUBCONTRACTOR
+
+    Typed legal name: [________________________________]
+
+    [ ] I AGREE
+
+    Finger or stylus signature: [sign on device]
+
+    Date and time (Field Ops app): [__________]
+
+    Version accepted: 1.2
+
+    Title (if signing for an entity): [__________]
+
+
+COMPANY SIGNER
+
+    Company: True Sense Security
+
+    Typed name: [________________________________]
+
+    Title: [__________]
+
+    [ ] I AGREE
+
+    Signature (finger, stylus, or other electronic signature):
+    [sign on device]
+
+    Date and time (Field Ops app): [__________]
+
+    Version accepted: 1.2
+'''
+
 DB_PATH = 'fieldops.db'
 
 def get_db():
@@ -272,6 +500,13 @@ def init_db():
     for col in ['rate_hourly REAL', 'rate_flat REAL']:
         try: conn.execute(f'ALTER TABLE subs ADD COLUMN {col}')
         except: pass
+    conn.execute('''CREATE TABLE IF NOT EXISTS agreements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT, body TEXT, created_at TEXT, created_by TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS agreement_signs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, sub TEXT, agreement_id INTEGER, version TEXT, typed_name TEXT, signature TEXT, signed_at TEXT, ip TEXT, user_agent TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
+    if not conn.execute('SELECT 1 FROM agreements').fetchone():
+        conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',('1.2',AGREEMENT_V12,now_local_str(),'Seed'))
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
         sub TEXT, kind TEXT, filename TEXT, orig_name TEXT, expires TEXT, uploaded_at TEXT, PRIMARY KEY (sub, kind))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS job_hours (
@@ -350,8 +585,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button></div>{% endif %}
+{% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -809,7 +1045,10 @@ def index():
     tpls=[]
     if is_office():
         conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
-    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
+    agr=None
+    if not is_office():
+        conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
+    return render_template_string(HTML, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -1957,6 +2196,122 @@ def subs_doc():
 def sub_doc_alerts():
     if not is_office(): return jsonify({'error':'Office only'}),403
     conn=get_db(); a=doc_alerts(conn); conn.close(); return jsonify(a)
+
+def current_agreement(conn): return conn.execute('SELECT * FROM agreements ORDER BY id DESC LIMIT 1').fetchone()
+def agreement_required(conn):
+    r=conn.execute("SELECT value FROM settings WHERE key='require_agreement'").fetchone(); return bool(r and r['value']=='1')
+def last_sign(conn, name): return conn.execute('SELECT * FROM agreement_signs WHERE sub=? ORDER BY id DESC LIMIT 1',(ckey(name),)).fetchone()
+def signed_current(conn, name):
+    a=current_agreement(conn); return bool(conn.execute('SELECT 1 FROM agreement_signs WHERE sub=? AND agreement_id=?',(ckey(name),a['id'])).fetchone())
+def bump_version(v):
+    p=(v or '').split('.')
+    try: p[-1]=str(int(p[-1])+1); return '.'.join(p)
+    except ValueError: return (v or '1')+'.1'
+
+AGR_HEAD = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Subcontractor Agreement</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:720px;margin:auto;padding:12px}
+h2{color:#a49f2a;margin:8px 0;text-align:center}.job{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}.muted{color:#666}
+.btn{display:block;width:100%;background:#f0f0f0;color:#111;padding:16px;border:0;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;font-size:1.05rem;margin:8px 0}.go{background:#2e7d32;color:#fff}.gold{background:#a49f2a;color:#fff}
+.text{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85rem;background:#fff;border:1px solid #ddd;border-radius:10px;padding:12px}
+input[type=text],textarea{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:8px 4px;text-align:left}
+@media print{.noprint{display:none}body{max-width:none;padding:0}.text{border:0;padding:0;max-height:none!important;overflow:visible!important}}</style></head><body>
+<img src="LOGO_URL" alt="True Sense Security" style="height:56px;margin:0 auto 4px;display:block">""".replace('LOGO_URL', "https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w")
+
+AGR_SUB_HTML = AGR_HEAD + """<h2>Subcontractor Agreement</h2><div class="muted" style="text-align:center">Version {{ a.version }}</div>
+{% if need %}<div class="job" style="border:2px solid #b00020"><b>Please read and sign before you can open jobs.</b></div>{% endif %}
+{% if mine %}<div class="job" style="border:2px solid #2e7d32"><b style="color:#2e7d32">You signed version {{ mine.version }} on {{ mine.signed_at }}.</b>{% if not current %} <b style="color:#b00020">A new version needs your signature.</b>{% endif %}
+<a class="btn" href="/agreement/copy/{{ mine.id }}">View my signed copy</a></div>{% endif %}
+{% if not current %}<div class="text" style="max-height:60vh;overflow-y:auto">{{ a.body }}</div>
+<form method="post" action="/agreement/sign" class="job" onsubmit="return go()"><input type="hidden" name="agreement_id" value="{{ a.id }}"><input type="hidden" name="signature" id="sigdata">
+<label style="font-weight:600">Type your full legal name<input type="text" name="typed_name" required maxlength="100" autocomplete="name"></label>
+<label style="display:flex;gap:10px;align-items:center;font-weight:700;font-size:1.1rem;margin:10px 0"><input type="checkbox" name="agree" value="1" required style="width:28px;height:28px"> I AGREE to version {{ a.version }}</label>
+<div style="font-weight:600">Sign with your finger</div><canvas id="pad" style="width:100%;height:180px;border:2px solid #ccc;border-radius:10px;background:#fff;touch-action:none"></canvas>
+<button type="button" class="btn" onclick="clr()">Clear Signature</button><button type="submit" class="btn go" style="font-size:1.2rem">Sign</button></form>
+<script>
+const c=document.getElementById('pad'),x=c.getContext('2d');let d=false,inked=false;
+function fit(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.lineWidth=2.5;x.lineCap='round';x.strokeStyle='#111';inked=false}fit();
+function pt(e){const r=c.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
+c.addEventListener('pointerdown',e=>{d=true;c.setPointerCapture(e.pointerId);const [a,b]=pt(e);x.beginPath();x.moveTo(a,b)});
+c.addEventListener('pointermove',e=>{if(!d)return;const [a,b]=pt(e);x.lineTo(a,b);x.stroke();inked=true});
+c.addEventListener('pointerup',()=>d=false);c.addEventListener('pointercancel',()=>d=false);
+function clr(){x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);fit()}
+function go(){if(!inked){alert('Please sign with your finger');return false}document.getElementById('sigdata').value=c.toDataURL('image/png');return true}
+</script>{% endif %}
+{% if not need %}<a class="btn noprint" href="/">Back to Jobs</a>{% endif %}<a class="btn noprint" href="/logout">Log out</a></body></html>"""
+
+AGR_OFFICE_HTML = AGR_HEAD + """<h2>Subcontractor Agreement</h2><a class="btn" href="/">Back to Jobs</a>
+<form method="post" action="/agreement/require" class="job" style="border:2px solid {{ '#2e7d32' if required else '#ddd' }}"><div style="font-weight:700;font-size:1.1rem">Require subs to sign: {{ 'ON' if required else 'OFF' }}</div>
+<div class="muted">{{ 'Subs must sign the current version before they can open jobs.' if required else 'Subs are not blocked. They can still sign from a link on their home screen.' }}</div>
+<input type="hidden" name="on" value="{{ '0' if required else '1' }}"><button class="btn {{ '' if required else 'gold' }}" type="submit">{{ 'Turn OFF' if required else 'Turn ON' }}</button></form>
+<div class="job"><div style="font-weight:700">Sub status (current version {{ a.version }})</div><table>{% for n, st, sid in rows %}<tr><td><b>{{ n }}</b></td><td style="color:{{ '#2e7d32' if st.startswith('Signed') else '#b00020' }};font-weight:600">{{ st }}</td><td>{% if sid %}<a href="/agreement/copy/{{ sid }}">Signed copy</a>{% endif %}</td></tr>{% else %}<tr><td>No subs set in Render</td></tr>{% endfor %}</table></div>
+<div class="job"><div style="font-weight:700">Current version {{ a.version }}</div><div class="muted">Added {{ a.created_at }} by {{ a.created_by }}</div>
+<div class="text" style="max-height:50vh;overflow-y:auto;margin-top:8px">{{ a.body }}</div></div>
+<form method="post" action="/agreement/new" enctype="multipart/form-data" class="job" onsubmit="return confirm('Make this the new version? Every sub will need to sign again.')"><div style="font-weight:700">Add a new version</div>
+<div class="muted">Paste the new text or pick a .txt file. All subs will need to sign again.</div>
+<label style="font-weight:600">Version number<input type="text" name="version" value="{{ next_v }}" maxlength="20"></label>
+<textarea name="body" rows="8" placeholder="Paste the full agreement text here"></textarea><input type="file" name="file" accept=".txt,text/plain" style="display:block;margin:6px 0">
+<button class="btn gold" type="submit">Save New Version</button></form></body></html>"""
+
+AGR_COPY_HTML = AGR_HEAD + """<h2>Subcontractor Agreement: Signed Copy</h2>
+<div class="noprint"><button class="btn gold" onclick="print()">Print</button><a class="btn" href="/agreement">Back</a></div>
+<div class="job"><div><b>Version:</b> {{ s.version }}</div><div><b>Signed by:</b> {{ s.typed_name }} (login: {{ s.sub|title }})</div><div><b>Date and time:</b> {{ s.signed_at }}</div></div>
+<div class="text">{{ body }}</div>
+<div class="job" style="page-break-inside:avoid"><div style="font-weight:700">Subcontractor Signature</div><div><b>Typed name:</b> {{ s.typed_name }}</div><div>&#9745; I AGREE to version {{ s.version }}</div>
+{% if s.signature and s.signature.startswith('data:image/') %}<img src="{{ s.signature }}" alt="signature" style="width:320px;max-width:100%;border-bottom:2px solid #111;display:block;margin:8px 0">{% endif %}
+<div><b>Signed:</b> {{ s.signed_at }}</div><div class="muted" style="font-size:.8rem">Recorded by True Sense Field Ops. IP {{ s.ip or '-' }}. Device: {{ s.user_agent or '-' }}</div></div></body></html>"""
+
+@app.route('/agreement')
+def agreement_page():
+    conn=get_db(); a=current_agreement(conn)
+    if is_office():
+        rows=[]
+        for n in sub_names(conn):
+            ls=last_sign(conn, n)
+            if not ls: rows.append((n,'Not signed',None))
+            elif ls['agreement_id']==a['id']: rows.append((n,'Signed v'+ls['version']+' on '+ls['signed_at'],ls['id']))
+            else: rows.append((n,'Needs re-sign (signed v'+ls['version']+')',ls['id']))
+        req=agreement_required(conn); conn.close()
+        return render_template_string(AGR_OFFICE_HTML, a=a, rows=rows, required=req, next_v=bump_version(a['version']))
+    mine=last_sign(conn, me()); cur=signed_current(conn, me()); need=agreement_required(conn) and not cur; conn.close()
+    return render_template_string(AGR_SUB_HTML, a=a, mine=mine, current=cur, need=need)
+
+@app.route('/agreement/sign', methods=['POST'])
+def agreement_sign():
+    if is_office(): return redirect('/agreement')
+    f=request.form; name=(f.get('typed_name') or '').strip()[:100]; sig=f.get('signature') or ''
+    conn=get_db(); a=current_agreement(conn)
+    if str(a['id'])!=(f.get('agreement_id') or ''): conn.close(); return ('The agreement changed. Go back and read the new version.',409)
+    if not name or f.get('agree')!='1' or not sig.startswith('data:image/png;base64,') or len(sig)>600000: conn.close(); return ('Type your name, check I agree, and sign.',400)
+    ip=(request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()[:60]
+    cur=conn.execute('INSERT INTO agreement_signs (sub,agreement_id,version,typed_name,signature,signed_at,ip,user_agent) VALUES (?,?,?,?,?,?,?,?)',
+                     (ckey(me()),a['id'],a['version'],name,sig,now_local_str(),ip,(request.headers.get('User-Agent') or '')[:300]))
+    conn.commit(); sid=cur.lastrowid; conn.close()
+    return redirect(f'/agreement/copy/{sid}')
+
+@app.route('/agreement/copy/<int:sid>')
+def agreement_copy(sid):
+    conn=get_db(); s=conn.execute('SELECT * FROM agreement_signs WHERE id=?',(sid,)).fetchone()
+    if not s or not (is_office() or s['sub']==ckey(me())): conn.close(); return ('Not allowed',403)
+    a=conn.execute('SELECT body FROM agreements WHERE id=?',(s['agreement_id'],)).fetchone(); conn.close()
+    return render_template_string(AGR_COPY_HTML, s=s, body=a['body'] if a else '')
+
+@app.route('/agreement/require', methods=['POST'])
+def agreement_require():
+    if not is_office(): return ('',403)
+    conn=get_db(); conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('require_agreement',?)",('1' if request.form.get('on')=='1' else '0',)); conn.commit(); conn.close()
+    return redirect('/agreement')
+
+@app.route('/agreement/new', methods=['POST'])
+def agreement_new():
+    if not is_office(): return ('',403)
+    body=(request.form.get('body') or '').strip(); f=request.files.get('file')
+    if f and f.filename:
+        try: body=f.read(500000).decode('utf-8-sig').strip()
+        except UnicodeDecodeError: return ('Use a plain .txt file',400)
+    if not body: return ('Paste the text or pick a .txt file',400)
+    conn=get_db(); a=current_agreement(conn); v=(request.form.get('version') or '').strip()[:20] or bump_version(a['version'])
+    conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',(v,body.replace('\r\n','\n')[:200000],now_local_str(),me())); conn.commit(); conn.close()
+    return redirect('/agreement')
 
 @app.route('/to-order')
 def to_order():
