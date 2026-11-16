@@ -12,6 +12,7 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 # Each user gets a Render env var NAME_PASSWORD (e.g. ROLAND_PASSWORD, WOODY_RODRIGUEZ_PASSWORD); the login name is NAME (underscores = spaces).
 USERS = {' '.join(k[:-len('_PASSWORD')].replace('_', ' ').split()).lower(): v for k, v in os.environ.items()
          if k.endswith('_PASSWORD') and k != 'APP_PASSWORD' and v and k[:-len('_PASSWORD')]}
+ON_RENDER = bool(os.environ.get('RENDER'))
 OFFICE_NAMES = [' '.join(n.split()).lower() for n in os.environ.get('OFFICE_NAMES', 'Roland').split(',') if n.strip()]
 app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + json.dumps(sorted(USERS.items()))).encode()).hexdigest()
 app.permanent_session_lifetime = timedelta(days=30)
@@ -226,6 +227,46 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 {% if error %}<div class="err">{{ error }}</div>{% endif %}<button type="submit">Log In</button></form>{% endif %}
 </body></html>'''
 
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=ON_RENDER)
+
+# ---- login throttle: 5 misses per name (20 per IP) in 15 min locks for 15 min ----
+LOGIN_FAILS = {}; LOGIN_LOCK = threading.Lock(); LOCK_SECS = 900; MAX_FAILS = 5
+def client_ip(): return (request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()
+def login_keys(name): return ['n:'+name.lower(), 'ip:'+client_ip()]
+def login_locked(name):
+    now=time.time()
+    with LOGIN_LOCK:
+        for k in login_keys(name):
+            v=[t for t in LOGIN_FAILS.get(k,[]) if now-t<LOCK_SECS]; LOGIN_FAILS[k]=v
+            if len(v)>=(MAX_FAILS if k.startswith('n:') else MAX_FAILS*4): return True
+    return False
+def login_fail(name):
+    with LOGIN_LOCK:
+        for k in login_keys(name): LOGIN_FAILS.setdefault(k,[]).append(time.time())
+        if len(LOGIN_FAILS)>5000: LOGIN_FAILS.clear()
+def login_ok(name):
+    with LOGIN_LOCK: LOGIN_FAILS.pop('n:'+name.lower(), None)
+
+# ---- CSRF: browser writes must come from this site (Origin / Referer check) ----
+CSRF_EXEMPT = ('/api/qbo/pending', '/api/qbo/result', '/api/qbo-monthly', '/api/tech-support/reply')
+@app.before_request
+def csrf_check():
+    if request.method in ('GET','HEAD','OPTIONS') or request.path in CSRF_EXEMPT: return
+    src=request.headers.get('Origin') or request.headers.get('Referer') or ''
+    if not src: return  # non-browser clients (browsers always send Origin on cross-site posts)
+    if urllib.parse.urlsplit(src).netloc!=request.host:
+        app.logger.warning('CSRF block %s from %s', request.path, src[:80])
+        return (jsonify({'error':'Blocked: request came from another site'}),403) if request.path.startswith('/api') else ('Blocked: request came from another site',403)
+
+@app.after_request
+def security_headers(resp):
+    resp.headers.setdefault('X-Content-Type-Options','nosniff')
+    resp.headers.setdefault('X-Frame-Options','SAMEORIGIN')
+    resp.headers.setdefault('Referrer-Policy','strict-origin-when-cross-origin')
+    resp.headers.setdefault('Permissions-Policy','geolocation=(self), camera=(self), microphone=()')
+    if ON_RENDER: resp.headers.setdefault('Strict-Transport-Security','max-age=31536000')
+    return resp
+
 @app.before_request
 def require_login():
     if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
@@ -346,10 +387,12 @@ def login():
         name = nice_name(request.form.get('name'))
         pw = request.form.get('password') or ''
         expected = USERS.get(name.lower())
-        if expected and hmac.compare_digest(pw.encode(), expected.encode()):
-            session.permanent = True; session['name'] = name
+        if login_locked(name): error = 'Too many wrong tries. Wait 15 minutes and try again.'
+        elif expected and hmac.compare_digest(pw.encode(), expected.encode()):
+            login_ok(name); session.clear(); session.permanent = True; session['name'] = name
             return redirect('/')
-        error = 'Wrong name or password'
+        else:
+            login_fail(name); error = 'Wrong name or password'
     return render_template_string(LOGIN_HTML, setup=False, error=error)
 
 @app.route('/logout')
@@ -717,6 +760,9 @@ def data_report():
     try:
         c=get_db(); n={t:c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ('jobs','qbo_monthly','stock_items','equipment','push_subs')}
         oldest=c.execute('SELECT MIN(month) FROM qbo_monthly').fetchone()[0]; c.close()
+        weak=[k for k,v in USERS.items() if len(v)<10 or v.isdigit() or v.isalpha() or v.lower() in ('password','password1','changeme','truesense','fieldops')]
+        if weak: print('SECURITY_WARNING weak password for: %s (use 10+ characters with letters and numbers)'%', '.join(sorted(weak)), flush=True)
+        if not os.environ.get('SECRET_KEY'): print('SECURITY_WARNING SECRET_KEY is not set; sessions use a derived key', flush=True)
         print('DATA_CHECK db=%s uploads=%s counts=%s oldest_month=%s'%(DB_PATH,app.config['UPLOAD_FOLDER'],json.dumps(n),oldest), flush=True)
     except Exception as e: print('DATA_CHECK failed %s'%e, flush=True)
 data_report()
@@ -2992,7 +3038,15 @@ def hub_page(job_id):
     if not row: return (HUB_EXPIRED_HTML,410)
     j=job_full(conn,row); conn.close(); est=load_estimate(row)
     pay=row['pay_link'] if (row['pay_link'] or '').startswith('https://') else ''
-    return render_template_string(HUB_HTML, j=j, est=est, money=money, pay=pay, paid=row['paid_at'], t=request.values.get('t',''), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
+    return render_template_string(HUB_HTML, j=j, est=est, money=money, pay=pay, paid=row['paid_at'], t=request.values.get('t',''), signed=lambda fn: '/hub/'+urllib.parse.quote(job_id)+'/f/'+urllib.parse.quote(fn)+'?t='+urllib.parse.quote(request.values.get('t','')))
+
+@app.route('/hub/<job_id>/f/<path:fn>')
+def hub_file(job_id, fn):
+    conn,row=hub_job(job_id)
+    if not row: return ('This link has expired.',410)
+    fn=secure_filename(fn); ok=conn.execute('SELECT 1 FROM photos WHERE job_id=? AND filename=?',(job_id,fn)).fetchone(); conn.close()
+    if not ok: return ('',404)
+    r=send_from_directory(app.config['UPLOAD_FOLDER'], fn); r.headers['Cache-Control']='private, no-store'; return r
 
 @app.route('/hub/<job_id>/approve', methods=['POST'])
 def hub_approve(job_id):
