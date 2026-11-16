@@ -376,6 +376,37 @@ def add_tap_css(resp):
     except Exception: pass
     return resp
 
+# ---- background timer: daily DB backup (keep 7) and reminder drafts. Drafts only, nothing is sent. ----
+BACKUP_DIR = os.path.join(DATA_DIR, 'backups'); BACKUP_KEEP = 7; _BG = {'started': False}; _BG_LOCK = threading.Lock()
+def backup_db():
+    day=today_local().isoformat(); os.makedirs(BACKUP_DIR, exist_ok=True)
+    dst=os.path.join(BACKUP_DIR, 'fieldops-%s.db' % day)
+    if os.path.exists(dst): return None
+    tmp=dst+'.tmp'; src=sqlite3.connect(DB_PATH); out=sqlite3.connect(tmp)
+    try: src.backup(out)
+    finally: out.close(); src.close()
+    os.replace(tmp, dst)
+    old=sorted(f for f in os.listdir(BACKUP_DIR) if f.startswith('fieldops-') and f.endswith('.db'))
+    for f in old[:-BACKUP_KEEP]: os.remove(os.path.join(BACKUP_DIR, f))
+    print('BACKUP saved %s (%d kept)' % (os.path.basename(dst), min(len(old), BACKUP_KEEP)), flush=True)
+    return dst
+def bg_tick():
+    try: backup_db()
+    except Exception as e: print('BACKUP failed %s' % e, flush=True)
+    try:
+        conn=get_db(); REMIND_LAST[0]=0; make_reminders(conn); run_plans(conn); conn.close()
+    except Exception as e: print('REMINDERS failed %s' % e, flush=True)
+def bg_loop():
+    while True:
+        bg_tick(); time.sleep(int(os.environ.get('BG_EVERY', 900)))
+@app.before_request
+def bg_start():
+    if _BG['started']: return
+    with _BG_LOCK:
+        if _BG['started']: return
+        _BG['started']=True
+    if os.environ.get('BG_TIMER','1')!='0': threading.Thread(target=bg_loop, daemon=True, name='fo-bg').start()
+
 @app.route('/healthz')
 def healthz(): return 'ok'
 
