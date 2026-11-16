@@ -713,6 +713,13 @@ def init_db():
     conn.commit(); conn.close()
 
 init_db()
+def data_report():
+    try:
+        c=get_db(); n={t:c.execute('SELECT COUNT(*) FROM '+t).fetchone()[0] for t in ('jobs','qbo_monthly','stock_items','equipment','push_subs')}
+        oldest=c.execute('SELECT MIN(month) FROM qbo_monthly').fetchone()[0]; c.close()
+        print('DATA_CHECK db=%s uploads=%s counts=%s oldest_month=%s'%(DB_PATH,app.config['UPLOAD_FOLDER'],json.dumps(n),oldest), flush=True)
+    except Exception as e: print('DATA_CHECK failed %s'%e, flush=True)
+data_report()
 
 HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Field Ops"><title>True Sense Field</title>
 <style>
@@ -3471,7 +3478,9 @@ def parse_qbo_rows(rows):
 
 def save_qbo_rows(rows, source):
     conn=get_db(); now=now_local_str()
-    for mo,inv,paid in rows: conn.execute('INSERT OR REPLACE INTO qbo_monthly (month,invoiced,paid,synced_at,source) VALUES (?,?,?,?,?)',(mo,inv,paid,now,source))
+    for mo,inv,paid in rows:
+        if inv is None and paid is None: conn.execute('DELETE FROM qbo_monthly WHERE month=?',(mo,)); continue  # both blank clears the month
+        conn.execute('INSERT OR REPLACE INTO qbo_monthly (month,invoiced,paid,synced_at,source) VALUES (?,?,?,?,?)',(mo,inv,paid,now,source))
     conn.commit(); conn.close(); return now
 
 @app.route('/api/qbo-monthly', methods=['POST'])
