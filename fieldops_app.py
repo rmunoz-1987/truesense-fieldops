@@ -304,7 +304,8 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .pin{position:absolute;transform:translate(-50%,-50%);min-width:32px;padding:0 4px;height:32px;line-height:28px;font-size:.85rem;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box}.pin.sel{outline:3px solid #111}
 #mp{position:fixed;inset:0;background:#fff;z-index:40;overflow:auto;padding:10px}#mp.hidden{display:none}#mp-map{height:55vh;border-radius:10px}
 .mp-tools{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}.mp-tools button,.mp-b button{padding:14px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:1rem;color:var(--text)}.mp-tools button.on{border-color:var(--text);background:#fbfaf0}
-.mp-b{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.mp-seg{background:rgba(0,0,0,.7);color:#fff;font-weight:700;font-size:12px;padding:2px 5px;border-radius:6px;white-space:nowrap}
+.mp-b{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}.mp-addr{display:inline-block;background:#111;color:#fff;font-weight:700;font-size:12px;padding:3px 6px;border-radius:6px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;transform:translate(-50%,-100%);position:relative;top:-6px}.mp-addr:after{content:'';position:absolute;left:50%;bottom:-6px;margin-left:-6px;border:6px solid transparent;border-bottom:0;border-top-color:#111}
+.mp-seg{background:rgba(0,0,0,.7);color:#fff;font-weight:700;font-size:12px;padding:2px 5px;border-radius:6px;white-space:nowrap}
 #sk{position:fixed;inset:0;background:#fff;z-index:50;overflow:auto;padding:10px}#sk.hidden{display:none}
 .sk-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px}.sk-tools button{padding:14px 2px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}.sk-tools button.on{border-color:var(--text);background:#fbfaf0}
 
@@ -383,7 +384,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div>
 <div class="job hidden" id="map-card"><div style="font-weight:800;font-size:1.4rem">Site Map</div><div id="map-sum" class="muted" style="font-size:1.05rem"></div><button class="big-btn" onclick="mapOpen()">Open Site Map</button></div>
 <div id="mp" class="hidden"><div class="mp-tools" id="mp-tools"><button data-m="cam" onclick="mapMode(this.dataset.m)">+ Camera</button><button data-m="measure" onclick="mapMode(this.dataset.m)">Measure</button><button onclick="mapClose()">Done</button></div>
-<div id="mp-hint" style="font-weight:700;text-align:center;margin:4px 0"></div><div id="mp-map"></div><div id="mp-panel"></div><div id="mp-list"></div>
+<div class="row" id="mp-find" style="align-items:center"><input type="search" id="mp-q" placeholder="Job address" onkeydown="if(event.key==='Enter')mapFind()"><button class="big-btn gray" style="flex:0 0 80px" onclick="mapFind()">Find</button></div>
+<div class="mp-b"><button onclick="meCenter()" style="background:#1565c0;color:#fff;border-color:#1565c0">My Location</button><button id="mp-usesite" class="hidden" onclick="useMeSite()">Use My Location as Site</button></div>
+<div id="mp-hint" style="font-weight:700;text-align:center;margin:4px 0"></div><div id="mp-loc" class="muted" style="text-align:center"></div><div id="mp-map"></div><div id="mp-panel"></div><div id="mp-list"></div>
 <button class="big-btn gray" onclick="mapClose()">Close Map</button></div>
 <div class="job hidden" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div></div>
 <div id="sk" class="hidden"><div style="font-weight:800;font-size:1.3rem;text-align:center;margin-bottom:6px">Draw Plan</div>
@@ -591,14 +594,25 @@ function mft(a,b){return L.latLng(a).distanceTo(L.latLng(b))*3.28084}
 function loadLeaflet(){if(window.L)return Promise.resolve(true);return new Promise(res=>{const c=document.createElement('link');c.rel='stylesheet';c.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';document.head.appendChild(c);
 const s=document.createElement('script');s.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';s.onload=()=>res(!!window.L);s.onerror=()=>res(false);document.head.appendChild(s)})}
 function mapSummary(){const m=mjob();document.getElementById('map-sum').textContent=m.cameras.length||m.runs.length?m.cameras.length+' camera'+(m.cameras.length===1?'':'s')+', '+m.runs.length+' run'+(m.runs.length===1?'':'s'):'No cameras or runs yet'}
+let meW=null,me=null,meLay=null;
 async function mapOpen(){document.getElementById('mp').classList.remove('hidden');window.scrollTo(0,0);if(!(await loadLeaflet())){document.getElementById('mp-hint').textContent='Map could not load. Check your signal.';return}
-if(!mpL){mpL=L.map('mp-map');L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19,attribution:'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'}).addTo(mpL);mpLay=L.layerGroup().addTo(mpL);mpL.on('click',mapTap)}
-mpM='';mpSel=null;mpRun=null;const m=mjob();setTimeout(()=>mpL.invalidateSize(),60);
-if(m.view)mpL.setView([m.view.lat,m.view.lng],m.view.zoom);else if(m.geo&&m.geo.lat!=null)mpL.setView([m.geo.lat,m.geo.lng],19);
-else{mpL.setView([29.76,-95.37],11);mapRender();document.getElementById('mp-hint').textContent='Finding the address...';const r=await post('/geocode',{});const d=await r.json().catch(()=>({}));
-if(r.ok&&d.lat!=null){m.geo={lat:d.lat,lng:d.lng};mpL.setView([d.lat,d.lng],19)}else{mapRender();document.getElementById('mp-hint').textContent='Address not found. Pan and zoom to the site.';return}}
-mapRender()}
-function mapClose(){if(mpRun&&mpRun.pts.length&&!confirm('Throw away the run you are drawing?'))return;mpRun=null;mpM='';document.getElementById('mp').classList.add('hidden');if(mpL&&!devLock())mapSave();mapSummary()}
+if(!mpL){mpL=L.map('mp-map');L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:21,maxNativeZoom:19,attribution:'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community'}).addTo(mpL);mpLay=L.layerGroup().addTo(mpL);meLay=L.layerGroup().addTo(mpL);mpL.on('click',mapTap)}
+mpM='';mpSel=null;mpRun=null;const m=mjob();setTimeout(()=>mpL.invalidateSize(),60);document.getElementById('mp-q').value=(m.geo&&m.geo.q&&m.geo.q!=='My location')?m.geo.q:(currentJob.address||'');document.getElementById('mp-loc').textContent='';meStart();
+if(m.view)mpL.setView([m.view.lat,m.view.lng],m.view.zoom);else if(m.geo&&m.geo.lat!=null)mpL.setView([m.geo.lat,m.geo.lng],19);else mpL.setView([29.76,-95.37],11);
+mapRender();if(m.geo&&m.geo.addr===(currentJob.address||'').trim())return;
+document.getElementById('mp-hint').textContent='Finding the address...';const r=await post('/geocode',{});const d=await r.json().catch(()=>({}));
+if(d.geo)m.geo=d.geo;if(r.ok&&d.lat!=null&&!m.view)mpL.setView([d.lat,d.lng],19);mapRender()}
+function mapClose(){if(mpRun&&mpRun.pts.length&&!confirm('Throw away the run you are drawing?'))return;mpRun=null;mpM='';meStop();document.getElementById('mp').classList.add('hidden');if(mpL&&!devLock())mapSave();mapSummary()}
+async function mapFind(){if(devLock())return;const q=document.getElementById('mp-q').value.trim();if(!q){alert('Type the address');return}document.getElementById('mp-hint').textContent='Finding...';
+const r=await post('/geocode',{q:q});const d=await r.json().catch(()=>({}));const m=mjob();if(r.ok&&d.geo){m.geo=d.geo;mpL.setView([d.lat,d.lng],19);mapRender();mapSave()}else{mapRender();document.getElementById('mp-hint').textContent=r.status===404?'Address not found. Try a shorter address, or pan to the site.':'Lookup failed. Try again.'}}
+function meStart(){meStop();me=null;if(!navigator.geolocation){document.getElementById('mp-loc').textContent='Location not available on this device.';return}
+meW=navigator.geolocation.watchPosition(p=>{me={lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};document.getElementById('mp-loc').textContent='';meDraw()},
+e=>{me=null;meDraw();document.getElementById('mp-loc').textContent=e.code===1?'Location blocked. Allow location for this site in your browser settings.':'Location not available right now.'},{enableHighAccuracy:true,maximumAge:10000,timeout:20000})}
+function meStop(){if(meW!==null&&navigator.geolocation)navigator.geolocation.clearWatch(meW);meW=null}
+function meDraw(){if(!meLay)return;meLay.clearLayers();if(!me)return;L.circle([me.lat,me.lng],{radius:me.acc||0,color:'#1e88e5',weight:1,fillOpacity:.15,interactive:false}).addTo(meLay);L.circleMarker([me.lat,me.lng],{radius:8,color:'#fff',weight:3,fillColor:'#1e88e5',fillOpacity:1,interactive:false}).addTo(meLay)}
+function meCenter(){if(me){mpL.setView([me.lat,me.lng],Math.max(mpL.getZoom(),18));return}const t=document.getElementById('mp-loc');if(!t.textContent)t.textContent='Finding your location...';if(meW===null)meStart()}
+async function useMeSite(){if(devLock())return;if(!me){meCenter();alert('Waiting for your location. Try again in a moment.');return}if(!confirm('Set the job site to where you are now?'))return;
+const r=await post('/site',{lat:me.lat,lng:me.lng});const d=await r.json().catch(()=>({}));if(r.ok){mjob().geo=d.geo;mpL.setView([me.lat,me.lng],19);mapRender();mapSave()}else alert(d.error||'Error')}
 function mapMode(md){if(devLock())return;mpM=mpM===md?'':md;mpSel=null;mpRun=mpM==='measure'?{pts:[]}:null;mapRender()}
 function mapTap(e){if(devLock())return;const m=mjob();const p=[e.latlng.lat,e.latlng.lng];
 if(mpM==='cam'){m.cameras.push({lat:p[0],lng:p[1],dir:0,fov:90,range:60});mpM='';mapSave('cam')}
@@ -609,12 +623,14 @@ function cmp(d){return['N','NE','E','SE','S','SW','W','NW'][Math.round(d/45)%8]}
 function segLabels(pts,col){for(let i=0;i<pts.length-1;i++){const a=pts[i],b=pts[i+1];L.marker([(a[0]+b[0])/2,(a[1]+b[1])/2],{interactive:false,icon:L.divIcon({className:'',html:'<span class="mp-seg">'+Math.round(mft(a,b))+' ft</span>',iconSize:null})}).addTo(mpLay)}}
 function mapRender(){if(!mpL)return;const m=mjob(),lock=devLock();mpLay.clearLayers();
 document.querySelectorAll('#mp-tools button[data-m]').forEach(b=>{b.classList.toggle('on',b.dataset.m===mpM);b.style.display=lock?'none':''});
+const gh=m.geo&&m.geo.lat!=null;document.getElementById('mp-find').classList.toggle('hidden',lock);document.getElementById('mp-usesite').classList.toggle('hidden',lock||gh);
+if(gh){const at=(m.geo.q==='My location'?'Site (set by location): ':'')+(currentJob.address||m.geo.q||'Job site');L.marker([m.geo.lat,m.geo.lng],{zIndexOffset:-500,icon:L.divIcon({className:'',html:'<span class="mp-addr"></span>',iconSize:[0,0],iconAnchor:[0,0]})}).addTo(mpLay).bindPopup(esc(at)+(m.geo.q&&m.geo.q!==currentJob.address&&m.geo.q!=='My location'?'<br><span style="color:#666">Found by: '+esc(m.geo.q)+'</span>':'')).getElement().querySelector('.mp-addr').textContent=at}
 m.cameras.forEach((c,i)=>{const col=MCOL[i%MCOL.length];L.polygon(cone(c),{color:col,weight:2,fillOpacity:.3,interactive:false}).addTo(mpLay);
 const mk=L.marker([c.lat,c.lng],{draggable:!lock,icon:L.divIcon({className:'',html:'<span class="pin" style="position:static;transform:none;display:inline-block;background:'+col+';color:#111">'+esc(c.label||'C')+'</span>',iconSize:[36,36],iconAnchor:[18,18]})}).addTo(mpLay);
 mk.on('click',()=>{if(mpM)return;mpSel={k:'cam',id:c.id};mapRender()});mk.on('dragend',ev=>{const q=ev.target.getLatLng();c.lat=q.lat;c.lng=q.lng;mapSave()})});
 m.runs.forEach(r=>{const ln=L.polyline(r.pts,{color:'#ffea00',weight:(mpSel&&mpSel.id===r.id)?7:4}).addTo(mpLay);ln.on('click',ev=>{L.DomEvent.stopPropagation(ev);if(mpM)return;mpSel={k:'run',id:r.id};mapRender()});segLabels(r.pts)});
 if(mpRun&&mpRun.pts.length){L.polyline(mpRun.pts,{color:'#00e5ff',weight:4,dashArray:'8 6'}).addTo(mpLay);mpRun.pts.forEach(q=>L.circleMarker(q,{radius:6,color:'#00e5ff',fillOpacity:1,interactive:false}).addTo(mpLay));segLabels(mpRun.pts)}
-document.getElementById('mp-hint').textContent=lock?'View only':mpM==='cam'?'Tap the map where the camera goes':mpM==='measure'?'Tap points along the run':'Tap a camera or run to change it';
+document.getElementById('mp-hint').textContent=!gh&&!lock&&!mpM&&!mpSel?'Address not found. Type it above and tap Find, use My Location, or pan to the site.':lock?'View only':mpM==='cam'?'Tap the map where the camera goes':mpM==='measure'?'Tap points along the run':'Tap a camera or run to change it';
 const P=document.getElementById('mp-panel');P.innerHTML='';const btn=(t,f,cls)=>{const b=document.createElement('button');b.textContent=t;b.onclick=f;if(cls)b.style.cssText=cls;return b};const grid=(...bs)=>{const g=document.createElement('div');g.className='mp-b';bs.forEach(b=>g.appendChild(b));return g};
 const box=document.createElement('div');box.className='job';box.style.border='2px solid var(--accent)';const ttl=document.createElement('div');ttl.style.cssText='font-weight:800;font-size:1.2rem';box.appendChild(ttl);const inf=document.createElement('div');inf.style.fontSize='1.1rem';box.appendChild(inf);
 if(mpRun){const tot=mpRun.pts.slice(1).reduce((a,q,i)=>a+mft(mpRun.pts[i],q),0);ttl.textContent='New Run';inf.textContent=mpRun.pts.length+' points, '+Math.round(tot)+' ft';
@@ -977,30 +993,50 @@ def save_map(job_id):
     return jsonify({'ok':True,'map':m})
 
 GEO_LOCK=threading.Lock(); GEO_LAST=[0.0]
+def nominatim(q):
+    with GEO_LOCK:
+        wait=1.1-(time.time()-GEO_LAST[0])
+        if wait>0: time.sleep(wait)
+        try:
+            req=urllib.request.Request('https://nominatim.openstreetmap.org/search?'+urllib.parse.urlencode({'format':'json','limit':1,'q':q}),
+                headers={'User-Agent':'TrueSense-FieldOps/1.0 (truesense-fieldops.onrender.com)'})
+            res=json.loads(urllib.request.urlopen(req, timeout=8).read().decode())
+        finally: GEO_LAST[0]=time.time()
+    return (float(res[0]['lat']),float(res[0]['lon'])) if res else None
+
+def set_geo(conn, row, g):
+    raw=json.loads(row['map_data']) if row['map_data'] else {}
+    raw=raw if isinstance(raw,dict) else {}
+    raw['geo']=g; conn.execute('UPDATE jobs SET map_data=? WHERE id=?',(json.dumps(raw),row['id'])); conn.commit()
+
 @app.route('/api/jobs/<job_id>/geocode', methods=['POST'])
 def geocode_job(job_id):
-    conn=get_db(); row,err=own_job(conn, job_id)
+    q=str((request.get_json(silent=True) or {}).get('q') or '').strip()[:200]
+    conn=get_db(); row,err=(survey_edit_row if q else own_job)(conn, job_id)
     if err: conn.close(); return err
-    addr=(row['address'] or '').strip(); m=parse_map(row['map_data'])
-    if not addr: conn.close(); return jsonify({'error':'no address'}),404
-    g=m['geo']
-    if not (g and g.get('addr')==addr):
-        g={'addr':addr,'lat':None,'lng':None}
-        try:
-            with GEO_LOCK:
-                wait=1.1-(time.time()-GEO_LAST[0])
-                if wait>0: time.sleep(wait)
-                req=urllib.request.Request('https://nominatim.openstreetmap.org/search?'+urllib.parse.urlencode({'format':'json','limit':1,'q':addr}),
-                    headers={'User-Agent':'TrueSense-FieldOps/1.0 (truesense-fieldops.onrender.com)'})
-                res=json.loads(urllib.request.urlopen(req, timeout=8).read().decode()); GEO_LAST[0]=time.time()
-            if res: g={'addr':addr,'lat':float(res[0]['lat']),'lng':float(res[0]['lon'])}
+    addr=(row['address'] or '').strip(); g=parse_map(row['map_data'])['geo']
+    if not q and not addr: conn.close(); return jsonify({'error':'no address'}),404
+    if q or not (g and g.get('addr')==addr):
+        try: hit=nominatim(q or addr)
         except Exception as e:
             app.logger.warning('Geocode failed for %s: %s', job_id, e); conn.close(); return jsonify({'error':'lookup failed'}),502
-        raw=json.loads(row['map_data']) if row['map_data'] else {}
-        raw=raw if isinstance(raw,dict) else {}
-        raw['geo']=g; conn.execute('UPDATE jobs SET map_data=? WHERE id=?',(json.dumps(raw),job_id)); conn.commit()
+        if hit: g={'addr':addr,'q':q or addr,'lat':hit[0],'lng':hit[1]}
+        elif q: conn.close(); return jsonify({'error':'address not found'}),404
+        else: g={'addr':addr,'q':addr,'lat':None,'lng':None}
+        set_geo(conn, row, g)
     conn.close()
-    return (jsonify({'ok':True,'lat':g['lat'],'lng':g['lng']}) if g.get('lat') is not None else (jsonify({'error':'address not found'}),404))
+    return (jsonify({'ok':True,'geo':g,'lat':g['lat'],'lng':g['lng']}) if g.get('lat') is not None else (jsonify({'error':'address not found','geo':g}),404))
+
+@app.route('/api/jobs/<job_id>/site', methods=['POST'])
+def set_site(job_id):
+    d=request.get_json(silent=True) or {}
+    lat=_num(d.get('lat'),-90,90,None); lng=_num(d.get('lng'),-180,180,None)
+    if lat is None or lng is None: return jsonify({'error':'bad location'}),400
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    g={'addr':(row['address'] or '').strip(),'q':'My location','lat':round(lat,7),'lng':round(lng,7)}
+    set_geo(conn, row, g); conn.close()
+    return jsonify({'ok':True,'geo':g})
 
 def devphoto_files(conn, job_id):
     return {r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='devphoto'",(job_id,)).fetchall()}
