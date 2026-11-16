@@ -488,6 +488,17 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+BUILTIN_SAFETY_TOPICS = [
+    ('Ladder Safety', 'Check rungs, feet and locks before you climb.\nSet it on flat ground, 1 foot out for every 4 feet up.\nKeep 3 points of contact. Do not stand on the top 2 steps.\nMove the ladder. Do not lean out past the rails.'),
+    ('Lift Use', 'Only trained people run the lift.\nDo the walk around check: tires, controls, guard rails, alarms.\nWear the harness and clip in on boom lifts.\nWatch for overhead lines, ceilings and people below.'),
+    ('Working Near Live Electrical', 'Treat every wire as live until tested.\nFind the panel and breaker before you start.\nKeep low voltage cable away from high voltage. Use separate boxes and paths.\nIf in doubt, stop and call the office. Never open a panel you are not trained for.'),
+    ('Fall Protection', 'Over 6 feet with no rail means fall protection.\nCheck harness and lanyard before use.\nTie off to a rated anchor, not pipe or conduit.\nCover or mark floor holes and open edges.'),
+    ('Ceiling Work and Asbestos Awareness', 'Older buildings may have asbestos in ceiling tiles, pipe wrap and flooring.\nIf it looks old, crumbly or the customer is not sure, do not cut, drill or break it. Stop and call the office.\nMove tiles gently. Wear a dust mask and glasses.\nWatch for wires, sprinklers and sharp edges above the ceiling.'),
+    ('Eye Protection', 'Wear safety glasses when drilling, cutting, or working overhead.\nDust and debris fall when you open ceilings.\nUse a face shield for grinding.\nClean glasses so you can see. Replace scratched ones.'),
+]
+SAFETY_ITEMS = [('ppe','PPE on (hard hat, glasses, gloves, boots)'),('ladder','Ladders checked and set right'),('lift','Lift checked, trained operator'),
+    ('electrical','Live power found and kept clear'),('housekeeping','Work area clean, no trip hazards'),('crewtalk','Site hazards talked over with crew')]
+
 def init_db():
     conn = get_db()
     conn.execute('''CREATE TABLE IF NOT EXISTS jobs (
@@ -543,6 +554,16 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS daily_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, log_date TEXT, author TEXT, work_done TEXT, crew TEXT, hours REAL, materials TEXT, issues TEXT, weather TEXT,
         photos TEXT, created_at TEXT, updated_at TEXT, UNIQUE(job_id, log_date))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS safety_topics (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, points TEXT, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS safety_forms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, kind TEXT, form_date TEXT, topic_name TEXT, topic_points TEXT, answers TEXT, hazards TEXT, crew TEXT, signer TEXT, signature TEXT, created_at TEXT)''')
+    r=conn.execute("SELECT value FROM settings WHERE key='safety_seeded'").fetchone(); sseeded=set(json.loads(r['value'])) if r else set()
+    have={(x['name'] or '').strip().lower() for x in conn.execute('SELECT name FROM safety_topics').fetchall()}
+    for name, pts in BUILTIN_SAFETY_TOPICS:
+        if name not in sseeded and name.lower() not in have:
+            conn.execute('INSERT INTO safety_topics (name,points,created_at) VALUES (?,?,?)',(name,pts,datetime.utcnow().isoformat()))
+        sseeded.add(name)
+    conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('safety_seeded',?)",(json.dumps(sorted(sseeded)),))
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     r=conn.execute("SELECT value FROM settings WHERE key='tpl_seeded'").fetchone(); seeded=set(json.loads(r['value'])) if r else set()
@@ -624,7 +645,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
@@ -687,7 +708,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
 <div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
 <button class="big-btn green" style="font-size:1.2rem;padding:18px" onclick="approveJob()">Approve</button></div>{% endif %}</div>
-<div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="dl-link" href="#">Daily Log</a>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
+<div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="dl-link" href="#">Daily Log</a><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="sf-link" href="#">Safety</a>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
 <div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
@@ -881,7 +902,7 @@ function renderClock(){const c=currentJob.clock||{},b=document.getElementById('c
 b.textContent=c.open?'Clock Out':'Clock In';b.className='big-btn '+(c.open?'stop':'green');let h='';
 if(c.open)h+='<b>Clocked in '+esc(c.in_local)+'</b>'+(c.in_dist?'<br>'+esc(c.in_dist):'')+(c.in_flag?'<br><b style="color:#b00020">'+esc(c.in_flag)+'</b>':'');
 if(c.other)h+='<br><b style="color:#b00020">Still clocked in on job '+esc(c.other)+'</b>';if(c.today_hours)h+='<br>Today on this job: '+c.today_hours+' hrs';i.innerHTML=h;
-document.getElementById('dl-link').href='/job/'+encodeURIComponent(currentJob.id)+'/daily';const lg=document.getElementById('clk-log');if(lg)lg.href='/timelog?job='+encodeURIComponent(currentJob.id)}
+document.getElementById('sf-link').href='/job/'+encodeURIComponent(currentJob.id)+'/safety';document.getElementById('dl-link').href='/job/'+encodeURIComponent(currentJob.id)+'/daily';const lg=document.getElementById('clk-log');if(lg)lg.href='/timelog?job='+encodeURIComponent(currentJob.id)}
 async function clockTap(){const b=document.getElementById('clk-btn');b.disabled=true;b.textContent='Getting location...';
 const loc=await new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:15000,maximumAge:30000})});
 const r=await post('/clock',loc||{});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Error');renderClock();return}
@@ -2886,6 +2907,132 @@ def daily_log(job_id):
     if not ok: cur.update({k:(request.form.get(k) or '') for k in ('work_done','crew','materials','issues','weather')})
     logs=[log_dict(r) for r in conn.execute('SELECT * FROM daily_logs WHERE job_id=? ORDER BY log_date DESC LIMIT 60',(job_id,)).fetchall()]; conn.close()
     return render_template_string(DAILY_HTML, title='Daily Log', j=row, cur=cur, logs=logs, today=today, msg=msg, ok=ok)
+
+SIGPAD = """<label>Sign with your finger</label><canvas class="sig" width="600" height="200" style="width:100%;height:160px;border:2px solid #ddd;border-radius:10px;touch-action:none;background:#fff"></canvas>
+<input type="hidden" name="signature"><button type="button" class="btn" onclick="sigClear(this)">Clear Signature</button>"""
+SIG_JS = """<script>
+document.querySelectorAll('canvas.sig').forEach(c=>{const x=c.getContext('2d');x.lineWidth=3;x.lineCap='round';x.strokeStyle='#111';let d=false;c.dataset.ink='';
+const pt=e=>{const r=c.getBoundingClientRect();return[(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height]};
+c.addEventListener('pointerdown',e=>{d=true;c.setPointerCapture(e.pointerId);const[a,b]=pt(e);x.beginPath();x.moveTo(a,b)});
+c.addEventListener('pointermove',e=>{if(!d)return;const[a,b]=pt(e);x.lineTo(a,b);x.stroke();c.dataset.ink='1'});c.addEventListener('pointerup',()=>d=false)});
+function sigClear(b){const c=b.form.querySelector('canvas.sig');c.getContext('2d').clearRect(0,0,c.width,c.height);c.dataset.ink=''}
+document.querySelectorAll('form.sigform').forEach(f=>f.addEventListener('submit',e=>{const c=f.querySelector('canvas.sig');if(!c.dataset.ink){e.preventDefault();alert('Please sign first');return}f.querySelector('[name=signature]').value=c.toDataURL('image/png')}));
+</script>"""
+
+SAFETY_HTML = FIELD_HEAD + """<h2>Safety</h2><div style="text-align:center;font-weight:600">Job {{ j.id }} &middot; {{ j.title }}</div>
+<a class="btn" href="/?job={{ j.id }}">Back to Job</a>
+{% if msg %}<div class="job {{ 'ok' if ok else 'flag' }}">{{ msg }}</div>{% endif %}
+<div class="job"><b>Today</b><div>Daily Safety Check: {% if done.daily %}<span class="ok">Done ({{ done.daily|join(', ') }})</span>{% else %}<span class="flag">Not done</span>{% endif %}</div>
+<div>Toolbox Talk: {% if done.talk %}<span class="ok">Done ({{ done.talk|join(', ') }})</span>{% else %}<span class="flag">Not done</span>{% endif %}</div></div>
+<details class="job"{% if not done.daily %} open{% endif %}><summary style="font-weight:700;font-size:1.15rem;cursor:pointer">Daily Safety Check</summary>
+<form method="post" action="/job/{{ j.id }}/safety/daily" class="sigform">{% for k,label in items %}<label>{{ label }}</label><select name="{{ k }}" required><option value="">Pick one</option><option>OK</option><option>Problem</option><option>N/A</option></select>{% endfor %}
+<label>Hazards or problems found</label><textarea name="hazards" rows="2" maxlength="1000" placeholder="None (required if you picked Problem)"></textarea>
+""" + SIGPAD + """<button class="btn gold" type="submit">Submit Safety Check</button></form></details>
+<details class="job"{% if done.daily and not done.talk %} open{% endif %}><summary style="font-weight:700;font-size:1.15rem;cursor:pointer">Toolbox Talk</summary>
+<form method="post" action="/job/{{ j.id }}/safety/talk" class="sigform"><label>Topic</label><select name="topic" required onchange="document.querySelectorAll('.tp').forEach(e=>e.style.display=e.dataset.id===this.value?'block':'none')"><option value="">Pick a topic</option>{% for t in topics %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}</select>
+{% for t in topics %}<div class="tp pre job" data-id="{{ t.id }}" style="display:none">{{ t.points }}</div>{% endfor %}
+<label>Who was there</label><input name="crew" maxlength="300" required placeholder="Mike, Joe">
+""" + SIGPAD + """<button class="btn gold" type="submit">Sign Toolbox Talk</button></form></details>
+<h3>Past forms</h3>{% for f in forms %}<a class="btn" style="text-align:left" href="/safety/form/{{ f.id }}">{{ f.form_date }} &middot; {{ 'Safety Check' if f.kind=='daily' else 'Talk: '+f.topic_name }} &middot; {{ f.signer }}{% if f.problem %} <span class="flag">Problem</span>{% endif %}</a>{% else %}<div class="muted">None yet.</div>{% endfor %}
+""" + SIG_JS + "</body></html>"
+
+SAFETY_FORM_HTML = FIELD_HEAD + """<h2>{{ 'Daily Safety Check' if f.kind=='daily' else 'Toolbox Talk' }}</h2><a class="btn" href="{{ back }}">Back</a>
+<div class="job"><div><b>Job:</b> {{ f.job_id }} {{ j.title if j else '' }}</div><div><b>Date:</b> {{ f.form_date }}</div><div><b>Signed by:</b> {{ f.signer }} at {{ when }}</div>
+{% if f.kind=='daily' %}{% for k,label in items %}<div>{{ label }}: <b class="{{ 'flag' if ans.get(k)=='Problem' else '' }}">{{ ans.get(k,'-') }}</b></div>{% endfor %}<div class="pre"><b>Hazards:</b> {{ f.hazards or 'None' }}</div>
+{% else %}<div><b>Topic:</b> {{ f.topic_name }}</div><div class="pre job">{{ f.topic_points }}</div><div><b>Who was there:</b> {{ f.crew }}</div>{% endif %}
+<img src="{{ f.signature }}" alt="signature" style="width:100%;max-width:400px;border-bottom:1px solid #111;margin-top:8px"></div></body></html>"""
+
+SAFETY_OFFICE_HTML = FIELD_HEAD + """<h2>Safety (office only)</h2><a class="btn" href="/">Back to Jobs</a>
+{% if msg %}<div class="job {{ 'ok' if ok else 'flag' }}">{{ msg }}</div>{% endif %}
+<h3>Last 14 days</h3>{% for r in days %}<div class="job"><b>{{ r.date }} &middot; Job <a href="/job/{{ r.job_id }}/safety">{{ r.job_id }}</a></b> {{ r.title }}
+<div>Safety Check: {% if r.daily %}<span class="ok">{{ r.daily|join(', ') }}</span>{% else %}<span class="flag">Not done</span>{% endif %}{% if r.problem %} <span class="flag">Problem reported</span>{% endif %}</div>
+<div>Toolbox Talk: {% if r.talk %}<span class="ok">{{ r.talk|join(', ') }}</span>{% else %}<span class="flag">Not done</span>{% endif %}</div></div>{% else %}<div class="muted">No safety forms yet.</div>{% endfor %}
+<div class="muted">Shows jobs with a clock in, daily log, or safety form that day.</div>
+<h3>Toolbox talk topics</h3>{% for t in topics %}<div class="job"><b>{{ t.name }}</b><div class="pre muted">{{ t.points }}</div><form method="post" action="/safety/topic/delete/{{ t.id }}" onsubmit="return confirm('Delete this topic?')"><button class="btn" type="submit">Delete</button></form></div>{% endfor %}
+<form method="post" action="/safety/topic" class="job"><b>Add a topic</b><input name="name" required maxlength="80" placeholder="Topic name"><textarea name="points" rows="4" required maxlength="2000" placeholder="One talking point per line"></textarea><button class="btn gold" type="submit">Add Topic</button></form>
+</body></html>"""
+
+def sig_ok(v): return isinstance(v,str) and v.startswith('data:image/png;base64,') and 200<len(v)<400000
+
+def safety_done(conn, job_id, day):
+    out={'daily':[], 'talk':[]}
+    for f in conn.execute('SELECT kind,signer FROM safety_forms WHERE job_id=? AND form_date=? ORDER BY id',(job_id,day)).fetchall():
+        if f['signer'] not in out.get(f['kind'],[]): out.setdefault(f['kind'],[]).append(f['signer'])
+    return out
+
+@app.route('/job/<job_id>/safety', methods=['GET'])
+def safety_page(job_id, msg=None, ok=True):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    day=today_local().isoformat(); forms=[]
+    for f in conn.execute('SELECT id,kind,form_date,topic_name,signer,answers FROM safety_forms WHERE job_id=? ORDER BY id DESC LIMIT 100',(job_id,)).fetchall():
+        d=dict(f); d['problem']='Problem' in (f['answers'] or ''); forms.append(d)
+    topics=[dict(t) for t in conn.execute('SELECT * FROM safety_topics ORDER BY id').fetchall()]
+    done=safety_done(conn, job_id, day); conn.close()
+    return render_template_string(SAFETY_HTML, title='Safety', j=row, items=SAFETY_ITEMS, topics=topics, forms=forms, done=done, msg=msg, ok=ok)
+
+@app.route('/job/<job_id>/safety/<kind>', methods=['POST'])
+def safety_submit(job_id, kind):
+    if kind not in ('daily','talk'): return ('',404)
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return ('',403)
+    sig=request.form.get('signature') or ''
+    if not sig_ok(sig): conn.close(); return safety_page(job_id, msg='Not saved. Please sign.', ok=False)
+    now=datetime.utcnow().isoformat(timespec='seconds'); day=today_local().isoformat()
+    if kind=='daily':
+        ans={k:request.form.get(k) for k,_ in SAFETY_ITEMS}
+        if any(v not in ('OK','Problem','N/A') for v in ans.values()): conn.close(); return safety_page(job_id, msg='Not saved. Answer every line.', ok=False)
+        hz=(request.form.get('hazards') or '').strip()[:1000]
+        if 'Problem' in ans.values() and not hz: conn.close(); return safety_page(job_id, msg='Not saved. Tell us the problem.', ok=False)
+        conn.execute('INSERT INTO safety_forms (job_id,kind,form_date,answers,hazards,signer,signature,created_at) VALUES (?,?,?,?,?,?,?,?)',(job_id,'daily',day,json.dumps(ans),hz,me(),sig,now))
+    else:
+        try: t=conn.execute('SELECT * FROM safety_topics WHERE id=?',(int(request.form.get('topic') or 0),)).fetchone()
+        except ValueError: t=None
+        crew=(request.form.get('crew') or '').strip()[:300]
+        if not t or not crew: conn.close(); return safety_page(job_id, msg='Not saved. Pick a topic and list who was there.', ok=False)
+        conn.execute('INSERT INTO safety_forms (job_id,kind,form_date,topic_name,topic_points,crew,signer,signature,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(job_id,'talk',day,t['name'],t['points'],crew,me(),sig,now))
+    conn.commit(); conn.close()
+    return safety_page(job_id, msg='Saved. Thank you.')
+
+@app.route('/safety/form/<int:fid>')
+def safety_form_view(fid):
+    conn=get_db(); f=conn.execute('SELECT * FROM safety_forms WHERE id=?',(fid,)).fetchone()
+    j=page_job(conn, f['job_id']) if f else None; conn.close()
+    if not f or not j: return redirect('/')
+    try: ans=json.loads(f['answers'] or '{}')
+    except Exception: ans={}
+    return render_template_string(SAFETY_FORM_HTML, title='Safety Form', f=f, j=j, ans=ans, items=SAFETY_ITEMS, when=utc_to_local(f['created_at'],'%I:%M %p'), back='/job/%s/safety'%f['job_id'])
+
+@app.route('/safety')
+def safety_office(msg=None, ok=True):
+    if not is_office(): return redirect('/')
+    conn=get_db(); start=(today_local()-timedelta(days=13)).isoformat(); keys={}
+    for f in conn.execute('SELECT job_id,kind,form_date,signer,answers FROM safety_forms WHERE form_date>=?',(start,)).fetchall():
+        r=keys.setdefault((f['form_date'],f['job_id']),{'daily':[],'talk':[],'problem':False})
+        if f['signer'] not in r[f['kind']]: r[f['kind']].append(f['signer'])
+        if 'Problem' in (f['answers'] or ''): r['problem']=True
+    for l in conn.execute('SELECT job_id,log_date FROM daily_logs WHERE log_date>=?',(start,)).fetchall(): keys.setdefault((l['log_date'],l['job_id']),{'daily':[],'talk':[],'problem':False})
+    for p in conn.execute('SELECT job_id,in_at FROM time_punches WHERE in_at>=?',(start,)).fetchall():
+        d=utc_to_local(p['in_at'],'%Y-%m-%d')
+        if d>=start: keys.setdefault((d,p['job_id']),{'daily':[],'talk':[],'problem':False})
+    titles={r['id']:r['title'] for r in conn.execute('SELECT id,title FROM jobs').fetchall()}
+    days=[dict(v,date=k[0],job_id=k[1],title=titles.get(k[1],'')) for k,v in sorted(keys.items(),key=lambda kv:(kv[0][0],kv[0][1]),reverse=True)]
+    topics=[dict(t) for t in conn.execute('SELECT * FROM safety_topics ORDER BY id').fetchall()]; conn.close()
+    return render_template_string(SAFETY_OFFICE_HTML, title='Safety', days=days, topics=topics, msg=msg, ok=ok)
+
+@app.route('/safety/topic', methods=['POST'])
+def safety_topic_add():
+    if not is_office(): return ('',403)
+    n=(request.form.get('name') or '').strip()[:80]; pts=(request.form.get('points') or '').strip()[:2000]
+    if not n or not pts: return safety_office(msg='Not saved. Fill in name and points.', ok=False)
+    conn=get_db(); conn.execute('INSERT INTO safety_topics (name,points,created_at) VALUES (?,?,?)',(n,pts,datetime.utcnow().isoformat())); conn.commit(); conn.close()
+    return redirect('/safety')
+
+@app.route('/safety/topic/delete/<int:tid>', methods=['POST'])
+def safety_topic_delete(tid):
+    if not is_office(): return ('',403)
+    conn=get_db(); conn.execute('DELETE FROM safety_topics WHERE id=?',(tid,)); conn.commit(); conn.close()
+    return redirect('/safety')
 
 @app.route('/to-order')
 def to_order():
