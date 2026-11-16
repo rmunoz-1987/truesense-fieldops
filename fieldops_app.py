@@ -606,7 +606,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -652,6 +652,9 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS stock_levels (item_id INTEGER, location TEXT, qty REAL DEFAULT 0, PRIMARY KEY (item_id, location))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS stock_moves (
         id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, location TEXT, qty REAL, job_id TEXT, who TEXT, note TEXT, unit_cost REAL, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS service_plans (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, client TEXT, site TEXT, phone TEXT, title TEXT, every_months INTEGER DEFAULT 12, next_date TEXT, tech TEXT,
+        price REAL DEFAULT 0, checklist TEXT, active INTEGER DEFAULT 1, last_job_id TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS push_subs (
         endpoint TEXT PRIMARY KEY, sub TEXT, p256dh TEXT, auth TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
@@ -760,7 +763,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -1594,6 +1597,10 @@ def build_invoice_draft(conn, job_id, now):
     pkg={'job_id':job_id,'customer':j['customer'],'phone':j['phone'],'address':j['address'],'title':j['title'],'scope':j['scope'],
          'tech':j['tech'],'materials':j['materials'] or '','materials_list':parse_materials(j['materials_list']),'hours':round((j['total_minutes'] or 0)/60,2),'miles':j['total_miles'] or 0,
          'notes':notes_log(conn, j),'photos':photos,'completed_at':j['completed_at'],'status':'ready_for_review (not sent)'}
+    pl=conn.execute('SELECT * FROM service_plans WHERE id=?',(j['plan_id'],)).fetchone() if j['plan_id'] else None
+    if pl:
+        pkg['service_plan']={'id':pl['id'],'title':pl['title'],'price':pl['price'] or 0,'every_months':pl['every_months']}
+        pkg['line_items']=[{'description':(pl['title'] or 'Service plan visit')+' - visit '+(j['scheduled_date'] or ''),'qty':1,'rate':pl['price'] or 0,'amount':pl['price'] or 0}]
     conn.execute('INSERT OR REPLACE INTO invoice_drafts (job_id,package,status,created_at) VALUES (?,?,?,?)',(job_id,json.dumps(pkg),'ready_for_review',now))
     conn.commit()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
@@ -2301,6 +2308,81 @@ def eq_search(conn, like, hit, out, office):
         for r in rows:
             if r['job_id']: hit(r['job_id'],'Equipment: '+(r['device'] or '')+' '+(r['serial'] or ''))
 SEARCH_HOOKS.append(eq_search)
+
+PLAN_LEAD_DAYS = 14
+def add_months(d, m):
+    y, mo = divmod(d.month - 1 + m, 12); y += d.year; mo += 1
+    import calendar as _c
+    return d.replace(year=y, month=mo, day=min(d.day, _c.monthrange(y, mo)[1]))
+def run_plans(conn):
+    made=[]; horizon=(today_local()+timedelta(days=PLAN_LEAD_DAYS)).isoformat()
+    for p in conn.execute("SELECT * FROM service_plans WHERE active=1 AND IFNULL(next_date,'')!='' AND next_date<=?",(horizon,)).fetchall():
+        try: nd=datetime.strptime(p['next_date'],'%Y-%m-%d').date()
+        except ValueError: continue
+        jid='SP%d-%s'%(p['id'],nd.strftime('%Y%m%d'))
+        if not conn.execute('SELECT 1 FROM jobs WHERE id=?',(jid,)).fetchone():
+            try: lines=[x for x in json.loads(p['checklist'] or '[]') if str(x).strip()]
+            except Exception: lines=[]
+            if not lines:
+                t=conn.execute('SELECT items FROM checklist_templates WHERE LOWER(name)=? ORDER BY id LIMIT 1',(DEFAULT_TEMPLATE.get('Service','').lower(),)).fetchone()
+                try: lines=[x for x in json.loads(t['items']) if str(x).strip()] if t else []
+                except Exception: lines=[]
+            tech=nice_name(p['tech']) or default_sub()
+            conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type,sale_amount,plan_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                         (jid,(p['title'] or 'Service visit'),p['client'] or '',p['site'] or '','Service plan visit (every %d months)'%(p['every_months'] or 12),'assigned',tech,datetime.utcnow().isoformat(),p['phone'] or '',
+                          json.dumps([{'text':x,'done':False} for x in (lines or DEFAULT_CHECKLIST)]),nd.isoformat(),'Service Plan','Service',p['price'] or None,p['id']))
+            made.append((tech,p['title'] or 'Service visit',p['client'] or '',nd.isoformat(),jid))
+        conn.execute('UPDATE service_plans SET next_date=?,last_job_id=? WHERE id=?',(add_months(nd,max(1,p['every_months'] or 12)).isoformat(),jid,p['id']))
+    conn.commit()
+    for tech,title,client,sd,jid in made: push_to_sub(tech,'New job: '+title,client+' - '+nice_day(sd),'/?job='+jid)
+    return len(made)
+_PLANS_AT=[0.0]
+@app.before_request
+def plans_tick():
+    if time.time()-_PLANS_AT[0]<600 or request.path.startswith(('/static/','/sw.js','/healthz')): return
+    _PLANS_AT[0]=time.time()
+    try:
+        conn=get_db(); run_plans(conn); conn.close()
+    except Exception as e: app.logger.warning('plans run failed %s', e)
+
+@app.route('/plans', methods=['GET','POST'])
+def plans_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); msg=''
+    if request.method=='POST':
+        f=request.form; a=f.get('action')
+        if a in ('add','edit'):
+            nd=(f.get('next_date') or '').strip()
+            try: nd=datetime.strptime(nd,'%Y-%m-%d').date().isoformat()
+            except ValueError: nd=''
+            try: em=max(1,min(60,int(f.get('every_months') or 12)))
+            except ValueError: em=12
+            chk=json.dumps([x.strip() for x in (f.get('checklist') or '').splitlines() if x.strip()])
+            vals=((f.get('client') or '').strip()[:120],(f.get('site') or '').strip()[:200],(f.get('phone') or '').strip()[:40],(f.get('title') or 'Service visit').strip()[:120],em,nd,nice_name(f.get('tech') or '')[:60],max(0,fnum(f.get('price'))),chk,1 if f.get('active','1')=='1' else 0)
+            if a=='add': conn.execute('INSERT INTO service_plans (client,site,phone,title,every_months,next_date,tech,price,checklist,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',vals+(now_local_str(),)); msg='Plan added'
+            else: conn.execute('UPDATE service_plans SET client=?,site=?,phone=?,title=?,every_months=?,next_date=?,tech=?,price=?,checklist=?,active=? WHERE id=?',vals+(f.get('plan_id'),)); msg='Plan saved'
+            conn.commit()
+        elif a=='run': msg='Made %d visits'%run_plans(conn)
+    plans=conn.execute('SELECT * FROM service_plans ORDER BY active DESC, next_date').fetchall()
+    eid=request.args.get('edit'); ed=conn.execute('SELECT * FROM service_plans WHERE id=?',(eid,)).fetchone() if eid else None; conn.close()
+    subs=sub_logins()
+    def form(p):
+        g=lambda k,d='': h((p[k] if p else d) or d)
+        try: chk='\n'.join(json.loads(p['checklist'] or '[]')) if p else ''
+        except Exception: chk=''
+        return ('<form method="post"><input type="hidden" name="action" value="%s"><input type="hidden" name="plan_id" value="%s">'%('edit' if p else 'add',g('id'))+
+            '<label>Client</label><input name="client" value="%s" required><label>Site address</label><input name="site" value="%s"><label>Client phone</label><input name="phone" value="%s">'%(g('client'),g('site'),g('phone'))+
+            '<label>Visit name</label><input name="title" value="%s" placeholder="Camera checkup"><div class="row"><div><label>Every how many months</label><input name="every_months" type="number" min="1" max="60" value="%s"></div><div><label>Next visit</label><input name="next_date" type="date" value="%s" required></div></div>'%(g('title','Service visit'),g('every_months','12'),g('next_date'))+
+            '<div class="row"><div><label>Sub</label><select name="tech">%s</select></div><div><label>Price per visit $</label><input name="price" type="number" step="0.01" min="0" value="%s"></div></div>'%(''.join('<option%s>%s</option>'%(' selected' if p and ckey(p['tech'])==ckey(n) else '',h(n)) for n in subs),('%g'%p['price']) if p and p['price'] else '')+
+            '<label>Checklist, one per line (optional)</label><textarea name="checklist" rows="3">%s</textarea>'%h(chk)+
+            '<label>Status</label><select name="active"><option value="1"%s>Active</option><option value="0"%s>Paused</option></select><button class="big-btn">%s</button></form>'%('' if p and not p['active'] else ' selected',' selected' if p and not p['active'] else '','Save Plan' if p else 'Add Plan'))
+    body='<div class="muted">Visits are made automatically %d days before the due date and land on the sub list. Approving the visit makes an invoice draft with the plan price. Nothing is sent.</div>'%PLAN_LEAD_DAYS
+    if ed: body+='<h2>Edit plan</h2>'+form(ed)+'<a class="big-btn gray" href="/plans">Cancel</a>'
+    body+='<h2>Plans</h2>'+(''.join('<a class="card" href="/plans?edit=%d"><b>%s</b> %s<div>%s</div><div class="muted">%s</div><div class="muted">Every %d months &middot; next %s &middot; %s &middot; %s%s</div></a>'%(
+        p['id'],h(p['title']),'<span class="okf">Active</span>' if p['active'] else '<span class="flag">Paused</span>',h(p['client']),h(p['site']),p['every_months'] or 12,h(nice_day(p['next_date'] or '')),h(p['tech'] or 'any sub'),money(p['price']),(' &middot; last visit '+h(p['last_job_id'])) if p['last_job_id'] else '') for p in plans) or '<div class="card">No plans yet.</div>')
+    body+='<form method="post"><input type="hidden" name="action" value="run"><button class="big-btn gray">Make due visits now</button></form>'
+    if not ed: body+='<h2>New plan</h2>'+form(None)
+    return ops_page('Service Plans', body, msg=msg)
 
 def stock_locations(): return ['Shop']+['Truck: '+n for n in sub_logins()]
 def my_truck(): return 'Truck: '+me()
