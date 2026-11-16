@@ -390,7 +390,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle" style="font-size:1.2rem">5. Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
-{% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button>{% endif %}
+{% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button><button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
@@ -668,13 +668,15 @@ m.cameras.forEach(c=>line(c.label+': facing '+cmp(c.dir)+', '+c.fov+'\u00b0, '+c
 function finishRun(){if(!mpRun||mpRun.pts.length<2){alert('Tap at least 2 points');return}const lb=prompt('Name this run (example: Bldg A to B)','');if(lb===null)return;mjob().runs.push({label:lb.trim(),pts:mpRun.pts,slack:0});mpRun=null;mpM='';mapSave('run')}
 async function mapSave(sel){const m=mjob();const c=mpL?mpL.getCenter():null;const r=await post('/map',{cameras:m.cameras,runs:m.runs,view:c?{lat:c.lat,lng:c.lng,zoom:mpL.getZoom()}:m.view});
 if(r.ok){const d=(await r.json()).map;currentJob.map=Object.assign(d,{geo:m.geo});if(sel==='cam'){const x=d.cameras[d.cameras.length-1];if(x)mpSel={k:'cam',id:x.id}}if(sel==='run'){const x=d.runs[d.runs.length-1];if(x)mpSel={k:'run',id:x.id}}}else alert('Error, not saved');mapRender()}
+async function surveyToJob(){const id=prompt('New Install Job ID (leave blank to auto-number)','');if(id===null)return;const r=await post('/to-job',{id:id.trim()});const d=await r.json().catch(()=>({}));
+if(r.ok){alert('Install job '+d.id+' created. Set its date and tech.');openJob(d.id)}else alert(d.error||'Error')}
 async function uploadPlans(inp){if(!inp.files.length)return;const fd=new FormData();[...inp.files].forEach(f=>fd.append('files',f));inp.value='';
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;renderDevices()}else alert(d.error||'Error')}
 async function removePlan(fn){if(!confirm('Remove this plan and all its devices?'))return;const r=await post('/plans/delete',{filename:fn});if(r.ok){const d=await r.json();currentJob.plans=d.plans;currentJob.devices=d.devices;devSel=null;devMove=null;renderDevices()}else alert('Error')}
 function renderKelly(){const done=currentJob.status==='completed'&&currentJob.job_type==='Survey';const lock=done&&!svEditing;
 document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=>e.disabled=lock);
 document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',!(done&&svEditing));
-const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);
+const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);const tj=document.getElementById('sv-tojob');if(tj)tj.classList.toggle('hidden',!lock);
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
 if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);const la=lock&&!{{ office|tojson }};document.getElementById('update-note').classList.toggle('hidden',la);document.getElementById('log-add').classList.toggle('hidden',la);renderDevices()}
 function fillSurvey(){svEditing=false;devType='';devSel=null;devMove=null;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
@@ -1107,23 +1109,50 @@ def survey_plan_sources(conn, row):
                       (row['id'],cust,cust,addr,addr)).fetchall()
     return [{'id':r['id'],'title':r['title'] or ''} for r in rows]
 
+def copy_plans(conn, src_id, job_id, devs):
+    src=conn.execute('SELECT survey_devices FROM jobs WHERE id=?',(src_id,)).fetchone(); now=datetime.utcnow().isoformat(); mp={}
+    for fn in plan_files(conn, src_id):
+        nf=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{os.path.splitext(fn)[1]}")
+        try: shutil.copyfile(os.path.join(app.config['UPLOAD_FOLDER'],fn),os.path.join(app.config['UPLOAD_FOLDER'],nf))
+        except OSError: continue
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,nf,'plan',now,'From survey '+src_id)); mp[fn]=nf
+    if not mp: return None
+    for d in parse_devices(src['survey_devices']):
+        if d['plan'] in mp: devs.append(dict(d,id='',plan=mp[d['plan']],installed=False,mac='',ip='',port='',clabel='',photo=''))
+    return number_devices(devs)
+
+@app.route('/api/jobs/<job_id>/to-job', methods=['POST'])
+def survey_to_job(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    conn=get_db(); src=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not src: conn.close(); return ('',404)
+    if src['job_type']!='Survey' or src['status']!='completed': conn.close(); return jsonify({'error':'only a completed survey'}),400
+    nid=str((request.get_json(silent=True) or {}).get('id') or '').strip()[:40]
+    if nid:
+        if conn.execute('SELECT 1 FROM jobs WHERE id=?',(nid,)).fetchone(): conn.close(); return jsonify({'error':'That Job ID already exists'}),409
+    else:
+        n=1
+        while conn.execute('SELECT 1 FROM jobs WHERE id=?',(f'{job_id}-I{n}' if n>1 else f'{job_id}-I',)).fetchone(): n+=1
+        nid=f'{job_id}-I{n}' if n>1 else f'{job_id}-I'
+    sv=clean_survey(src['survey_form']); devs=parse_devices(src['survey_devices'])
+    scope='\n\n'.join(x for x in [('What they want:\n'+sv['want_desc']) if sv['want_desc'] else '',('Site conditions:\n'+site_conditions(sv)) if site_conditions(sv) else '','From survey '+job_id] if x)
+    mats=[{'text':f'{n}x {t}','used':False} for t,n in dev_counts(devs).items()]
+    chk=[{'text':f"Mount and test {d['label']} ({d['type']})",'done':False} for d in devs]+[{'text':t,'done':False} for t in DEFAULT_CHECKLIST]
+    title=('Install: '+(src['title'] or src['customer'] or job_id))[:200]
+    conn.execute('INSERT INTO jobs (id,title,customer,address,phone,scope,tech,job_type,status,checklist,materials_list,created_at,scheduled_date,created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (nid,title,src['customer'],src['address'],src['phone'] or sv['contact_phone'],scope,src['tech'],'Install','assigned',json.dumps(chk),json.dumps(mats),datetime.utcnow().isoformat(),None,me()))
+    nd=copy_plans(conn, job_id, nid, []) if plan_files(conn, job_id) else []
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(nd or []),nid)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'id':nid}),201
+
 @app.route('/api/jobs/<job_id>/plans/copy', methods=['POST'])
 def copy_survey_plan(job_id):
     conn=get_db(); row,err=survey_edit_row(conn, job_id)
     if err: conn.close(); return err
     src_id=str((request.get_json(silent=True) or {}).get('from') or '')
     if src_id not in [x['id'] for x in survey_plan_sources(conn, row)]: conn.close(); return jsonify({'error':'no matching survey plan'}),400
-    src=conn.execute('SELECT survey_devices FROM jobs WHERE id=?',(src_id,)).fetchone()
-    devs=parse_devices(row['survey_devices']); now=datetime.utcnow().isoformat(); mp={}
-    for fn in plan_files(conn, src_id):
-        nf=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{os.path.splitext(fn)[1]}")
-        try: shutil.copyfile(os.path.join(app.config['UPLOAD_FOLDER'],fn),os.path.join(app.config['UPLOAD_FOLDER'],nf))
-        except OSError: continue
-        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,nf,'plan',now,'From survey '+src_id)); mp[fn]=nf
-    if not mp: conn.close(); return jsonify({'error':'survey plan files are missing'}),400
-    for d in parse_devices(src['survey_devices']):
-        if d['plan'] in mp: devs.append(dict(d,id='',plan=mp[d['plan']],installed=False,mac='',ip='',port='',clabel='',photo=''))
-    devs=number_devices(devs)
+    devs=copy_plans(conn, src_id, job_id, parse_devices(row['survey_devices']))
+    if devs is None: conn.close(); return jsonify({'error':'survey plan files are missing'}),400
     conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit(); plans=plan_files(conn, job_id); conn.close()
     return jsonify({'ok':True,'plans':plans,'devices':devs})
 
