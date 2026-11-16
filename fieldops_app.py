@@ -64,6 +64,42 @@ STATUSES = [('assigned', 'Open'), ('in_progress', 'In Progress'), ('waiting_part
 STATUS_LABEL = dict(STATUSES)
 PHOTO_TYPES = ['before', 'during', 'after']
 SURVEY_PHOTO_TYPES = ['survey']
+DEVICE_TYPES = [('Dome Cam','C','#1565c0'),('Bullet Cam','C','#0d47a1'),('PTZ Cam','C','#5e35b1'),('Card Reader','R','#2e7d32'),('Door Contact','DC','#00897b'),('Motion','M','#f9a825'),('Keypad','K','#6d4c41'),('Panel','P','#424242'),('NVR','N','#37474f'),('Intercom','I','#ad1457'),('WAP','W','#0277bd'),('Data Drop','D','#ef6c00'),('Speaker','S','#7b1fa2'),('TV','TV','#c62828')]
+DEV_PREFIX = {n: p for n, p, c in DEVICE_TYPES}
+PLAN_EXTS = {'.png', '.jpg', '.jpeg', '.webp', '.gif'}
+
+def parse_devices(raw):
+    try: items = json.loads(raw) if isinstance(raw, str) and raw else raw
+    except Exception: items = []
+    out = []
+    for i in (items if isinstance(items, list) else []):
+        if not isinstance(i, dict) or i.get('type') not in DEV_PREFIX: continue
+        try: x = min(100.0, max(0.0, float(i.get('x')))); y = min(100.0, max(0.0, float(i.get('y'))))
+        except (TypeError, ValueError): continue
+        out.append({'id': secure_filename(str(i.get('id') or ''))[:20], 'plan': secure_filename(str(i.get('plan') or '')), 'type': i['type'],
+                    'label': str(i.get('label') or '')[:10], 'x': round(x, 2), 'y': round(y, 2), 'note': str(i.get('note') or '').strip()[:500],
+                    'height': str(i.get('height') or '').strip()[:50], 'cable': str(i.get('cable') or '').strip()[:100]})
+    return out
+
+def number_devices(devs):
+    used = {}; todo = []
+    for d in devs:
+        if not d['id']: d['id'] = uuid.uuid4().hex[:10]
+        pre = DEV_PREFIX[d['type']]; lab = d['label']; num = lab[len(pre):]
+        if lab.startswith(pre) and num.isdigit() and int(num) not in used.setdefault(pre, set()): used[pre].add(int(num))
+        else: todo.append(d)
+    for d in todo:
+        pre = DEV_PREFIX[d['type']]; n = max(used.setdefault(pre, set()) or {0}) + 1; used[pre].add(n); d['label'] = f'{pre}{n}'
+    return devs
+
+def dev_counts(devs):
+    c = {}
+    for n, p, col in DEVICE_TYPES:
+        k = sum(1 for d in devs if d['type'] == n)
+        if k: c[n] = k
+    return c
+
+app.jinja_env.globals.update(DEV_COLORS={n: c for n, p, c in DEVICE_TYPES}, dev_counts=dev_counts)
 BLUEPRINT_EXTS = {'.pdf', '.png', '.jpg', '.jpeg', '.webp', '.heic'}
 
 def parse_materials(raw):
@@ -83,6 +119,7 @@ def job_dict(row):
     else: d['survey_office'] = d.get('survey_office') or ''
     d['punch_list'] = parse_ticks(d.get('punch_list')); d['quick_notes'] = d.get('quick_notes') or ''
     d['help_open'] = d.get('help_flag') == 'open'
+    d['devices'] = parse_devices(d.pop('survey_devices', None))
     if not is_office(): d.pop('private_notes', None)
     return d
 
@@ -147,7 +184,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -215,6 +252,10 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.menu .big-btn{margin:0;padding:18px 8px;box-sizing:border-box;font-family:inherit}
 .tech-h{font-weight:700;font-size:1.1rem;margin:18px 0 6px;padding-bottom:4px;border-bottom:2px solid var(--accent)}
 @media(min-width:900px){.dash{display:flex;gap:20px;align-items:flex-start}.menu{display:flex;flex-direction:column;flex:0 0 210px;position:sticky;top:12px}.dash main{flex:1;min-width:0}.tiles{grid-template-columns:repeat(4,1fr)}}
+.pal{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0}.pal button{padding:12px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-size:.95rem;font-weight:600;color:var(--text)}.pal button.on{border-color:var(--text);background:#fbfaf0}
+.pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
+.plan{position:relative;margin:8px 0;border:1px solid var(--border);border-radius:8px;overflow:hidden}.plan img{width:100%;height:auto;display:block}
+.pin{position:absolute;transform:translate(-50%,-50%);min-width:32px;padding:0 4px;height:32px;line-height:28px;font-size:.85rem;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);box-sizing:border-box}.pin.sel{outline:3px solid #111}
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
 </style></head><body{% if office %} class="office"{% endif %}>
 <div class="header">
@@ -266,6 +307,15 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle" style="font-size:1.2rem">3. Existing Conditions</div><input type="text" id="sv-current_system" placeholder="Current system"><input type="text" id="sv-power" placeholder="Power"><input type="text" id="sv-network" placeholder="Network"><input type="text" id="sv-conduit" placeholder="Conduit / pathways">
 <div class="ptitle" style="font-size:1.2rem">4. Obstacles</div>{% for o in obstacles %}<label class="chk"><input type="checkbox" class="sv-ob" value="{{ o }}"><span>{{ o }}</span></label>{% endfor %}
 <textarea id="sv-obstacle_notes" rows="3" placeholder="Other obstacles / notes"></textarea>
+<div class="ptitle" style="font-size:1.2rem">5. Floor Plan Devices</div><div class="big-btn" id="plan-add" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Area Photo</div>
+<input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
+<div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div>
+<div id="plans"></div>
+<div id="dev-edit" class="job hidden" style="border:2px solid var(--accent)"><div id="dv-title" style="font-weight:800;font-size:1.3rem"></div>
+<input type="text" id="dv-note" placeholder="Note (optional)"><input type="text" id="dv-height" placeholder="Mount height (optional)"><input type="text" id="dv-cable" placeholder="Cable run (optional)">
+<div id="dv-btns"><button class="big-btn" onclick="devSave()">Save</button><div class="row"><button class="big-btn gray" onclick="devMoveStart()">Move</button><button class="big-btn" style="background:#b00020" onclick="devDelete()">Delete</button></div></div>
+<button class="big-btn gray" onclick="devSel=null;renderDevices()">Close</button></div>
+<div id="dev-counts"></div>
 <div class="ptitle">Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 <div class="ptitle">Client Expectations</div><input type="text" id="sv-timeline" placeholder="Timeline"><input type="text" id="sv-budget" placeholder="Budget range (if given)"><input type="text" id="sv-decision_maker" placeholder="Decision maker">
 {% if office %}<div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
@@ -412,13 +462,46 @@ const savePunch=()=>post('/punch',{punch_list:currentJob.punch_list});
 const SV_TEXT=['want_desc','contact_name','contact_phone','current_system','power','network','conduit','obstacle_notes','timeline','budget','decision_maker'];
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
 let svEditing=false;
+const DEVS={{ dev_types|tojson }};let devType='',devSel=null,devMove=null;
+function devLock(){return currentJob.status==='completed'&&!svEditing}
+function devColor(t){const d=DEVS.find(x=>x[0]===t);return d?d[2]:'#333'}
+function devPrefix(t){const d=DEVS.find(x=>x[0]===t);return d?d[1]:'?'}
+function renderDevices(){if(!currentJob||currentJob.job_type!=='Survey')return;const lock=devLock();const plans=currentJob.plans||[];const devs=currentJob.devices=currentJob.devices||[];
+if(lock){devType='';devMove=null}
+document.getElementById('plan-add').classList.toggle('hidden',lock);
+const pal=document.getElementById('dev-palette');pal.classList.toggle('hidden',lock||!plans.length);pal.innerHTML='';
+DEVS.forEach(([n,p,c])=>{const b=document.createElement('button');b.className=devType===n?'on':'';const i=document.createElement('i');i.style.background=c;i.textContent=p;b.append(i,n);b.onclick=()=>{devType=devType===n?'':n;devMove=null;renderDevices()};pal.appendChild(b)});
+document.getElementById('dev-hint').textContent=lock||!plans.length?'':devMove?'Tap the new spot on the plan':devType?'Tap the plan to drop a '+devType:'Pick a device, then tap the plan';
+const w=document.getElementById('plans');w.innerHTML='';
+plans.forEach((fn,pi)=>{const box=document.createElement('div');box.className='plan';const img=document.createElement('img');img.src='/uploads/'+encodeURIComponent(fn);img.alt='floor plan';box.appendChild(img);
+devs.filter(d=>d.plan===fn).forEach(d=>{const pin=document.createElement('div');pin.className='pin'+(devSel===d.id?' sel':'');pin.style.left=d.x+'%';pin.style.top=d.y+'%';pin.style.background=devColor(d.type);pin.textContent=d.label||devPrefix(d.type);
+pin.onclick=e=>{e.stopPropagation();if(devMove)return planTap(e,fn,box);devSel=d.id;devType='';renderDevices();document.getElementById('dev-edit').scrollIntoView({behavior:'smooth',block:'center'})};box.appendChild(pin)});
+box.onclick=e=>planTap(e,fn,box);w.appendChild(box);
+if(!lock){const rb=document.createElement('button');rb.className='big-btn gray';rb.textContent='Remove Plan '+(pi+1);rb.onclick=()=>removePlan(fn);w.appendChild(rb)}});
+const d=devs.find(x=>x.id===devSel);const ed=document.getElementById('dev-edit');ed.classList.toggle('hidden',!d);
+if(d){document.getElementById('dv-title').textContent=d.label+' \u00b7 '+d.type;['note','height','cable'].forEach(k=>{const el=document.getElementById('dv-'+k);el.value=d[k]||'';el.disabled=lock});document.getElementById('dv-btns').classList.toggle('hidden',lock)}
+const cnt={};devs.forEach(x=>cnt[x.type]=(cnt[x.type]||0)+1);const c=document.getElementById('dev-counts');c.innerHTML='';
+if(devs.length){const h=document.createElement('div');h.className='ptitle';h.textContent='Device Count ('+devs.length+' total)';c.appendChild(h);
+DEVS.forEach(([n,p,col])=>{if(!cnt[n])return;const r=document.createElement('div');r.style.cssText='font-size:1.15rem;padding:6px 0;border-bottom:1px solid #e5e5e5';const i=document.createElement('span');i.className='pin';i.style.cssText='position:static;transform:none;margin-right:8px;background:'+col;i.textContent=p;r.append(i,n+' x'+cnt[n]);c.appendChild(r)})}
+else if(plans.length)c.innerHTML='<div class="muted">No devices yet</div>'}
+function planTap(e,fn,box){if(devLock())return;const r=box.querySelector('img').getBoundingClientRect();const x=(e.clientX-r.left)/r.width*100,y=(e.clientY-r.top)/r.height*100;if(x<0||x>100||y<0||y>100)return;
+if(devMove){const d=currentJob.devices.find(k=>k.id===devMove);devMove=null;if(d){d.x=x;d.y=y;d.plan=fn}saveDevices();return}
+if(!devType){alert('Pick a device first');return}
+currentJob.devices.push({type:devType,plan:fn,x:x,y:y});saveDevices()}
+async function saveDevices(){const r=await post('/devices',{devices:currentJob.devices});if(r.ok){currentJob.devices=(await r.json()).devices}else{alert('Error, not saved');const g=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id));if(g.ok)currentJob.devices=(await g.json()).devices}renderDevices()}
+function devSave(){const d=currentJob.devices.find(k=>k.id===devSel);if(!d)return;['note','height','cable'].forEach(k=>d[k]=document.getElementById('dv-'+k).value.trim());devSel=null;saveDevices()}
+function devMoveStart(){devMove=devSel;devSel=null;devType='';renderDevices();document.getElementById('dev-hint').scrollIntoView({behavior:'smooth',block:'center'})}
+function devDelete(){const d=currentJob.devices.find(k=>k.id===devSel);if(!d||!confirm('Delete '+d.label+'?'))return;currentJob.devices=currentJob.devices.filter(k=>k.id!==devSel);devSel=null;saveDevices()}
+async function uploadPlans(inp){if(!inp.files.length)return;const fd=new FormData();[...inp.files].forEach(f=>fd.append('files',f));inp.value='';
+const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/plans',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));if(r.ok){currentJob.plans=d.plans;renderDevices()}else alert(d.error||'Error')}
+async function removePlan(fn){if(!confirm('Remove this plan and all its devices?'))return;const r=await post('/plans/delete',{filename:fn});if(r.ok){const d=await r.json();currentJob.plans=d.plans;currentJob.devices=d.devices;devSel=null;devMove=null;renderDevices()}else alert('Error')}
 function renderKelly(){const done=currentJob.status==='completed'&&currentJob.job_type==='Survey';const lock=done&&!svEditing;
 document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=>e.disabled=lock);
 document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',!(done&&svEditing));
 const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
-if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done)}
-function fillSurvey(){svEditing=false;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
+if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);renderDevices()}
+function fillSurvey(){svEditing=false;devType='';devSel=null;devMove=null;renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
 document.querySelectorAll('.sv-ob').forEach(c=>c.checked=(s.obstacles||[]).includes(c.value));const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';svCall()}
 async function saveSurvey(quiet){const s={obstacles:[...document.querySelectorAll('.sv-ob')].filter(c=>c.checked).map(c=>c.value)};SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
@@ -463,7 +546,7 @@ const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 @app.route('/')
 def index():
     techs=[(k.title(),k.title()) for k in sorted(USERS) if k not in OFFICE_NAMES]+[(k.title(),k.title()+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
-    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES)
+    return render_template_string(HTML, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -572,8 +655,8 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); conn.close()
-    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps))
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); conn.close()
+    return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
 def job_updates(job_id):
@@ -679,7 +762,7 @@ def upload_photos(job_id):
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
-    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]; conn.close()
+    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
 
 def blueprints(conn, job_id):
@@ -688,6 +771,55 @@ def blueprints(conn, job_id):
         ext=os.path.splitext(b['filename'])[1].lower()
         out.append({'filename':b['filename'],'name':b['orig_name'] or b['filename'],'image':ext in ('.png','.jpg','.jpeg','.webp')})
     return out
+
+def plan_files(conn, job_id):
+    return [r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='plan' ORDER BY id",(job_id,)).fetchall()]
+
+def survey_edit_row(conn, job_id):
+    row,err=own_job(conn, job_id)
+    if err: return None, err
+    if row['job_type']!='Survey': return None, (jsonify({'error':'survey jobs only'}),400)
+    if row['status']=='completed' and not is_office(): return None, (jsonify({'error':'survey is complete; office can edit'}),403)
+    return row, None
+
+@app.route('/api/jobs/<job_id>/plans', methods=['POST'])
+def upload_plans(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    files=[f for f in request.files.getlist('files') if f and f.filename]
+    if not files: conn.close(); return jsonify({'error':'no file'}),400
+    exts=[os.path.splitext(f.filename)[1].lower() or '.jpg' for f in files]
+    if any(e not in PLAN_EXTS for e in exts): conn.close(); return jsonify({'error':'Image files only (jpg, png, webp)'}),400
+    now=datetime.utcnow().isoformat()
+    for f,e in zip(files,exts):
+        fn=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{e}")
+        f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,fn,'plan',now,os.path.basename(f.filename)[:200]))
+    conn.commit(); plans=plan_files(conn, job_id); conn.close()
+    return jsonify({'ok':True,'plans':plans})
+
+@app.route('/api/jobs/<job_id>/plans/delete', methods=['POST'])
+def delete_plan(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    fn=secure_filename(str((request.get_json(silent=True) or {}).get('filename') or ''))
+    if not fn or fn not in plan_files(conn, job_id): conn.close(); return ('',404)
+    conn.execute("DELETE FROM photos WHERE job_id=? AND filename=? AND photo_type='plan'",(job_id,fn))
+    devs=[d for d in parse_devices(row['survey_devices']) if d['plan']!=fn]
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit()
+    try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+    except OSError: pass
+    plans=plan_files(conn, job_id); conn.close()
+    return jsonify({'ok':True,'plans':plans,'devices':devs})
+
+@app.route('/api/jobs/<job_id>/devices', methods=['POST'])
+def save_devices(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    plans=set(plan_files(conn, job_id))
+    devs=number_devices([d for d in parse_devices((request.get_json(silent=True) or {}).get('devices') or []) if d['plan'] in plans])
+    conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'devices':devs})
 
 @app.route('/api/jobs/<job_id>/help', methods=['POST'])
 def need_help(job_id):
@@ -753,7 +885,7 @@ def notify_kelly(conn, job_id, event):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     if not j: return
     sv=clean_survey(j['survey_form']); base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
-    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(job_id,)).fetchall()]
+    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(job_id,)).fetchall()]
     mats=[m['text'] for m in parse_materials(j['materials_list'])]
     body={'event':event,'job_id':j['id'],'title':j['title'] or '','customer':j['customer'] or '','address':j['address'] or '',
           'phone':j['phone'] or '','scope':j['scope'] or '','sent_by':me(),
@@ -765,7 +897,11 @@ def notify_kelly(conn, job_id, event):
           'client_expectations':{'timeline':sv['timeline'],'budget':sv['budget'],'decision_maker':sv['decision_maker']},
           'notes':j['notes'] or '','quick_notes':j['quick_notes'] or '',
           'photo_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in fns],
-          'print_url':f"{base}/print/job/{j['id']}"}
+          'print_url':f"{base}/print/job/{j['id']}",
+          'plan_urls':[f"{base}/help-photo/{fn}?t={help_photo_token(fn)}" for fn in plan_files(conn, j['id'])],
+          'devices':[{'type':d['type'],'label':d['label'],'note':d['note'],'height':d['height'],'cable':d['cable'],
+                      'plan_url':f"{base}/help-photo/{d['plan']}?t={help_photo_token(d['plan'])}"} for d in parse_devices(j['survey_devices'])],
+          'device_counts':dev_counts(parse_devices(j['survey_devices']))}
     def send():
         try:
             req=urllib.request.Request(url, data=json.dumps(body).encode(), method='POST',
@@ -921,8 +1057,8 @@ def client_jobs(conn, name):
 def job_full(conn, r):
     d=job_dict(r)
     d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
-    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help') ORDER BY id",(r['id'],)).fetchall()]
-    d['blueprints']=blueprints(conn, r['id'])
+    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan') ORDER BY id",(r['id'],)).fetchall()]
+    d['blueprints']=blueprints(conn, r['id']); d['plans']=plan_files(conn, r['id'])
     return d
 
 CAL_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Calendar</title>
@@ -983,6 +1119,9 @@ PRINT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <div class="sec">Checklist</div>{% for c in j.checklist %}<div>{{ '&#9745;'|safe if c.done else '&#9744;'|safe }} {{ c.text }}</div>{% endfor %}
 {% if j.updates %}<div class="sec">Daily Updates</div>{% for u in j.updates %}<div><span class="muted">{{ u.created_at }} &middot; {{ u.author }}:</span> {{ u.note }}</div>{% endfor %}{% endif %}{% endif %}
 {% if j.job_type == 'Survey' and j.photos %}<div class="sec">Photos</div>{% for p in j.photos %}<img src="/uploads/{{ p.filename|urlencode }}" alt="photo">{% endfor %}{% endif %}
+{% if j.job_type == 'Survey' and j.plans %}<div class="sec">Floor Plan Devices</div>{% for fn in j.plans %}<div style="position:relative;margin:6px 0;page-break-inside:avoid"><img src="/uploads/{{ fn|urlencode }}" alt="floor plan" style="width:100%;height:auto;object-fit:contain;border-radius:0;margin:0;display:block;border:1px solid #ddd">{% for d in j.devices if d.plan == fn %}<span style="position:absolute;left:{{ d.x }}%;top:{{ d.y }}%;transform:translate(-50%,-50%);background:{{ DEV_COLORS[d.type] }};color:#fff;border:2px solid #fff;border-radius:14px;min-width:24px;padding:0 3px;height:24px;line-height:24px;text-align:center;font-size:11px;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
+{% if j.devices %}<div style="margin-top:6px"><b>Device count:</b> {% for t,n in dev_counts(j.devices).items() %}{{ t }} x{{ n }}{% if not loop.last %}, {% endif %}{% endfor %} ({{ j.devices|length }} total)</div>
+<table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #999"><th>Label</th><th>Device</th><th>Height</th><th>Cable run</th><th>Note</th></tr>{% for d in j.devices %}<tr style="border-bottom:1px solid #ddd"><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td><td>{{ d.height }}</td><td>{{ d.cable }}</td><td>{{ d.note }}</td></tr>{% endfor %}</table>{% endif %}{% endif %}
 {% if j.job_type != 'Survey' %}{% for t,lbl in [('before','Before'),('during','During'),('after','After'),('doors','Doors'),('power','Power'),('network','Network'),('proposed','Proposed locations')] %}{% set g = j.photos|selectattr('photo_type','equalto',t)|list %}{% if g %}<div class="sec">{{ lbl }} Photos</div>{% for p in g %}<img src="/uploads/{{ p.filename|urlencode }}" alt="{{ t }}">{% endfor %}{% endif %}{% endfor %}
 {% endif %}
 {% if j.job_type != 'Office Task' and j.blueprints %}<div class="sec">Blueprints</div>{% for b in j.blueprints %}<div>{% if b.image %}<img src="/uploads/{{ b.filename|urlencode }}" alt="blueprint"><br>{% endif %}<a href="/uploads/{{ b.filename|urlencode }}">{{ b.name }}</a></div>{% endfor %}{% endif %}
