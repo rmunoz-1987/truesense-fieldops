@@ -4,7 +4,7 @@ from datetime import timedelta
 from datetime import datetime
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static'))
 DATA_DIR = os.environ.get('DATA_DIR') or ('/var/data' if os.path.isdir('/var/data') else '.')
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER') or os.path.join(DATA_DIR, 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
@@ -228,7 +228,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -246,13 +246,48 @@ button:not(:disabled):active,a.big-btn:active,a.btn:active,.tile:active,.stp:act
 button:disabled,input:disabled,select:disabled,textarea:disabled,[aria-disabled=true]{cursor:not-allowed !important;opacity:.55;filter:grayscale(.7)}
 </style>"""
 
+PWA_HEAD = """<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#a49f2a"><link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"><link rel="icon" href="/static/icons/icon-192.png">
+<script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script>"""
+
+MANIFEST = {'name':'True Sense Field Ops','short_name':'Field Ops','start_url':'/','scope':'/','display':'standalone','background_color':'#ffffff','theme_color':'#a49f2a',
+    'icons':[{'src':'/static/icons/icon-192.png','sizes':'192x192','type':'image/png'},{'src':'/static/icons/icon-512.png','sizes':'512x512','type':'image/png'},
+             {'src':'/static/icons/maskable-512.png','sizes':'512x512','type':'image/png','purpose':'maskable'}]}
+
+SW_JS = r"""const V='fo-v3';const SHELL=['/offline','/static/icons/icon-192.png','/static/icons/icon-512.png'];
+self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)))});
+self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
+self.addEventListener('message',e=>{if(e.data==='logout')e.waitUntil(caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))))});
+self.addEventListener('fetch',e=>{const r=e.request,u=new URL(r.url);if(r.method!=='GET'||u.origin!==location.origin)return;
+if(r.mode==='navigate'){if(u.pathname!=='/')return e.respondWith(fetch(r).catch(()=>caches.match('/offline')));
+e.respondWith(fetch(r).then(res=>{if(res.ok&&!res.redirected){const c=res.clone();caches.open(V).then(x=>x.put('/',c))}return res}).catch(()=>caches.match('/').then(m=>m||caches.match('/offline'))));return}
+if(u.pathname.startsWith('/static/')){e.respondWith(caches.match(r).then(m=>m||fetch(r).then(res=>{const c=res.clone();caches.open(V).then(x=>x.put(r,c));return res})));return}
+if(u.pathname.startsWith('/api/jobs')||u.pathname.startsWith('/uploads/')){e.respondWith(fetch(r).then(res=>{if(res.ok){const c=res.clone();caches.open(V).then(x=>x.put(r,c))}return res}).catch(()=>caches.match(r).then(m=>m||new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'Content-Type':'application/json'}}))))}});
+self.addEventListener('push',e=>{let d={};try{d=e.data.json()}catch(x){d={title:'Field Ops',body:e.data?e.data.text():''}}
+e.waitUntil(self.registration.showNotification(d.title||'Field Ops',{body:d.body||'',icon:'/static/icons/icon-192.png',badge:'/static/icons/icon-192.png',data:{url:d.url||'/'}}))});
+self.addEventListener('notificationclick',e=>{e.notification.close();const url=(e.notification.data&&e.notification.data.url)||'/';
+e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{for(const w of ws){if('focus' in w){w.navigate(url);return w.focus()}}return clients.openWindow(url)}))});"""
+
+OFFLINE_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title><style>body{font-family:Arial,sans-serif;background:#fff;color:#111;text-align:center;padding:40px 16px;font-size:1.2rem}button{font-size:1.2rem;padding:18px;width:100%;border:0;border-radius:10px;background:#a49f2a;color:#fff;font-weight:700}</style></head>
+<body><img src="/static/icons/icon-192.png" alt="True Sense" style="width:120px"><h2>No signal</h2><p>You are offline. Anything you saved on a job will send when you are back online.</p><button onclick="location.href='/'">Try Again</button></body></html>"""
+
+@app.route('/manifest.webmanifest')
+def manifest():
+    r=jsonify(MANIFEST); r.headers['Content-Type']='application/manifest+json'; return r
+
+@app.route('/sw.js')
+def service_worker():
+    r=app.response_class(SW_JS, mimetype='application/javascript'); r.headers['Cache-Control']='no-cache'; r.headers['Service-Worker-Allowed']='/'; return r
+
+@app.route('/offline')
+def offline_page(): return OFFLINE_HTML
+
 @app.after_request
 def add_tap_css(resp):
     try:
         if resp.mimetype=='text/html' and not resp.direct_passthrough and resp.status_code<400 or resp.mimetype=='text/html' and resp.status_code==503:
             h=resp.get_data(as_text=True)
             if 'id="tap-css"' not in h:
-                h=h.replace('</head>', TAP_CSS+'</head>', 1) if '</head>' in h else TAP_CSS+h
+                h=h.replace('</head>', TAP_CSS+PWA_HEAD+'</head>', 1) if '</head>' in h else TAP_CSS+h
                 resp.set_data(h)
     except Exception: pass
     return resp
@@ -669,7 +704,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="header">
   <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
   <div class="sub">Field Ops</div>
-  <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
+  <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a></nav><main>
@@ -989,8 +1024,26 @@ function nextStep(){const nx=stepNext();if(!nx)return;if(nx.href){location.href=
 const e=focusSecs(nx.go||[]);if(e)setTimeout(()=>e.scrollIntoView({behavior:'smooth',block:'start'}),50)}
 function toggleGuided(){guided=!guided;renderSteps(false);if(!guided)document.querySelectorAll('#detail .focus').forEach(e=>e.classList.remove('focus'))}
 async function refreshSteps(){if(!currentJob)return;const id=currentJob.id;const r=await fetch('/api/jobs/'+encodeURIComponent(id)+'/steps');if(!r.ok||!currentJob||currentJob.id!==id)return;const sj=await r.json();currentJob.steps=sj.steps;currentJob.flow=sj.flow;renderSteps(false)}
-let stepT=null;const _fetch=window.fetch.bind(window);window.fetch=async(u,o)=>{const r=await _fetch(u,o);try{const m=((o&&o.method)||'GET').toUpperCase(),s=String(u);
-if(m!=='GET'&&currentJob&&(s.startsWith('/api/jobs/'+encodeURIComponent(currentJob.id)+'/')||s.startsWith('/api/jobs/'+currentJob.id+'/'))){clearTimeout(stepT);stepT=setTimeout(refreshSteps,400)}}catch(e){}return r};
+let stepT=null;const _fetch=window.fetch.bind(window);
+const QDB=()=>new Promise((res,rej)=>{const q=indexedDB.open('fo-queue',1);q.onupgradeneeded=()=>q.result.createObjectStore('q',{keyPath:'id',autoIncrement:true});q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)});
+async function qAll(){const db=await QDB();return new Promise(r=>{const t=db.transaction('q').objectStore('q').getAll();t.onsuccess=()=>r(t.result||[])})}
+async function qPut(v){const db=await QDB();return new Promise(r=>{const t=db.transaction('q','readwrite');t.objectStore('q').add(v);t.oncomplete=r})}
+async function qDel(id){const db=await QDB();return new Promise(r=>{const t=db.transaction('q','readwrite');t.objectStore('q').delete(id);t.oncomplete=r})}
+function qable(u,m){const s=String(u);return m!=='GET'&&(s.startsWith('/api/jobs/')||s.startsWith('/job/'))&&!s.endsWith('/steps')}
+async function qBadge(){const n=(await qAll().catch(()=>[])).length;let b=document.getElementById('q-bar');if(!b){b=document.createElement('div');b.id='q-bar';b.style.cssText='position:sticky;top:0;z-index:30;background:#b26a00;color:#fff;font-weight:700;text-align:center;padding:10px;border-radius:8px;margin:4px 0';document.body.prepend(b)}
+b.textContent=n?(navigator.onLine?'Sending '+n+' saved item'+(n>1?'s':'')+'...':'Offline. '+n+' item'+(n>1?'s':'')+' saved on this phone. They send when you are back online.'):(navigator.onLine?'':'Offline. You can keep working.');b.style.display=b.textContent?'block':'none'}
+let qBusy=false;async function qFlush(){if(qBusy||!navigator.onLine)return;qBusy=true;try{for(const it of await qAll()){let body=it.body;if(it.form){body=new FormData();it.form.forEach(([k,v,n])=>n?body.append(k,v,n):body.append(k,v))}
+const h=Object.assign({},it.headers||{},{'X-Queued-At':it.at});let r;try{r=await _fetch(it.url,{method:it.method,headers:h,body})}catch(e){break}
+if(r.ok||(r.status>=400&&r.status<500)){await qDel(it.id);if(!r.ok){const d=await r.json().catch(()=>({}));toast('Not saved: '+(d.error||r.status),5000)}}else break}}finally{qBusy=false;qBadge();if(currentJob)refreshSteps()}}
+window.addEventListener('online',()=>{qBadge();qFlush()});window.addEventListener('offline',qBadge);setTimeout(()=>{qBadge();qFlush()},800);
+async function qSave(u,o){const it={url:String(u),method:(o.method||'POST').toUpperCase(),headers:{},at:new Date().toISOString()};
+if(o.headers)Object.entries(o.headers).forEach(([k,v])=>{if(/content-type/i.test(k))it.headers[k]=v});
+if(o.body instanceof FormData){it.form=[];for(const [k,v] of o.body.entries())it.form.push(v instanceof File?[k,v,v.name]:[k,v])}else it.body=o.body||null;
+await qPut(it);qBadge();return new Response(JSON.stringify({ok:true,queued:true,msg:'Saved on this phone. It will send when you are back online.'}),{status:200,headers:{'Content-Type':'application/json'}})}
+window.fetch=async(u,o)=>{const m=((o&&o.method)||'GET').toUpperCase();if(qable(u,m)){if(!navigator.onLine)return qSave(u,o||{});try{const r0=await _fetch(u,o);afterFetch(u,o,r0);return r0}catch(e){return qSave(u,o||{})}}
+const r=await _fetch(u,o);afterFetch(u,o,r);return r};
+function afterFetch(u,o,r){try{const m=((o&&o.method)||'GET').toUpperCase(),s=String(u);
+if(m!=='GET'&&currentJob&&(s.startsWith('/api/jobs/'+encodeURIComponent(currentJob.id)+'/')||s.startsWith('/api/jobs/'+currentJob.id+'/'))){clearTimeout(stepT);stepT=setTimeout(refreshSteps,400)}}catch(e){}}
 function renderClock(){const c=currentJob.clock||{},b=document.getElementById('clk-btn'),i=document.getElementById('clk-info');if(!b)return;b.disabled=false;
 b.textContent=c.open?'Clock Out':'Clock In';b.className='big-btn '+(c.open?'stop':'green');let h='';
 if(c.open)h+='<b>Clocked in '+esc(c.in_local)+'</b>'+(c.in_dist?'<br>'+esc(c.in_dist):'')+(c.in_flag?'<br><b style="color:#b00020">'+esc(c.in_flag)+'</b>':'');
@@ -2815,6 +2868,15 @@ def revenue_qbo_import():
 
 FAR_FT=1320
 
+def queued_time():
+    v=(request.headers.get('X-Queued-At') or '').strip()
+    try:
+        from datetime import timezone
+        t=datetime.fromisoformat(v.replace('Z','+00:00')).astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception: return None
+    now=datetime.utcnow()
+    return t.isoformat(timespec='seconds') if now-timedelta(days=3)<=t<=now+timedelta(minutes=2) else None
+
 def utc_to_local(iso, fmt='%m/%d %I:%M %p'):
     if not iso: return ''
     try:
@@ -2872,7 +2934,7 @@ def clock_state(conn, job_id):
 def clock_tap(job_id):
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
-    who=ckey(me()); d=request.get_json(silent=True) or {}; now=datetime.utcnow().isoformat(timespec='seconds')
+    who=ckey(me()); d=request.get_json(silent=True) or {}; now=queued_time() or datetime.utcnow().isoformat(timespec='seconds')
     o=conn.execute('SELECT * FROM time_punches WHERE sub=? AND out_at IS NULL ORDER BY id DESC LIMIT 1',(who,)).fetchone()
     if o and o['job_id']!=job_id: conn.close(); return jsonify({'error':'You are still clocked in on job %s. Clock out there first.'%o['job_id']}),409
     lat,lng,acc,ft,flag=punch_check(conn, row, d); out={'ok':True}
