@@ -2894,6 +2894,7 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block;margin:0 auto">
 <h1>{{ j.title }}</h1><div>{{ j.customer }}</div><div class="muted">{{ j.address }}</div>
 <div class="muted">{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}{% if j.scheduled_date %} &middot; Scheduled {{ j.scheduled_date }}{% endif %}</div>
+{% if paid %}<div class="ok" style="margin-top:12px;text-align:center">&#10003; Paid. Thank you!</div>{% elif pay %}<a href="{{ pay }}" target="_blank" rel="noopener noreferrer" class="btn" style="display:block;text-align:center;text-decoration:none;margin-top:14px;font-size:1.4rem;padding:22px">Pay Now</a><div class="muted" style="text-align:center;margin-top:4px">Opens the secure QuickBooks payment page</div>{% endif %}
 {% if j.job_type == 'Survey' %}<h2>Site Survey</h2><div class="card">{% if j.survey.want_desc %}<div><b>What you want:</b></div><div style="white-space:pre-wrap">{{ j.survey.want_desc }}</div>{% endif %}
 {% if j.survey.conditions %}<div style="margin-top:8px"><b>Site conditions:</b></div><div style="white-space:pre-wrap">{{ j.survey.conditions }}</div>{% endif %}</div>{% endif %}
 {% if j.plans %}<h2>{{ 'Plan and Devices' if j.job_type == 'Survey' else 'As-Built Plan' }}</h2>{% for fn in j.plans %}<div class="plan"><img src="{{ signed(fn) }}" alt="plan">{% for d in j.devices if d.plan == fn %}<span class="pin" style="left:{{ d.x }}%;top:{{ d.y }}%;background:{{ DEV_COLORS[d.type] }}">{{ d.label }}</span>{% endfor %}</div>{% endfor %}
@@ -2954,7 +2955,8 @@ def hub_page(job_id):
     conn,row=hub_job(job_id)
     if not row: return (HUB_EXPIRED_HTML,410)
     j=job_full(conn,row); conn.close(); est=load_estimate(row)
-    return render_template_string(HUB_HTML, j=j, est=est, money=money, t=request.values.get('t',''), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
+    pay=row['pay_link'] if (row['pay_link'] or '').startswith('https://') else ''
+    return render_template_string(HUB_HTML, j=j, est=est, money=money, pay=pay, paid=row['paid_at'], t=request.values.get('t',''), signed=lambda fn: '/help-photo/'+urllib.parse.quote(fn)+'?t='+help_photo_token(fn))
 
 @app.route('/hub/<job_id>/approve', methods=['POST'])
 def hub_approve(job_id):
