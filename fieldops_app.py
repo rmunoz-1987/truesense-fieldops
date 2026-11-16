@@ -1735,10 +1735,20 @@ def on_my_way(job_id):
     else: conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(job_id,'onmyway',draft_phone(r),body,today,me(),now_local_str()))
     conn.commit(); conn.close(); return jsonify({'ok':True})
 
+def make_reminders(conn):
+    tm=(today_local()+timedelta(days=1)).isoformat()
+    for r in conn.execute("SELECT * FROM jobs WHERE scheduled_date=? AND status!='completed' AND COALESCE(job_type,'')!='Office Task'",(tm,)).fetchall():
+        ph=draft_phone(r)
+        if not ph or conn.execute("SELECT 1 FROM msg_drafts WHERE job_id=? AND kind='reminder' AND ref_date=?",(r['id'],tm)).fetchone(): continue
+        when=datetime.strptime(tm,'%Y-%m-%d').strftime('%A, %b %d').replace(' 0',' ')
+        body=f"Hi{(' '+r['customer'].strip()) if (r['customer'] or '').strip() else ''}, this is True Sense Security. Reminder: we will see you tomorrow, {when}{(' at '+r['address']) if r['address'] else ''}. Reply to this text if you need to change it."
+        conn.execute("INSERT INTO msg_drafts (job_id,kind,phone,body,status,ref_date,created_by,created_at) VALUES (?,?,?,?,'pending',?,?,?)",(r['id'],'reminder',ph,body,tm,'Auto',now_local_str()))
+    conn.commit()
+
 @app.route('/api/drafts')
 def list_drafts():
     if not is_office(): return jsonify({'error':'Office only'}),403
-    conn=get_db()
+    conn=get_db(); make_reminders(conn)
     rows=[dict(x) for x in conn.execute("SELECT d.*,j.customer,j.title FROM msg_drafts d LEFT JOIN jobs j ON j.id=d.job_id WHERE d.status IN ('pending','approved') ORDER BY d.status DESC, d.id DESC").fetchall()]
     conn.close(); return jsonify(rows)
 
