@@ -540,6 +540,9 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS time_punches (
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, sub TEXT, in_at TEXT, in_lat REAL, in_lng REAL, in_acc REAL, in_ft REAL, in_flag TEXT,
         out_at TEXT, out_lat REAL, out_lng REAL, out_acc REAL, out_ft REAL, out_flag TEXT, minutes INTEGER DEFAULT 0, edit_note TEXT, edited_by TEXT, edited_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS daily_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, log_date TEXT, author TEXT, work_done TEXT, crew TEXT, hours REAL, materials TEXT, issues TEXT, weather TEXT,
+        photos TEXT, created_at TEXT, updated_at TEXT, UNIQUE(job_id, log_date))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     r=conn.execute("SELECT value FROM settings WHERE key='tpl_seeded'").fetchone(); seeded=set(json.loads(r['value'])) if r else set()
@@ -684,7 +687,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
 <div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
 <button class="big-btn green" style="font-size:1.2rem;padding:18px" onclick="approveJob()">Approve</button></div>{% endif %}</div>
-<div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
+<div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div><a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="dl-link" href="#">Daily Log</a>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
 <div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
@@ -878,7 +881,7 @@ function renderClock(){const c=currentJob.clock||{},b=document.getElementById('c
 b.textContent=c.open?'Clock Out':'Clock In';b.className='big-btn '+(c.open?'stop':'green');let h='';
 if(c.open)h+='<b>Clocked in '+esc(c.in_local)+'</b>'+(c.in_dist?'<br>'+esc(c.in_dist):'')+(c.in_flag?'<br><b style="color:#b00020">'+esc(c.in_flag)+'</b>':'');
 if(c.other)h+='<br><b style="color:#b00020">Still clocked in on job '+esc(c.other)+'</b>';if(c.today_hours)h+='<br>Today on this job: '+c.today_hours+' hrs';i.innerHTML=h;
-const lg=document.getElementById('clk-log');if(lg)lg.href='/timelog?job='+encodeURIComponent(currentJob.id)}
+document.getElementById('dl-link').href='/job/'+encodeURIComponent(currentJob.id)+'/daily';const lg=document.getElementById('clk-log');if(lg)lg.href='/timelog?job='+encodeURIComponent(currentJob.id)}
 async function clockTap(){const b=document.getElementById('clk-btn');b.disabled=true;b.textContent='Getting location...';
 const loc=await new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:15000,maximumAge:30000})});
 const r=await post('/clock',loc||{});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Error');renderClock();return}
@@ -1221,7 +1224,7 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
     extra={}
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
@@ -1383,7 +1386,7 @@ def upload_photos(job_id):
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
-    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]; conn.close()
+    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
 
 def blueprints(conn, job_id):
@@ -1686,7 +1689,7 @@ def notify_kelly(conn, job_id, event):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     if not j: return
     sv=clean_survey(j['survey_form']); base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
-    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(job_id,)).fetchall()]
+    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]
     mats=[m['text'] for m in parse_materials(j['materials_list'])]
     body={'event':event,'job_id':j['id'],'title':j['title'] or '','customer':j['customer'] or '','address':j['address'] or '',
           'phone':j['phone'] or '','scope':j['scope'] or '','sent_by':me(),
@@ -1883,7 +1886,7 @@ def client_jobs(conn, name):
 def job_full(conn, r):
     d=job_dict(r)
     d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
-    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto') ORDER BY id",(r['id'],)).fetchall()]
+    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(r['id'],)).fetchall()]
     d['blueprints']=blueprints(conn, r['id']); d['plans']=plan_files(conn, r['id'])
     return d
 
@@ -2812,6 +2815,77 @@ def timelog_edit(pid):
     if row: add_hours_for(conn, row, p['sub'], mins-(p['minutes'] or 0))
     conn.commit(); conn.close()
     return timelog_page(msg='Saved. Hours updated.')
+
+FIELD_HEAD = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:700px;margin:auto;padding:12px;font-size:1.05rem}h2{color:#a49f2a;text-align:center;margin:8px 0}
+.job{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}.muted{color:#666}.flag{color:#b00020;font-weight:700}.ok{color:#2e7d32;font-weight:700}
+.btn{display:block;width:100%;background:#f0f0f0;color:#111;padding:16px;border:0;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;font-size:1.1rem;margin:8px 0;font-family:inherit}.gold{background:#a49f2a;color:#fff}
+input,select,textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:4px 0;font-family:inherit}label{font-weight:600;display:block;margin-top:10px}
+.pics img{width:31%;margin:1%;border-radius:8px;aspect-ratio:1;object-fit:cover}.pre{white-space:pre-wrap}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:44px;margin:0 auto 4px;display:block">"""
+
+DAILY_HTML = FIELD_HEAD + """<h2>Daily Log</h2><div style="text-align:center;font-weight:600">Job {{ j.id }} &middot; {{ j.title }}</div><div class="muted" style="text-align:center">{{ j.customer or '' }}</div>
+<a class="btn" href="/?job={{ j.id }}">Back to Job</a>
+{% if msg %}<div class="job {{ 'ok' if ok else 'flag' }}">{{ msg }}</div>{% endif %}
+<form method="post" enctype="multipart/form-data" class="job"><label>Date</label><input type="date" name="log_date" value="{{ cur.log_date }}" max="{{ today }}" onchange="location='?date='+this.value" required>
+<div class="muted">{% if cur.id %}Editing the log for this day{% if cur.author %} (by {{ cur.author }}){% endif %}.{% else %}One log per day. Fill it before you leave.{% endif %}</div>
+<label>Work done today</label><textarea name="work_done" rows="4" required maxlength="3000" placeholder="Ran 6 cables, hung 2 cameras">{{ cur.work_done or '' }}</textarea>
+<label>Crew on site</label><input name="crew" maxlength="300" value="{{ cur.crew or '' }}" placeholder="Mike, Joe">
+<label>Crew hours (total)</label><input type="number" name="hours" step="0.25" min="0" max="200" inputmode="decimal" value="{{ '' if cur.hours is none else cur.hours }}" placeholder="8">
+<label>Materials used</label><textarea name="materials" rows="2" maxlength="2000" placeholder="500 ft Cat6, 2 cameras">{{ cur.materials or '' }}</textarea>
+<label>Delays or problems</label><textarea name="issues" rows="2" maxlength="2000" placeholder="None">{{ cur.issues or '' }}</textarea>
+<label>Weather</label><input name="weather" maxlength="100" value="{{ cur.weather or '' }}" placeholder="Sunny, 75">
+<label>Add photos</label><input type="file" name="photos" accept="image/*" multiple>
+{% if cur.pics %}<div class="pics">{% for f in cur.pics %}<a href="/uploads/{{ f }}" target="_blank"><img src="/uploads/{{ f }}" alt="photo"></a>{% endfor %}</div>{% endif %}
+<button class="btn gold" type="submit">Save Daily Log</button></form>
+<h3>Past logs</h3>{% for l in logs %}<div class="job"><div><b><a href="?date={{ l.log_date }}">{{ l.nice_date }}</a></b> &middot; {{ l.author }}{% if l.hours is not none %} &middot; {{ l.hours }} hrs{% endif %}{% if l.weather %} &middot; {{ l.weather }}{% endif %}</div>
+<div class="pre">{{ l.work_done }}</div>{% if l.crew %}<div><b>Crew:</b> {{ l.crew }}</div>{% endif %}{% if l.materials %}<div class="pre"><b>Materials:</b> {{ l.materials }}</div>{% endif %}{% if l.issues %}<div class="pre"><b>Problems:</b> {{ l.issues }}</div>{% endif %}
+{% if l.pics %}<div class="pics">{% for f in l.pics %}<a href="/uploads/{{ f }}" target="_blank"><img src="/uploads/{{ f }}" alt="photo"></a>{% endfor %}</div>{% endif %}</div>{% else %}<div class="muted">No logs yet.</div>{% endfor %}
+</body></html>"""
+
+def page_job(conn, job_id):
+    row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    return row if row and can_see(row) else None
+
+def log_dict(r):
+    d=dict(r)
+    try: d['pics']=json.loads(r['photos'] or '[]')
+    except Exception: d['pics']=[]
+    try: d['nice_date']=datetime.strptime(r['log_date'],'%Y-%m-%d').strftime('%a %b %d, %Y')
+    except Exception: d['nice_date']=r['log_date']
+    return d
+
+@app.route('/job/<job_id>/daily', methods=['GET','POST'])
+def daily_log(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    today=today_local().isoformat(); msg=None; ok=True
+    day=(request.form.get('log_date') if request.method=='POST' else request.args.get('date')) or today
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day) or day>today: day=today
+    if request.method=='POST':
+        f=lambda k,n: (request.form.get(k) or '').strip()[:n]
+        work=f('work_done',3000)
+        try: hrs=round(float(f('hours',10)),2) if f('hours',10) else None
+        except ValueError: hrs=None
+        if hrs is not None and not (0<=hrs<=200): hrs=None
+        if not work: msg='Not saved. Fill in Work done today.'; ok=False
+        else:
+            now=datetime.utcnow().isoformat(timespec='seconds')
+            old=conn.execute('SELECT photos FROM daily_logs WHERE job_id=? AND log_date=?',(job_id,day)).fetchone()
+            pics=json.loads(old['photos'] or '[]') if old else []
+            for up in request.files.getlist('photos')[:20]:
+                if up and up.filename:
+                    fn=secure_filename(f"{job_id}_daily_{uuid.uuid4().hex[:8]}.jpg"); up.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+                    conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,'daily',now)); pics.append(fn)
+            vals=(work,f('crew',300),hrs,f('materials',2000),f('issues',2000),f('weather',100),json.dumps(pics))
+            if old: conn.execute('UPDATE daily_logs SET work_done=?,crew=?,hours=?,materials=?,issues=?,weather=?,photos=?,author=?,updated_at=? WHERE job_id=? AND log_date=?',vals+(me(),now,job_id,day))
+            else: conn.execute('INSERT INTO daily_logs (work_done,crew,hours,materials,issues,weather,photos,author,job_id,log_date,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',vals+(me(),job_id,day,now,now))
+            conn.commit(); msg='Saved.'
+    cur=conn.execute('SELECT * FROM daily_logs WHERE job_id=? AND log_date=?',(job_id,day)).fetchone()
+    cur=log_dict(cur) if cur else {'log_date':day,'pics':[]}
+    if not ok: cur.update({k:(request.form.get(k) or '') for k in ('work_done','crew','materials','issues','weather')})
+    logs=[log_dict(r) for r in conn.execute('SELECT * FROM daily_logs WHERE job_id=? ORDER BY log_date DESC LIMIT 60',(job_id,)).fetchall()]; conn.close()
+    return render_template_string(DAILY_HTML, title='Daily Log', j=row, cur=cur, logs=logs, today=today, msg=msg, ok=ok)
 
 @app.route('/to-order')
 def to_order():
