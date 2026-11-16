@@ -253,7 +253,7 @@ MANIFEST = {'name':'True Sense Field Ops','short_name':'Field Ops','start_url':'
     'icons':[{'src':'/static/icons/icon-192.png','sizes':'192x192','type':'image/png'},{'src':'/static/icons/icon-512.png','sizes':'512x512','type':'image/png'},
              {'src':'/static/icons/maskable-512.png','sizes':'512x512','type':'image/png','purpose':'maskable'}]}
 
-SW_JS = r"""const V='fo-v3';const SHELL=['/offline','/static/icons/icon-192.png','/static/icons/icon-512.png'];
+SW_JS = r"""const V='fo-v4';const SHELL=['/offline','/static/logo.png','/static/icons/icon-192.png','/static/icons/icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('message',e=>{if(e.data==='logout')e.waitUntil(caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))))});
@@ -331,9 +331,258 @@ def add_tap_css(resp):
             h=resp.get_data(as_text=True)
             if 'id="tap-css"' not in h:
                 h=h.replace('</head>', TAP_CSS+PWA_HEAD+'</head>', 1) if '</head>' in h else TAP_CSS+h
+                if resp.status_code<400:
+                    try: h=apply_shell(h, request.path)
+                    except Exception as e: app.logger.warning('shell failed: %s', e)
                 resp.set_data(h)
     except Exception: pass
     return resp
+
+# ---------- App shell: top search, tabs / rail, quick-add, theme ----------
+def _ico(d): return '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'
+ICONS = {
+ 'today':_ico('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
+ 'jobs':_ico('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/>'),
+ 'clients':_ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2 .4 3.4 2 4 4.5"/>'),
+ 'money':_ico('<path d="M12 2v20M17 6H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>'),
+ 'more':_ico('<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>'),
+ 'cal':_ico('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
+ 'me':_ico('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/>'),
+ 'search':_ico('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
+ 'plus':_ico('<path d="M12 5v14M5 12h14"/>'),
+ 'box':_ico('<path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/>'),
+ 'repeat':_ico('<path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3"/>'),
+ 'tool':_ico('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>'),
+ 'eye':_ico('<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+ 'note':_ico('<path d="M4 4h12l4 4v12H4z"/><path d="M8 12h8M8 16h5"/>'),
+ 'chart':_ico('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+ 'clock':_ico('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+ 'qbo':_ico('<circle cx="12" cy="12" r="9"/><path d="M9 8v8M9 8h3a2.5 2.5 0 0 1 0 5H9M15 16v-8"/>'),
+ 'users':_ico('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.5c1.6.6 2.6 2.4 3 5.5"/>'),
+ 'check':_ico('<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
+ 'shield':_ico('<path d="M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z"/><path d="M9 12l2 2 4-4"/>'),
+ 'pen':_ico('<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>'),
+ 'gear':_ico('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>'),
+ 'cart':_ico('<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.5h11.6L22 7H6"/>'),
+ 'moon':_ico('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+ 'bell':_ico('<path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>'),
+ 'out':_ico('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>'),
+ 'doc':_ico('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h8"/>'),
+ 'alert':_ico('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>'),
+ 'pin':_ico('<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+}
+
+SHELL_CSS = """<style id="shell-css">
+:root{--brand:#7a7a12;--gold:#baa205;--gold2:#dab703;--accent:#a49f2a;--ink:#1d1f14;--muted:#6b6d60;--line:#ececE6;--soft:#f7f6ef;--card:#fff;
+--shadow:0 1px 2px rgba(29,31,20,.06),0 4px 16px rgba(29,31,20,.07);--r:16px}
+html.fo-shell{background:#fff;padding:66px 0 calc(92px + env(safe-area-inset-bottom));scroll-padding-top:76px}
+html.fo-shell body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif!important;color:var(--ink);background:#fff!important;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html.fo-shell .header{display:none}
+html.fo-shell body>img[alt="True Sense Security"],html.fo-shell body>a>img[alt="True Sense Security"]{display:none!important}
+html.fo-shell #search-box{display:none!important}
+.fo-top{position:fixed;top:0;left:0;right:0;height:60px;z-index:45;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 12px}
+.fo-logo{flex:0 0 auto;display:flex;align-items:center}.fo-logo img{height:30px;width:auto;display:block}
+.fo-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:0 12px;height:44px;margin:0}
+.fo-search svg{flex:0 0 20px;width:20px;height:20px;color:var(--muted)}.fo-search input{border:0!important;background:transparent!important;outline:0;font-size:16px;width:100%;padding:0!important;margin:0!important;height:42px;color:var(--ink);box-shadow:none!important}
+.fo-tabs{position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+.fo-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 4px;border-radius:12px;color:var(--muted);text-decoration:none;font-size:.74rem;font-weight:650;min-height:52px;justify-content:center}
+.fo-tabs a.on{color:var(--brand)}.fo-tabs a.on svg{stroke-width:2.4}.fo-tabs a.on span.fo-dot{background:var(--gold)}
+.fo-tabs a span.fo-dot{width:22px;height:3px;border-radius:3px;background:transparent;margin-top:1px}
+.fo-tabs a.fo-rail-logo{display:none}
+html.fo-shell .fo-back{display:inline-flex;align-items:center;width:auto;min-height:44px;padding:10px 18px;font-size:1rem;margin:0 0 4px}
+body.office.view-jobs .tiles{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:8px;padding:2px 2px 10px;scrollbar-width:none;margin-bottom:6px}
+body.office.view-jobs .tiles::-webkit-scrollbar{display:none}
+body.office.view-jobs .tile{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:10px 14px;border-radius:999px;font-size:.92rem;min-height:44px;box-shadow:none}
+body.office.view-jobs .tile b{font-size:1rem;display:inline}
+@media(min-width:900px){body.office.view-jobs .tiles{flex-wrap:wrap}}
+.fo-fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:46;width:62px;height:62px;border-radius:50%;border:0;background:linear-gradient(145deg,var(--gold2),var(--brand));color:#fff;box-shadow:0 8px 24px rgba(122,122,18,.38);display:flex;align-items:center;justify-content:center}
+.fo-fab svg{width:30px;height:30px;stroke-width:2.6}
+.fo-veil{position:fixed;inset:0;background:rgba(20,21,14,.38);z-index:70;opacity:0;pointer-events:none;transition:opacity .2s}
+.fo-veil.on{opacity:1;pointer-events:auto}
+.fo-sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:#fff;border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 30px rgba(0,0,0,.15);max-width:640px;margin:0 auto}
+.fo-sheet.on{transform:none}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
+.fo-sheet h3{margin:4px 0 10px;font-size:1.1rem}.fo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fo-tile{display:flex;align-items:center;gap:10px;padding:16px 14px;border-radius:14px;background:var(--soft);border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:700;font-size:1rem;min-height:60px;text-align:left;width:100%;font-family:inherit}
+.fo-tile svg{flex:0 0 24px;color:var(--brand)}
+.fo-seg{display:flex;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;margin:0 auto 12px;max-width:480px}
+.fo-seg a{flex:1;text-align:center;padding:10px 6px;border-radius:10px;color:var(--muted);text-decoration:none;font-weight:700}.fo-seg a.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
+/* shared premium look for existing pages */
+html.fo-shell .job,html.fo-shell .card{border:1px solid var(--line)!important;border-radius:var(--r)!important;box-shadow:var(--shadow)}
+html.fo-shell .big-btn,html.fo-shell .btn{border-radius:14px!important;font-weight:700;letter-spacing:.1px}
+html.fo-shell .big-btn:not(.gray):not(.green):not(.stop):not(.red){background:linear-gradient(145deg,var(--gold),var(--brand))}
+html.fo-shell input,html.fo-shell select,html.fo-shell textarea{border-radius:12px!important;font-family:inherit}
+html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var(--line)}
+.fo-page-h{display:flex;align-items:center;gap:10px;margin:4px 0 12px}.fo-page-h h1{margin:0}
+.fo-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fo-card{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;color:var(--ink);text-decoration:none;min-height:96px}
+.fo-card svg{color:var(--brand)}.fo-card b{display:block;font-size:1.08rem;margin-top:8px}.fo-card small{display:block;color:var(--muted);margin-top:2px;font-size:.86rem}
+.fo-skel{background:linear-gradient(90deg,#f0efe8 0,#faf9f4 40%,#f0efe8 80%);background-size:200% 100%;animation:fo-shim 1.2s linear infinite;border-radius:12px}
+@keyframes fo-shim{to{background-position:-200% 0}}
+@keyframes fo-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+html.fo-shell body>*:not(.fo-sh){animation:fo-in .28s ease both}
+/* desktop: left rail */
+@media(min-width:900px){
+ html.fo-shell{padding:76px 0 28px 232px}
+ .fo-top{left:232px;height:64px;padding:0 22px}.fo-top .fo-logo{display:none}.fo-search{max-width:620px}
+ .fo-tabs{top:0;bottom:0;right:auto;width:232px;flex-direction:column;justify-content:flex-start;border-top:0;border-right:1px solid var(--line);padding:16px 12px;gap:4px;background:#fff}
+ .fo-tabs a{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;padding:12px 14px;font-size:1rem;min-height:48px}
+ .fo-tabs a.on{background:var(--soft)}.fo-tabs a span.fo-dot{display:none}
+ .fo-tabs a.fo-rail-logo{display:block;padding:4px 10px 18px}.fo-rail-logo img{height:40px;width:auto}
+ .fo-fab{bottom:28px;right:28px}
+ .fo-cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+}
+/* dark mode: invert the page once at the root (fixed overlays keep working), re-invert media */
+html[data-theme=dark]{filter:invert(.93) hue-rotate(180deg);background:#fff}
+html[data-theme=dark] img,html[data-theme=dark] video,html[data-theme=dark] canvas,html[data-theme=dark] .leaflet-container,html[data-theme=dark] iframe,html[data-theme=dark] [style*="background-image"]{filter:invert(1) hue-rotate(180deg)}
+html[data-theme=dark] .leaflet-container img{filter:none}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
+</style>"""
+
+def shell_tabs(path, office):
+    if office:
+        tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/clients','Clients','clients'),('/money','Money','money'),('/more','More','more')]
+        groups={'today':('/',),'jobs':('/jobs','/schedule','/calendar'),'clients':('/clients','/print/client'),'money':('/money','/revenue','/reports','/qbo','/timelog'),
+                'more':('/more','/techs','/stock','/checklists','/safety','/agreement','/settings','/equipment','/plans','/to-order')}
+    else:
+        tabs=[('/','My Jobs','jobs'),('/my-schedule','Schedule','cal'),('/me','Me','me')]
+        groups={'jobs':('/','/job/'),'cal':('/my-schedule',),'me':('/me','/agreement')}
+    def on(k):
+        for p in groups.get(k,()):
+            if (p=='/' and path=='/') or (p!='/' and (path==p or path.startswith(p.rstrip('/')+'/'))): return True
+        return False
+    return ''.join('<a href="%s" class="%s"%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(u,'on' if on(k) else '',' aria-current="page"' if on(k) else '',ICONS[k],lab) for u,lab,k in tabs)
+
+def shell_html(path, office, q=''):
+    top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"></a>'
+         '<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search clients, jobs, notes, serials" aria-label="Search" autocomplete="off"></form></header>')%(ICONS['search'],h(q))
+    seg=''
+    if office and path in ('/jobs','/schedule','/calendar'):
+        seg='<div class="fo-seg fo-sh">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
+    tabs='<nav class="fo-tabs fo-sh" aria-label="Main"><a class="fo-rail-logo" href="/" style="min-height:0;padding:4px 10px 18px"><img src="/static/logo.png" alt="True Sense Security"></a>'+shell_tabs(path, office)+'</nav>'
+    fab=sheet=''
+    if office:
+        fab='<button class="fo-fab fo-sh" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>'%ICONS['plus']
+        items=[('/jobs?new=Install','Install','tool'),('/jobs?new=Service','Service','repeat'),('/jobs?new=Survey','Survey','eye'),('/jobs?new=Office Task','Office Task','note'),
+               ('/clients#add','Client','clients'),('/stock#new','Stock Item','box'),('/plans#new','Service Plan','cal'),('/equipment/new','Equipment','shield')]
+        sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
+               ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('new=')[1]) if 'new=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
+    return top+seg, tabs+fab+sheet
+
+SHELL_JS = """<script id="shell-js">
+function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);v.classList.toggle('on',on)}
+function foNew(a){var t=a.dataset.new;if(t&&typeof quickType==='function'&&document.getElementById('office')){foSheet(false);var o=document.getElementById('office');if(o.classList.contains('hidden'))toggleNew();quickType(t);return false}return true}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')foSheet(false)});
+function foTheme(t){document.documentElement.setAttribute('data-theme',t);fetch('/api/me/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:t})});var b=document.getElementById('fo-theme');if(b)b.textContent=t==='dark'?'Dark mode is on':'Dark mode is off'}
+function foLogout(){if(!confirm('Log out?'))return;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout')}catch(e){}location.href='/logout'}
+function foB64(x){var p='='.repeat((4-x.length%4)%4);var r=atob((x+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,function(c){return c.charCodeAt(0)})}
+async function foPush(btn){if(!('serviceWorker' in navigator)||!('PushManager' in window)){alert('On iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.');return}
+btn.disabled=true;try{var perm=await Notification.requestPermission();if(perm!=='granted'){alert('Alerts are off. Turn them on in your phone settings.');btn.disabled=false;return}
+var k=await (await fetch('/api/push/key')).json();var reg=await navigator.serviceWorker.ready;var sub=(await reg.pushManager.getSubscription())||(await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:foB64(k.key)}));
+var r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});btn.textContent=r.ok?'Job alerts are on':'Could not turn on alerts';}catch(e){btn.textContent='Could not turn on alerts';btn.disabled=false}}
+</script>"""
+
+def theme_of(user):
+    try:
+        conn=get_db(); r=conn.execute('SELECT value FROM settings WHERE key=?',('theme:'+ckey(user),)).fetchone(); conn.close()
+        return 'dark' if r and r['value']=='dark' else 'light'
+    except Exception: return 'light'
+
+SHELL_SKIP = ('/hub/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
+def apply_shell(html, path):
+    if 'id="shell-css"' in html or not me() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
+    office=is_office(); top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
+    html=html.replace('<html','<html class="fo-shell" data-theme="%s"'%theme_of(me()),1)
+    html=html.replace('</head>',SHELL_CSS+'</head>',1)
+    i=html.find('>',html.find('<body'))+1
+    html=html[:i]+top+html[i:]
+    j=html.rfind('</body>')
+    return (html[:j]+bottom+SHELL_JS+html[j:]) if j>0 else html+bottom+SHELL_JS
+
+@app.route('/api/me/theme', methods=['POST'])
+def set_theme():
+    if not me(): return jsonify({'error':'login'}),401
+    t='dark' if (request.get_json(silent=True) or {}).get('theme')=='dark' else 'light'
+    conn=get_db(); conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)',('theme:'+ckey(me()),t)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'theme':t})
+
+def card_grid(items):
+    return '<div class="fo-cards">'+''.join('<a class="fo-card" href="%s">%s<b>%s</b><small>%s</small></a>'%(h(u),ICONS.get(i,''),h(t),h(s)) for u,t,s,i in items)+'</div>'
+
+@app.route('/jobs')
+def jobs_view():
+    if not is_office(): return redirect('/')
+    return index(view='jobs')
+
+@app.route('/money')
+def money_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); t=today_local(); mo=t.strftime('%Y-%m')
+    sales=sum((r['sale_amount'] or 0) for r in conn.execute("SELECT sale_amount,completed_at FROM jobs WHERE status='completed'") if utc_day(r['completed_at'])[:7]==mo)
+    qp=conn.execute('SELECT paid FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
+    queued=conn.execute("SELECT COUNT(*) FROM qbo_queue WHERE status='queued'").fetchone()[0]; conn.close()
+    body='<div class="fo-cards" style="margin-bottom:14px"><div class="fo-card">%s<small>Field Ops sales, %s</small><b style="font-size:1.6rem">%s</b></div><div class="fo-card">%s<small>QuickBooks paid, %s</small><b style="font-size:1.6rem">%s</b></div></div>'%(
+        ICONS['chart'],t.strftime('%B'),money(sales),ICONS['qbo'],t.strftime('%B'),money(qp['paid']) if qp and qp['paid'] is not None else 'Not synced')
+    body+=card_grid([('/revenue','Revenue','Sales vs QuickBooks, 12 months','chart'),('/reports','Reports','Profit by job, sub and type','money'),
+                     ('/qbo','QuickBooks','%d waiting to export'%queued if queued else 'Export approved invoices','qbo'),('/timelog','Time Log','Clock-ins, GPS and hours','clock')])
+    return ops_page('Money', body, back=False)
+
+@app.route('/more')
+def more_page():
+    if not is_office(): return redirect('/')
+    return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/to-order','To Order','Parts to buy','cart'),
+        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
+        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/settings','Settings','Dark mode and account','gear')]), back=False)
+
+def me_settings_body():
+    dark=theme_of(me())=='dark'
+    return ('<div class="fo-card" style="margin-bottom:12px"><b style="margin:0">%s</b><small>%s</small></div>'%(h(me()),'Office' if is_office() else 'Sub')+
+            '<button id="fo-theme" class="big-btn gray" onclick="foTheme(document.documentElement.getAttribute(\'data-theme\')===\'dark\'?\'light\':\'dark\')">%s</button>'%('Dark mode is on' if dark else 'Dark mode is off'))
+
+@app.route('/settings')
+def settings_page():
+    if not is_office(): return redirect('/me')
+    return ops_page('Settings', me_settings_body()+'<button class="big-btn gray" onclick="foLogout()">Log out</button>', back='/more')
+
+@app.route('/me')
+def me_page():
+    if not me(): return redirect('/login')
+    if is_office(): return redirect('/settings')
+    conn=get_db(); a=current_agreement(conn); signed=signed_current(conn, me())
+    docs={r['kind']:r for r in conn.execute('SELECT * FROM sub_docs WHERE sub=?',(ckey(me()),)).fetchall()}; conn.close()
+    body=me_settings_body()
+    body+='<h2>My Agreement</h2><a class="fo-card" href="/agreement">%s<b>Subcontractor Agreement v%s</b><small>%s</small></a>'%(ICONS['pen'],h(a['version']),'Signed' if signed else 'Not signed yet. Tap to sign.')
+    body+='<h2>My Documents</h2>'+''.join('<div class="fo-card" style="margin-bottom:8px">%s<b>%s</b><small>%s</small></div>'%(ICONS['doc'],h(lab),
+        ('Expires '+h(docs[k]['expires'])+(' (expired)' if (docs[k]['expires'] or '')<today_local().isoformat() else '')) if k in docs else 'Missing. Send it to the office.') for k,lab in SUB_DOCS)
+    body+='<h2>Job Alerts</h2><button class="big-btn" onclick="foPush(this)">Turn on job alerts</button><div class="muted">Pings you for new jobs and schedule changes.</div>'
+    body+='<button class="big-btn gray" style="margin-top:18px" onclick="foLogout()">Log out</button>'
+    return ops_page('Me', body, back=False)
+
+@app.route('/my-schedule')
+def my_schedule():
+    if not me(): return redirect('/login')
+    if is_office(): return redirect('/schedule')
+    conn=get_db(); rows=[r for r in conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date,'9999')").fetchall() if can_see(r)]; conn.close()
+    t=today_local(); days=[(t+timedelta(days=i)) for i in range(14)]; body=''
+    late=[r for r in rows if r['scheduled_date'] and r['scheduled_date']<t.isoformat()]
+    if late: body+='<h2>Past due</h2>'+''.join(sched_card(r) for r in late)
+    for d in days:
+        js=[r for r in rows if r['scheduled_date']==d.isoformat()]
+        lab='Today' if d==t else ('Tomorrow' if d==t+timedelta(days=1) else d.strftime('%a %b ')+str(d.day))
+        body+='<h2>%s</h2>'%lab+(''.join(sched_card(r) for r in js) or '<div class="muted" style="margin:0 0 6px">Nothing scheduled</div>')
+    nd=[r for r in rows if not r['scheduled_date']]
+    if nd: body+='<h2>No date yet</h2>'+''.join(sched_card(r) for r in nd)
+    return ops_page('My Schedule', body, back=False)
+def sched_card(r):
+    return '<a class="card" href="/?job=%s"><b>%s</b> <span class="muted">%s</span><div>%s</div><div class="muted">%s</div></a>'%(urllib.parse.quote(r['id']),h(r['customer'] or r['title']),h(r['job_type'] or ''),h(r['title']),h(r['address'] or ''))
+# ---------- end shell ----------
+
+def utc_day(iso):
+    if not iso: return ''
+    try:
+        from zoneinfo import ZoneInfo
+        d=datetime.fromisoformat(str(iso).replace('Z','')[:26])
+        return d.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Chicago')).date().isoformat()
+    except Exception: return str(iso)[:10]
 
 @app.route('/healthz')
 def healthz(): return 'ok'
@@ -765,14 +1014,14 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .sk-tools{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px}.sk-tools button{padding:14px 2px;border:2px solid var(--border);border-radius:10px;background:#fff;font-weight:700;font-size:.95rem;color:var(--text)}.sk-tools button.on{border-color:var(--text);background:#fbfaf0}
 
 canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px dashed var(--border);border-radius:10px;background:#fafafa;width:100%;height:160px}
-</style></head><body{% if office %} class="office"{% endif %}>
+</style></head><body class="{% if office %}office {% endif %}view-{{ view }}">
 <div class="header">
   <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px; margin:0 auto 4px; display:block;">
   <div class="sub">Field Ops</div>
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/qbo" class="big-btn gray">QuickBooks</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
+{% if office %}<main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -915,7 +1164,7 @@ canvas.style.touchAction='none';
 ['touchstart','touchmove'].forEach(t=>canvas.addEventListener(t,e=>e.preventDefault(),{passive:false}));
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
-const OFFICE={{ office|tojson }};let F='';
+const OFFICE={{ office|tojson }};const VIEW={{ view|tojson }};let F=new URLSearchParams(location.search).get('f')||'';
 const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div>${j.company?'<div style="color:#666">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div>${j.company?'<div class="muted">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
@@ -1353,7 +1602,7 @@ const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
 document.getElementById('home').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');window.scrollTo(0,0);renderType();clearSig()}
-function showList(){history.replaceState(null,'','/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
+function showList(){history.replaceState(null,'',VIEW==='jobs'?'/jobs':'/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
 async function flushNote(){const n=document.getElementById('update-note');if(!n.value.trim())return true;
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});if(r.ok){n.value='';loadUpdates();return true}alert('Error saving note');return false}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
@@ -1373,10 +1622,11 @@ if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem
 ['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';document.getElementById('office').classList.add('hidden');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
+const qn=new URLSearchParams(location.search).get('new');if(OFFICE&&qn){toggleNew();quickType(qn);history.replaceState(null,'',location.pathname)}
 </script></body></html>'''
 
 @app.route('/')
-def index():
+def index(view='today'):
     techs=[(n,n) for n in sub_logins()]+[(nice_name(k),nice_name(k)+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
     tpls=[]
     if is_office():
@@ -1386,7 +1636,7 @@ def index():
         conn=get_db(); low_n=len(low_stock(conn)); conn.close()
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    return render_template_string(HTML, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
+    return render_template_string(HTML, view=view, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
 
 @app.route('/api/jobs')
 def list_jobs():
@@ -2176,7 +2426,7 @@ label{display:block;font-weight:600;margin-top:6px}.card{border:1px solid #e5e5e
 a.card{display:block;color:#111;text-decoration:none}.muted{color:#666;font-size:.9rem}.flag{background:#fdecea;color:#c62828;border-radius:8px;padding:2px 8px;font-weight:700}
 .okf{background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 8px;font-weight:700}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top}
 th{font-size:.85rem;color:#666}td:first-child{min-width:120px}.num{text-align:right;white-space:nowrap}.msg{background:#e8f5e9;border-radius:10px;padding:10px;margin:8px 0;font-weight:600}</style></head><body>
-<a href="{{ back or '/' }}" class="big-btn gray">&larr; Back</a><h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
+{% if back is not sameas false %}<a href="{{ back or '/' }}" class="big-btn gray fo-back">&larr; Back</a>{% endif %}<h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
 def ops_page(title, body, back='/', msg=''): return render_template_string(OPS_HTML, title=title, body=Markup(body), back=back, msg=msg)
 def money(v):
     try: x=float(v or 0)
