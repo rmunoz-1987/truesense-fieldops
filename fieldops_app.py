@@ -201,7 +201,7 @@ def job_dict(row):
     d['devices'] = parse_devices(d.pop('survey_devices', None))
     d['map'] = parse_map(d.pop('map_data', None))
     if not is_office():
-        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at','sale_amount','estimate_json'): d.pop(k, None)
+        for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at','sale_amount','estimate_json','pay_link','paid_at'): d.pop(k, None)
     return d
 
 def nice_name(n): return ' '.join((n or '').split()).title()
@@ -228,7 +228,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -606,7 +606,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT', 'pay_link TEXT', 'paid_at TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -655,6 +655,8 @@ def init_db():
     conn.execute('''CREATE TABLE IF NOT EXISTS service_plans (
         id INTEGER PRIMARY KEY AUTOINCREMENT, client TEXT, site TEXT, phone TEXT, title TEXT, every_months INTEGER DEFAULT 12, next_date TEXT, tech TEXT,
         price REAL DEFAULT 0, checklist TEXT, active INTEGER DEFAULT 1, last_job_id TEXT, created_at TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS qbo_queue (
+        job_id TEXT PRIMARY KEY, status TEXT, payload TEXT, queued_at TEXT, queued_by TEXT, qbo_invoice_id TEXT, doc_number TEXT, total REAL, balance REAL, note TEXT, updated_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS push_subs (
         endpoint TEXT PRIMARY KEY, sub TEXT, p256dh TEXT, auth TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
@@ -763,7 +765,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/qbo" class="big-btn gray">QuickBooks</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -2435,6 +2437,108 @@ def reports_page():
     body+='<h2>By job</h2><table><tr><th>Job</th><th class="num">Sale</th><th class="num">Cost</th><th class="num">Profit</th></tr>'+''.join('<tr><td><a href="/?job=%s">%s</a><div class="muted">%s %s %s</div></td><td class="num">%s</td><td class="num">%s</td><td class="num"%s><b>%s</b></td></tr>'%(
         urllib.parse.quote(j['id']),h(j['title'] or j['id']),h(j['date']),h(j['client']),h(j['tech']),money(j['sale']),money(j['labor']+j['parts']),' style="color:#c62828"' if j['profit']<0 else '',money(j['profit'])) for j in sorted(jobs,key=lambda j:j['date'],reverse=True))+'</table><a class="big-btn gray" href="/reports?%s&csv=jobs">Download job CSV</a>'%q
     return ops_page('Reports', body)
+
+def qbo_lines(conn, row):
+    try: pkg=json.loads((conn.execute('SELECT package FROM invoice_drafts WHERE job_id=?',(row['id'],)).fetchone() or {'package':'{}'})['package'] or '{}')
+    except Exception: pkg={}
+    if pkg.get('line_items'): return [{'description':str(l.get('description'))[:4000],'qty':fnum(l.get('qty'),1),'rate':round(fnum(l.get('rate')),2),'amount':round(fnum(l.get('amount')),2)} for l in pkg['line_items']]
+    e=load_estimate(row)
+    if e.get('signed_at') and 0<=e.get('chosen',-1)<len(e['options']):
+        o=e['options'][e['chosen']]
+        return [{'description':'%s option: %s'%(o['tier'],o['name'])+(' - '+'; '.join(o['items']) if o['items'] else ''),'qty':1,'rate':o['price'],'amount':o['price']}]
+    if row['sale_amount']: return [{'description':(row['title'] or row['id'])+(' - '+row['scope'] if row['scope'] else ''),'qty':1,'rate':round(row['sale_amount'],2),'amount':round(row['sale_amount'],2)}]
+    return []
+def qbo_payload(conn, row):
+    lines=qbo_lines(conn, row)
+    return {'job_id':row['id'],'doc_number':row['id'][:21],'txn_date':today_local().isoformat(),
+            'customer':{'name':(row['customer'] or '').strip(),'phone':draft_phone(row),'address':row['address'] or ''},
+            'line_items':lines,'total':round(sum(l['amount'] for l in lines),2),'customer_memo':row['title'] or '','private_note':'Field Ops job '+row['id']+'. Created as a draft. Do not send without Roland OK.'}
+def sync_key_ok():
+    key=os.environ.get('QBO_SYNC_KEY') or ''
+    if not key: return jsonify({'error':'QBO_SYNC_KEY is not set'}),503
+    if not hmac.compare_digest((request.headers.get('X-Sync-Key') or '').encode(), key.encode()): return jsonify({'error':'bad key'}),403
+    return None
+
+@app.route('/qbo', methods=['GET','POST'])
+def qbo_page():
+    if not is_office(): return redirect('/')
+    conn=get_db(); msg=''
+    if request.method=='POST':
+        f=request.form; a=f.get('action')
+        if a=='export':
+            n=0
+            for jid in f.getlist('job'):
+                r=conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
+                if not r or conn.execute("SELECT 1 FROM qbo_queue WHERE job_id=? AND status IN ('queued','created','paid')",(jid,)).fetchone(): continue
+                p=qbo_payload(conn, r)
+                if not p['line_items'] or not p['customer']['name']: continue
+                conn.execute('INSERT OR REPLACE INTO qbo_queue (job_id,status,payload,queued_at,queued_by,updated_at) VALUES (?,?,?,?,?,?)',(jid,'queued',json.dumps(p),now_local_str(),me(),now_local_str())); n+=1
+            msg='Queued %d for QuickBooks. Ask your bot to create the QuickBooks drafts. It checks each one with you first.'%n
+        elif a=='unqueue':
+            conn.execute("DELETE FROM qbo_queue WHERE job_id=? AND status IN ('queued','error')",(f.get('job'),)); msg='Removed from the queue'
+        elif a=='paylink':
+            link=(f.get('pay_link') or '').strip()[:500]
+            if link and not link.startswith('https://'): msg='The pay link must start with https://'
+            else: conn.execute('UPDATE jobs SET pay_link=? WHERE id=?',(link or None,f.get('job'))); msg='Pay link saved' if link else 'Pay link removed'
+        conn.commit()
+    drafts=conn.execute('SELECT d.job_id,d.created_at FROM invoice_drafts d ORDER BY d.created_at DESC').fetchall()
+    q={r['job_id']:r for r in conn.execute('SELECT * FROM qbo_queue').fetchall()}
+    jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs').fetchall()}
+    ready=[]
+    for d in drafts:
+        r=jobs.get(d['job_id'])
+        if not r or (d['job_id'] in q and q[d['job_id']]['status']!='error'): continue
+        ready.append((r,qbo_payload(conn, r)))
+    conn.close()
+    body='<div class="muted">Export puts approved invoice drafts in a queue. Your bot (it has QuickBooks) creates each one as a QuickBooks draft invoice only after you OK it. Nothing is sent to clients.</div>'
+    body+='<h2>Ready to export</h2>'
+    if ready:
+        body+='<form method="post"><input type="hidden" name="action" value="export">'
+        for r,p in ready:
+            okp=bool(p['line_items']) and bool(p['customer']['name'])
+            body+='<label class="card" style="display:flex;gap:10px;align-items:flex-start;font-weight:400"><input type="checkbox" name="job" value="%s" %s style="width:28px;height:28px;margin:0;flex:0 0 28px"><div style="flex:1"><b>%s</b> <span class="muted">%s</span><div>%s</div>%s<div style="font-weight:700">%s</div>%s</div></label>'%(
+                h(r['id']),'checked' if okp else 'disabled',h(r['customer'] or 'No client'),h(r['id']),h(r['title']),''.join('<div class="muted">%s</div>'%h(l['description']) for l in p['line_items']),money(p['total']),'' if okp else '<div class="flag">Add a client and a sale amount first</div>')
+        body+='<button class="big-btn">Export to QuickBooks</button></form>'
+    else: body+='<div class="card">Nothing ready. Approved jobs show up here.</div>'
+    def row_html(x):
+        r=jobs.get(x['job_id']); p=json.loads(x['payload'] or '{}')
+        tag={'queued':'<span class="flag" style="background:#fff8e1;color:#8d6e00">Waiting for bot</span>','created':'<span class="okf" style="background:#e3f2fd;color:#1565c0">In QuickBooks</span>','paid':'<span class="okf">Paid</span>','error':'<span class="flag">Problem</span>'}.get(x['status'],'')
+        out='<div class="card"><b>%s</b> %s <span class="muted">%s</span><div>%s%s</div><div class="muted">Queued %s%s</div>'%(h((r['customer'] if r else '') or p.get('customer',{}).get('name','')),tag,h(x['job_id']),money(x['total'] if x['total'] is not None else p.get('total')),(' &middot; QuickBooks #'+h(x['doc_number'] or x['qbo_invoice_id'])) if (x['doc_number'] or x['qbo_invoice_id']) else '',h(x['queued_at']),(' &middot; '+h(x['note'])) if x['note'] else '')
+        if x['status'] in ('queued','error'): out+='<form method="post"><input type="hidden" name="action" value="unqueue"><input type="hidden" name="job" value="%s"><button class="big-btn gray">Take off the queue</button></form>'%h(x['job_id'])
+        if r and x['status'] in ('created','paid'):
+            out+='<form method="post"><input type="hidden" name="action" value="paylink"><input type="hidden" name="job" value="%s"><label>QuickBooks pay link (shows a Pay Now button on the client portal)</label><input name="pay_link" value="%s" placeholder="https://connect.intuit.com/..."><button class="big-btn gray">Save Pay Link</button></form>'%(h(x['job_id']),h(r['pay_link'] or ''))
+        return out+'</div>'
+    for st,title in (('queued','Waiting for the bot'),('error','Problems'),('created','In QuickBooks, not paid'),('paid','Paid')):
+        xs=[x for x in q.values() if x['status']==st]
+        if xs: body+='<h2>%s</h2>'%title+''.join(row_html(x) for x in sorted(xs,key=lambda x:x['updated_at'] or '',reverse=True))
+    return ops_page('QuickBooks Export', body, msg=msg)
+
+@app.route('/api/qbo/pending')
+def qbo_pending():
+    bad=sync_key_ok()
+    if bad: return bad
+    st=request.args.get('status','queued')
+    if st not in ('queued','created'): return jsonify({'error':'status must be queued or created'}),400
+    conn=get_db(); rows=conn.execute('SELECT * FROM qbo_queue WHERE status=? ORDER BY queued_at',(st,)).fetchall(); conn.close()
+    return jsonify([dict(json.loads(r['payload'] or '{}'),status=r['status'],qbo_invoice_id=r['qbo_invoice_id'],queued_at=r['queued_at']) for r in rows])
+
+@app.route('/api/qbo/result', methods=['POST'])
+def qbo_result():
+    bad=sync_key_ok()
+    if bad: return bad
+    d=request.get_json(silent=True) or {}; jid=str(d.get('job_id') or ''); st=d.get('status')
+    if st not in ('created','paid','error'): return jsonify({'error':'status must be created, paid or error'}),400
+    conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=?',(jid,)).fetchone()
+    if not x: conn.close(); return jsonify({'error':'job not in queue'}),404
+    link=str(d.get('pay_link') or '').strip()[:500]
+    if link and not link.startswith('https://'): conn.close(); return jsonify({'error':'pay_link must be https'}),400
+    tot=d.get('total'); bal=d.get('balance')
+    conn.execute('UPDATE qbo_queue SET status=?,qbo_invoice_id=COALESCE(?,qbo_invoice_id),doc_number=COALESCE(?,doc_number),total=COALESCE(?,total),balance=COALESCE(?,balance),note=?,updated_at=? WHERE job_id=?',
+                 (st,(str(d['qbo_invoice_id'])[:40] if d.get('qbo_invoice_id') else None),(str(d['doc_number'])[:40] if d.get('doc_number') else None),(fnum(tot) if tot is not None else None),(fnum(bal) if bal is not None else None),str(d.get('note') or '')[:300],now_local_str(),jid))
+    if link: conn.execute('UPDATE jobs SET pay_link=? WHERE id=?',(link,jid))
+    if st=='paid': conn.execute('UPDATE jobs SET paid_at=COALESCE(paid_at,?) WHERE id=?',(now_local_str(),jid))
+    conn.execute('UPDATE invoice_drafts SET status=? WHERE job_id=?',({'created':'in_quickbooks','paid':'paid','error':'ready_for_review'}[st],jid))
+    conn.commit(); conn.close(); return jsonify({'ok':True})
 
 def stock_locations(): return ['Shop']+['Truck: '+n for n in sub_logins()]
 def my_truck(): return 'Truck: '+me()
