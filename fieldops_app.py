@@ -537,6 +537,9 @@ def init_db():
         sub TEXT, kind TEXT, filename TEXT, orig_name TEXT, expires TEXT, uploaded_at TEXT, PRIMARY KEY (sub, kind))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS job_hours (
         job_id TEXT, sub TEXT, minutes INTEGER DEFAULT 0, PRIMARY KEY (job_id, sub))''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS time_punches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, sub TEXT, in_at TEXT, in_lat REAL, in_lng REAL, in_acc REAL, in_ft REAL, in_flag TEXT,
+        out_at TEXT, out_lat REAL, out_lng REAL, out_acc REAL, out_ft REAL, out_flag TEXT, minutes INTEGER DEFAULT 0, edit_note TEXT, edited_by TEXT, edited_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     r=conn.execute("SELECT value FROM settings WHERE key='tpl_seeded'").fetchone(); seeded=set(json.loads(r['value'])) if r else set()
@@ -582,7 +585,7 @@ body{margin:0;font-family:-apple-system,sans-serif;background:var(--bg);color:va
 .job-id{color:var(--accent);font-weight:700;font-size:0.8rem}
 .big-btn{display:block;width:100%;background:var(--accent);color:#fff;border:none;padding:16px;border-radius:10px;font-size:1.05rem;font-weight:600;margin:8px 0;text-align:center;text-decoration:none}
 .big-btn.gray{background:#f0f0f0;color:var(--text)}
-.big-btn.green{background:#2d6a4f}
+.big-btn.green{background:#2d6a4f}.big-btn.stop{background:#b00020}
 .hidden{display:none}
 .chk{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);font-size:1rem}
 .chk input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
@@ -618,7 +621,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
@@ -681,6 +684,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
 <div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
 <button class="big-btn green" style="font-size:1.2rem;padding:18px" onclick="approveJob()">Approve</button></div>{% endif %}</div>
+<div id="sec-clock"><div class="job" style="text-align:center"><button id="clk-btn" class="big-btn green" style="font-size:1.4rem;padding:22px;width:100%" onclick="clockTap()">Clock In</button><div id="clk-info" style="font-size:1.05rem;margin-top:6px"></div>{% if office %}<a class="big-btn gray" style="display:block;text-decoration:none;margin-top:8px" id="clk-log" href="/timelog">Time Log</a>{% endif %}</div></div>
 <div id="sec-omw"><button class="big-btn green" style="font-size:1.3rem;padding:20px" onclick="onMyWay()">&#128663; On My Way</button><div class="muted" style="font-size:.9rem;text-align:center">Makes a text for the office to check. Nothing goes to the client until the office sends it.</div></div>
 <div id="sec-status"><div class="job"><div style="font-weight:600">Status</div><select id="status" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff" onchange="setStatus(this.value)">{% for v,l in statuses %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div></div>
 <div id="sec-log" class="job"><div style="font-weight:700;font-size:1.15rem;margin-bottom:6px" id="log-title">Notes &amp; Updates</div>
@@ -870,6 +874,15 @@ function addMat(){const n=document.getElementById('mat-new');const t=n.value.tri
 function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs';renderLabor()}
 const money=n=>'$'+Number(n||0).toFixed(2);
 async function saveSale(){const v=document.getElementById('sale-amt').value;const r=await post('/sale',{sale_amount:v});if(r.ok){currentJob.sale_amount=(await r.json()).sale_amount;alert('Saved')}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+function renderClock(){const c=currentJob.clock||{},b=document.getElementById('clk-btn'),i=document.getElementById('clk-info');if(!b)return;b.disabled=false;
+b.textContent=c.open?'Clock Out':'Clock In';b.className='big-btn '+(c.open?'stop':'green');let h='';
+if(c.open)h+='<b>Clocked in '+esc(c.in_local)+'</b>'+(c.in_dist?'<br>'+esc(c.in_dist):'')+(c.in_flag?'<br><b style="color:#b00020">'+esc(c.in_flag)+'</b>':'');
+if(c.other)h+='<br><b style="color:#b00020">Still clocked in on job '+esc(c.other)+'</b>';if(c.today_hours)h+='<br>Today on this job: '+c.today_hours+' hrs';i.innerHTML=h;
+const lg=document.getElementById('clk-log');if(lg)lg.href='/timelog?job='+encodeURIComponent(currentJob.id)}
+async function clockTap(){const b=document.getElementById('clk-btn');b.disabled=true;b.textContent='Getting location...';
+const loc=await new Promise(res=>{if(!navigator.geolocation)return res(null);navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:15000,maximumAge:30000})});
+const r=await post('/clock',loc||{});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Error');renderClock();return}
+alert(d.msg);currentJob.clock=d.clock;if(d.hours!=null){currentJob.hours=d.hours;currentJob.total_minutes=Math.round(d.hours*60);renderTotals()}if(d.labor){currentJob.labor=d.labor;renderLabor()}renderClock()}
 function renderLabor(){const sa=document.getElementById('sale-amt');if(sa)sa.value=currentJob.sale_amount==null?'':currentJob.sale_amount;const el=document.getElementById('labor');if(!el||!currentJob.labor)return;const L=currentJob.labor;
 el.innerHTML=L.lines.map(l=>'<div>'+esc(l.sub)+': '+l.hours+' hrs'+(l.no_rate?' &middot; <b style="color:#b00020">No rate set</b>':(l.rate_hourly!=null?' x '+money(l.rate_hourly)+'/hr':'')+(l.rate_flat!=null?' + '+money(l.rate_flat)+' flat':'')+' = <b>'+money(l.cost)+'</b>')+'</div>').join('')+'<div style="font-size:1.2rem;font-weight:700;margin-top:4px">Total labor: '+money(L.total)+'</div>'+(L.locked?'<div class="muted">Rates locked when the job was completed.</div>':'<div class="muted">Uses current rates until the job is completed.</div>')}
 async function saveTime(mode){const h=document.getElementById('hours');if(!h.value)return;
@@ -1025,14 +1038,14 @@ if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacy
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
 let ok=(await post('/survey',{survey:s})).ok;const o=document.getElementById('sv-office');if(ok&&o)ok=(await post('/survey-office',{survey_office:o.value})).ok;
 if(ok){currentJob.survey=s;if(o)currentJob.survey_office=o.value;svCall();if(!quiet){alert('Survey saved');svEditing=false;renderKelly()}}else alert('Error');return ok}
-const LAYOUT={Survey:{show:['help','links','type','omw','survey','check','log','follow','hub','finish'],more:[]},
-Install:{show:['help','review','links','type','omw','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
-Service:{show:['help','review','links','type','omw','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
+const LAYOUT={Survey:{show:['help','links','type','omw','clock','survey','check','log','follow','hub','finish'],more:[]},
+Install:{show:['help','review','links','type','omw','clock','status','photos','mat','time','check','log','ab','map','follow','hub','private','sig','finish'],more:[]},
+Service:{show:['help','review','links','type','omw','clock','status','log','photos','mat','time','follow','private','sig','finish'],more:['ab','map','check','hub']},
 'Office Task':{show:['type','status','log','check','follow','finish'],more:[]}};
 function toggleMore(){const b=document.getElementById('more-box');b.classList.toggle('hidden');document.getElementById('more-btn').textContent=b.classList.contains('hidden')?'Show more':'Show less'}
 function renderType(){const t=currentJob.job_type||'';const s=document.getElementById('jtype');if(s)s.value=t;const l=document.getElementById('jtype-label');if(l)l.textContent=t||'(not set)';
 const sv=t==='Survey',L=LAYOUT[t]||LAYOUT.Install,det=document.getElementById('detail'),mb=document.getElementById('more-box'),before=document.getElementById('sec-admin');
-['help','links','type','survey','status','log','photos','mat','time','omw','review','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
+['help','links','type','survey','status','log','photos','mat','time','clock','omw','review','check','ab','map','follow','hub','private','sig','finish'].forEach(k=>{const e=document.getElementById('sec-'+k);e.classList.toggle('hidden',!L.show.includes(k)&&!L.more.includes(k));det.appendChild(e)});
 L.show.forEach(k=>det.insertBefore(document.getElementById('sec-'+k),before));L.more.forEach(k=>mb.appendChild(document.getElementById('sec-'+k)));
 if(sv){const m=document.getElementById('sec-map');m.classList.remove('hidden');document.getElementById('sv-mapslot').appendChild(m)}
 det.insertBefore(document.getElementById('sec-more'),before);document.getElementById('sec-more').classList.toggle('hidden',!L.more.length);mb.classList.add('hidden');document.getElementById('more-btn').textContent='Show more';
@@ -1048,7 +1061,7 @@ async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
-renderPhotos();renderBlueprints();renderHelp();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
+renderPhotos();renderBlueprints();renderHelp();renderClock();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
@@ -1213,6 +1226,7 @@ def get_job(job_id):
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
         extra=hub_info(job_id,n,c); extra['labor']=job_labor(conn,row)
+    extra['clock']=clock_state(conn, job_id)
     conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
@@ -2672,6 +2686,132 @@ def revenue_qbo_import():
     except (ValueError, TypeError) as e: return revenue_page(msg='Not saved. '+str(e)[:80], ok=False)
     if not rows: return revenue_page(msg='Paste at least one line', ok=False)
     save_qbo_rows(rows,'paste'); return revenue_page(msg='Saved %d month%s'%(len(rows),'' if len(rows)==1 else 's'))
+
+FAR_FT=1320
+
+def utc_to_local(iso, fmt='%m/%d %I:%M %p'):
+    if not iso: return ''
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import timezone
+        return datetime.fromisoformat(iso[:19]).replace(tzinfo=timezone.utc).astimezone(ZoneInfo('America/Chicago')).strftime(fmt)
+    except Exception: return iso[:16]
+
+def local_to_utc(s):
+    from zoneinfo import ZoneInfo
+    from datetime import timezone
+    return datetime.fromisoformat(s.strip()[:16]).replace(tzinfo=ZoneInfo('America/Chicago')).astimezone(timezone.utc).replace(tzinfo=None).isoformat(timespec='seconds')
+
+def site_point(conn, row):
+    g=parse_map(row['map_data'])['geo']
+    if g and g.get('lat') is not None and g.get('addr','')==(row['address'] or '').strip() or (g and g.get('lat') is not None and g.get('q')=='My location'): return (g['lat'],g['lng'])
+    addr=(row['address'] or '').strip()
+    if not addr: return None
+    try: hit=nominatim(addr)
+    except Exception: return (g['lat'],g['lng']) if g and g.get('lat') is not None else None
+    g={'addr':addr,'q':addr,'lat':hit[0] if hit else None,'lng':hit[1] if hit else None}; set_geo(conn, row, g)
+    return (g['lat'],g['lng']) if hit else None
+
+def punch_check(conn, row, d):
+    lat=_num(d.get('lat'),-90,90,None); lng=_num(d.get('lng'),-180,180,None); acc=_num(d.get('acc'),0,1e6,None)
+    if lat is None or lng is None: return None,None,None,None,'No location (blocked or off)'
+    site=site_point(conn, row)
+    if not site: return lat,lng,acc,None,'No site pin to compare'
+    ft=round(feet_between((lat,lng),site)); return lat,lng,acc,ft,('Far from site (%s)'%dist_text(ft) if ft>FAR_FT else '')
+
+def dist_text(ft):
+    if ft is None: return ''
+    return ('%d ft'%ft) if ft<1000 else ('%.1f mi'%(ft/5280))
+
+def add_hours_for(conn, row, sub, delta):
+    if not delta: return
+    if not conn.execute('SELECT 1 FROM job_hours WHERE job_id=?',(row['id'],)).fetchone() and (row['total_minutes'] or 0) and ckey(row['tech']):
+        conn.execute('INSERT INTO job_hours (job_id,sub,minutes) VALUES (?,?,?)',(row['id'],ckey(row['tech']),row['total_minutes']))
+    conn.execute('UPDATE jobs SET total_minutes=MAX(0,IFNULL(total_minutes,0)+?) WHERE id=?',(int(delta),row['id']))
+    conn.execute('INSERT INTO job_hours (job_id,sub,minutes) VALUES (?,?,0) ON CONFLICT(job_id,sub) DO NOTHING',(row['id'],sub))
+    conn.execute('UPDATE job_hours SET minutes=MAX(0,minutes+?) WHERE job_id=? AND sub=?',(int(delta),row['id'],sub))
+
+def punch_minutes(a, b):
+    try: return max(0, int(round((datetime.fromisoformat(b[:19])-datetime.fromisoformat(a[:19])).total_seconds()/60)))
+    except Exception: return 0
+
+def clock_state(conn, job_id):
+    who=ckey(me()); o=conn.execute('SELECT * FROM time_punches WHERE sub=? AND out_at IS NULL ORDER BY id DESC LIMIT 1',(who,)).fetchone()
+    day=today_local().isoformat(); mins=sum(p['minutes'] or 0 for p in conn.execute('SELECT in_at,minutes FROM time_punches WHERE job_id=? AND sub=? AND out_at IS NOT NULL',(job_id,who)).fetchall() if utc_to_local(p['in_at'],'%Y-%m-%d')==day)
+    st={'open':bool(o and o['job_id']==job_id),'other':o['job_id'] if o and o['job_id']!=job_id else '','today_hours':round(mins/60,2)}
+    if st['open']: st.update(in_local=utc_to_local(o['in_at'],'%I:%M %p'),in_dist=(dist_text(o['in_ft'])+' from site') if o['in_ft'] is not None else '',in_flag=o['in_flag'] or '')
+    return st
+
+@app.route('/api/jobs/<job_id>/clock', methods=['POST'])
+def clock_tap(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    who=ckey(me()); d=request.get_json(silent=True) or {}; now=datetime.utcnow().isoformat(timespec='seconds')
+    o=conn.execute('SELECT * FROM time_punches WHERE sub=? AND out_at IS NULL ORDER BY id DESC LIMIT 1',(who,)).fetchone()
+    if o and o['job_id']!=job_id: conn.close(); return jsonify({'error':'You are still clocked in on job %s. Clock out there first.'%o['job_id']}),409
+    lat,lng,acc,ft,flag=punch_check(conn, row, d); out={'ok':True}
+    if o:
+        mins=punch_minutes(o['in_at'],now)
+        conn.execute('UPDATE time_punches SET out_at=?,out_lat=?,out_lng=?,out_acc=?,out_ft=?,out_flag=?,minutes=? WHERE id=?',(now,lat,lng,acc,ft,flag,mins,o['id']))
+        add_hours_for(conn, row, who, mins); out['msg']='Clocked out. %s hrs added.'%round(mins/60,2)
+    else:
+        if row['status'] in ('completed','review') and not is_office(): conn.close(); return jsonify({'error':'This job is finished. Ask the office.'}),409
+        conn.execute('INSERT INTO time_punches (job_id,sub,in_at,in_lat,in_lng,in_acc,in_ft,in_flag) VALUES (?,?,?,?,?,?,?,?)',(job_id,who,now,lat,lng,acc,ft,flag))
+        out['msg']='Clocked in.'
+    if ft is not None: out['msg']+=' You are %s from the site.'%dist_text(ft)
+    if flag: out['msg']+=' Flag: '+flag+'.'
+    conn.commit(); j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    out['clock']=clock_state(conn, job_id); out['hours']=round((j['total_minutes'] or 0)/60,2)
+    if is_office(): out['labor']=job_labor(conn, j)
+    conn.close(); return jsonify(out)
+
+TIMELOG_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Time Log</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:900px;margin:auto;padding:12px;font-size:1.05rem}h2{color:#a49f2a;text-align:center;margin:8px 0}
+.job{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}.flag{color:#b00020;font-weight:700}.muted{color:#666}.btn{display:block;width:100%;background:#f0f0f0;color:#111;padding:16px;border:0;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;font-size:1.05rem;margin:8px 0}.gold{background:#a49f2a;color:#fff}
+input,select{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:4px 0}label{font-weight:600;display:block;margin-top:6px}details summary{cursor:pointer;font-weight:600;padding:8px 0}</style></head><body>
+<h2>Time Log (office only)</h2><a class="btn" href="{{ '/?job='+job if job else '/' }}">Back</a>
+<form method="get"><div style="display:flex;gap:8px"><input name="job" value="{{ job }}" placeholder="Job ID (blank = all)"><select name="flag"><option value="">All</option><option value="1"{% if flagged %} selected{% endif %}>Flagged only</option></select></div><button class="btn" type="submit">Show</button></form>
+{% if msg %}<div class="job" style="font-weight:700;color:{{ '#2e7d32' if ok else '#b00020' }}">{{ msg }}</div>{% endif %}
+{% for p in punches %}<div class="job"><div><b>{{ p.sub_name }}</b> &middot; Job <a href="/?job={{ p.job_id }}">{{ p.job_id }}</a> &middot; {{ p.hours }} hrs{% if not p.out_at %} <span class="flag">(still clocked in)</span>{% endif %}</div>
+<div>In: {{ p.in_local }}{% if p.in_dist %} &middot; {{ p.in_dist }} from site{% endif %}{% if p.in_flag %} <span class="flag">{{ p.in_flag }}</span>{% endif %}</div>
+<div>Out: {{ p.out_local or '-' }}{% if p.out_dist %} &middot; {{ p.out_dist }} from site{% endif %}{% if p.out_flag %} <span class="flag">{{ p.out_flag }}</span>{% endif %}</div>
+{% if p.edit_note %}<div class="muted">Edited by {{ p.edited_by }} {{ p.edited_local }}: {{ p.edit_note }}</div>{% endif %}
+<details><summary>Edit</summary><form method="post" action="/timelog/edit/{{ p.id }}"><input type="hidden" name="back" value="{{ job }}"><label>In</label><input type="datetime-local" name="in_at" value="{{ p.in_val }}" required><label>Out</label><input type="datetime-local" name="out_at" value="{{ p.out_val }}"><label>Why (required)</label><input name="note" required maxlength="300" placeholder="Forgot to clock out"><button class="btn gold" type="submit">Save Change</button></form></details></div>
+{% else %}<div class="job muted">No clock ins yet.</div>{% endfor %}</body></html>"""
+
+@app.route('/timelog')
+def timelog_page(msg=None, ok=True):
+    if not is_office(): return redirect('/')
+    job=(request.values.get('job') or request.values.get('back') or '').strip()[:60]; flagged=request.args.get('flag')=='1'
+    q='SELECT * FROM time_punches'; a=[]
+    w=[]
+    if job: w.append('job_id=?'); a.append(job)
+    if flagged: w.append("(IFNULL(in_flag,'')!='' OR IFNULL(out_flag,'')!='' OR out_at IS NULL)")
+    if w: q+=' WHERE '+' AND '.join(w)
+    conn=get_db(); rows=conn.execute(q+' ORDER BY id DESC LIMIT 300',a).fetchall(); conn.close(); ps=[]
+    for r in rows:
+        p=dict(r); p.update(sub_name=nice_name(r['sub']),hours=round((r['minutes'] or 0)/60,2),in_local=utc_to_local(r['in_at']),out_local=utc_to_local(r['out_at']),
+            in_dist=dist_text(r['in_ft']),out_dist=dist_text(r['out_ft']),edited_local=utc_to_local(r['edited_at']),
+            in_val=utc_to_local(r['in_at'],'%Y-%m-%dT%H:%M'),out_val=utc_to_local(r['out_at'],'%Y-%m-%dT%H:%M')); ps.append(p)
+    return render_template_string(TIMELOG_HTML, punches=ps, job=job, flagged=flagged, msg=msg, ok=ok)
+
+@app.route('/timelog/edit/<int:pid>', methods=['POST'])
+def timelog_edit(pid):
+    if not is_office(): return ('',403)
+    note=(request.form.get('note') or '').strip()[:300]
+    if not note: return timelog_page(msg='Not saved. Add a reason.', ok=False)
+    try:
+        ia=local_to_utc(request.form.get('in_at') or ''); oa=(request.form.get('out_at') or '').strip(); oa=local_to_utc(oa) if oa else None
+    except Exception: return timelog_page(msg='Not saved. Check the times.', ok=False)
+    if oa and oa<ia: return timelog_page(msg='Not saved. Out is before In.', ok=False)
+    conn=get_db(); p=conn.execute('SELECT * FROM time_punches WHERE id=?',(pid,)).fetchone()
+    if not p: conn.close(); return ('',404)
+    mins=punch_minutes(ia,oa) if oa else 0
+    conn.execute('UPDATE time_punches SET in_at=?,out_at=?,minutes=?,edit_note=?,edited_by=?,edited_at=? WHERE id=?',(ia,oa,mins,note,me(),datetime.utcnow().isoformat(timespec='seconds'),pid))
+    row=conn.execute('SELECT * FROM jobs WHERE id=?',(p['job_id'],)).fetchone()
+    if row: add_hours_for(conn, row, p['sub'], mins-(p['minutes'] or 0))
+    conn.commit(); conn.close()
+    return timelog_page(msg='Saved. Hours updated.')
 
 @app.route('/to-order')
 def to_order():
