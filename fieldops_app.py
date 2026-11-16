@@ -756,7 +756,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
-<div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
+<div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <div class="row" style="flex-wrap:wrap;gap:6px">{% for t in job_types %}<button class="big-btn gray qa" style="flex:1 1 45%" data-t="{{ t }}" onclick="quickType(this.dataset.t)">+ {{ t }}</button>{% endfor %}</div>
 <datalist id="cl-list"></datalist>
@@ -915,6 +915,7 @@ function quickType(t){const n=k=>document.getElementById('n-'+k);n('type').value
 function autoTitle(){const n=k=>document.getElementById('n-'+k);const t=n('title');if(!t.value||t.dataset.auto==='1'){const c=n('customer').value.trim();t.value=n('type').value+(c?' - '+c:'');t.dataset.auto='1'}}
 function pickClient(){const n=k=>document.getElementById('n-'+k);const c=(QK&&QK.clients||[]).find(x=>x.name.toLowerCase()===n('customer').value.trim().toLowerCase());
 if(c){if(!n('address').value)n('address').value=c.address;if(!n('phone').value)n('phone').value=c.phone}autoTitle()}
+function goSearch(){const q=(document.getElementById('q').value||'').trim();if(q.length>1)location.href='/search?q='+encodeURIComponent(q);else{document.getElementById('q').value='';load()}}
 function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){quickFill();o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
 if(OFFICE&&!q)return loadDash();
@@ -2122,6 +2123,55 @@ def sub_companies(conn): return {r['key']:r['company'] for r in conn.execute("SE
 
 def tech_has_client(conn, customer):
     return any(can_see(r) for r in conn.execute('SELECT tech FROM jobs WHERE LOWER(TRIM(customer))=?',(ckey(customer),)).fetchall())
+
+from markupsafe import escape as h, Markup
+OPS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:760px;margin:auto;padding:14px;overflow-wrap:anywhere}
+h1{font-size:1.4rem;margin:8px 0}h2{font-size:1.15rem;color:#a49f2a;border-bottom:2px solid #a49f2a;margin:22px 0 8px}
+.big-btn{display:block;width:100%;text-align:center;padding:16px;border:0;border-radius:10px;background:#a49f2a;color:#fff;font-size:1.1rem;font-weight:700;text-decoration:none;margin:6px 0}
+.big-btn.gray{background:#eee;color:#111}.big-btn.red{background:#c62828}.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 140px}
+input,select,textarea{width:100%;padding:13px;border:1px solid #ccc;border-radius:10px;font-size:1rem;margin:4px 0;background:#fff;font-family:inherit}
+label{display:block;font-weight:600;margin-top:6px}.card{border:1px solid #e5e5e5;border-radius:12px;padding:12px;margin:8px 0;background:#fff}
+a.card{display:block;color:#111;text-decoration:none}.muted{color:#666;font-size:.9rem}.flag{background:#fdecea;color:#c62828;border-radius:8px;padding:2px 8px;font-weight:700}
+.okf{background:#e8f5e9;color:#2e7d32;border-radius:8px;padding:2px 8px;font-weight:700}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top}
+th{font-size:.85rem;color:#666}.num{text-align:right;white-space:nowrap}.msg{background:#e8f5e9;border-radius:10px;padding:10px;margin:8px 0;font-weight:600}</style></head><body>
+<a href="{{ back or '/' }}" class="big-btn gray">&larr; Back</a><h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
+def ops_page(title, body, back='/', msg=''): return render_template_string(OPS_HTML, title=title, body=Markup(body), back=back, msg=msg)
+def money(v):
+    try: return '${:,.2f}'.format(float(v or 0))
+    except Exception: return '$0.00'
+
+@app.route('/search')
+def search_page():
+    if not me(): return redirect('/login')
+    q=(request.args.get('q') or '').strip()[:80]; office=is_office()
+    form='<form action="/search"><input type="search" name="q" value="%s" placeholder="Client, address, job, note, serial" autofocus><button class="big-btn">Search</button></form>'%h(q)
+    if len(q)<2: return ops_page('Search', form+'<div class="muted">Type 2 or more letters.</div>')
+    like='%'+q.lower()+'%'; conn=get_db(); out=[]
+    jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs').fetchall() if can_see(r)}
+    hits={}
+    def hit(jid, why):
+        if jid in jobs and why not in hits.setdefault(jid,[]): hits[jid].append(why)
+    for jid,r in jobs.items():
+        for col,lab in (('id','Job ID'),('title','Title'),('customer','Client'),('address','Address'),('scope','Scope'),('phone','Phone'),('survey_devices','Device')):
+            if like[1:-1] in str(r[col] or '').lower(): hit(jid,lab)
+        if office and like[1:-1] in str(r['private_notes'] or '').lower(): hit(jid,'Office note')
+    for r in conn.execute('SELECT job_id,note FROM job_updates WHERE LOWER(note) LIKE ?',(like,)).fetchall(): hit(r['job_id'],'Note: '+str(r['note'])[:80])
+    for r in conn.execute("SELECT job_id,log_date,work_done FROM daily_logs WHERE LOWER(IFNULL(work_done,'')||' '||IFNULL(materials,'')||' '||IFNULL(issues,'')) LIKE ?",(like,)).fetchall(): hit(r['job_id'],'Daily log '+(r['log_date'] or ''))
+    for f in SEARCH_HOOKS: f(conn, like, hit, out, office)
+    cl=[]
+    if office:
+        cl=conn.execute("SELECT name,address,phone FROM clients WHERE LOWER(name||' '||IFNULL(address,'')||' '||IFNULL(phone,'')) LIKE ? ORDER BY name LIMIT 30",(like,)).fetchall()
+    conn.close()
+    body=form
+    if cl: body+='<h2>Clients</h2>'+''.join('<a class="card" href="/clients?name=%s"><b>%s</b><div class="muted">%s %s</div></a>'%(urllib.parse.quote(c['name']),h(c['name']),h(c['address'] or ''),h(c['phone'] or '')) for c in cl)
+    if hits:
+        body+='<h2>Jobs</h2>'+''.join('<a class="card" href="/?job=%s"><b>%s</b> <span class="muted">%s</span><div>%s</div><div class="muted">%s</div><div class="muted">Found in: %s</div></a>'%(
+            urllib.parse.quote(j),h(jobs[j]['title'] or j),h(j),h(jobs[j]['customer'] or ''),h(jobs[j]['address'] or ''),h(', '.join(hits[j][:5]))) for j in sorted(hits,key=lambda k:(jobs[k]['status']=='completed',k)))
+    body+=''.join(out)
+    if not cl and not hits and not out: body+='<div class="card">Nothing found for "%s".</div>'%h(q)
+    return ops_page('Search', body)
+SEARCH_HOOKS = []
 
 @app.route('/clients')
 def clients_page():
