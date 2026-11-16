@@ -210,7 +210,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path=='/api/tech-support/reply': return
+    if request.path in ('/login', '/healthz') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path=='/api/tech-support/reply': return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -508,8 +508,9 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, version TEXT, body TEXT, created_at TEXT, created_by TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS agreement_signs (
         id INTEGER PRIMARY KEY AUTOINCREMENT, sub TEXT, agreement_id INTEGER, version TEXT, typed_name TEXT, signature TEXT, signed_at TEXT, ip TEXT, user_agent TEXT)''')
-    try: conn.execute('ALTER TABLE agreement_signs ADD COLUMN fields TEXT')
-    except: pass
+    for col in ['fields TEXT', 'co_name TEXT', 'co_title TEXT', 'co_signature TEXT', 'co_signed_at TEXT', 'co_by TEXT', 'co_ip TEXT', 'co_user_agent TEXT', 'email_status TEXT', 'email_at TEXT']:
+        try: conn.execute(f'ALTER TABLE agreement_signs ADD COLUMN {col}')
+        except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
     if not conn.execute('SELECT 1 FROM agreements').fetchone():
         conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',('1.2',AGREEMENT_V12,now_local_str(),'Seed'))
@@ -593,7 +594,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button></div>{% endif %}
+<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
@@ -732,7 +733,8 @@ const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=ass
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
-async function loadDash(){const [a,c,fu,tx,dx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json())]);
+async function loadDash(){const [a,c,fu,tx,dx,sg]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json()),fetch('/api/agreements/pending').then(r=>r.json())]);
+document.getElementById('t-sign').textContent=sg.length;document.getElementById('tile-sign').classList.toggle('red',sg.length>0);
 document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.missing?' missing':(x.expired?' expired ':' expires ')+x.expires)).join(', ');
 const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),review:a.filter(j=>j.status==='review'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
 document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="review"]').classList.toggle('red',lists.review.length>0);document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
@@ -2248,7 +2250,7 @@ AGR_MACRO = """{% macro agr(segs, mode, vals={}, s=None) %}{% for g in segs %}{%
 
 AGR_SUB_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement</h2><div class="muted" style="text-align:center">Version {{ a.version }}</div>
 {% if need %}<div class="job" style="border:2px solid #b00020"><b>Please read and sign before you can open jobs.</b></div>{% endif %}
-{% if mine %}<div class="job" style="border:2px solid #2e7d32"><b style="color:#2e7d32">You signed version {{ mine.version }} on {{ mine.signed_at }}.</b>{% if not current %} <b style="color:#b00020">A new version needs your signature.</b>{% endif %}
+{% if mine %}<div class="job" style="border:2px solid #2e7d32"><b style="color:#2e7d32">You signed version {{ mine.version }} on {{ mine.signed_at }}.</b> {% if mine.co_signed_at %}<b>Fully signed by True Sense on {{ mine.co_signed_at }}.</b>{% else %}<b style="color:#b26a00">Awaiting company signature.</b>{% endif %}{% if not current %} <b style="color:#b00020">A new version needs your signature.</b>{% endif %}
 <a class="btn" href="/agreement/copy/{{ mine.id }}">View my signed copy</a></div>{% endif %}
 {% if not current %}<form method="post" action="/agreement/sign" onsubmit="return go()"><div class="job" style="background:#fffde7;border:2px solid #d4b000"><b>Fill in every yellow box in the agreement below.</b> Orange parts are set by True Sense. Then type your name, check I AGREE, and sign.</div>
 <div class="text" style="max-height:65vh;overflow-y:auto">{{ agr(segs, 'sign') }}</div><div class="job"><input type="hidden" name="agreement_id" value="{{ a.id }}"><input type="hidden" name="signature" id="sigdata">
@@ -2269,10 +2271,15 @@ function go(){const bx=document.querySelectorAll('.sbox');if(bx.length&&![...bx]
 {% if not need %}<a class="btn noprint" href="/">Back to Jobs</a>{% endif %}<a class="btn noprint" href="/logout">Log out</a></body></html>"""
 
 AGR_OFFICE_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement</h2><a class="btn" href="/">Back to Jobs</a>
+<div class="job" id="pending" style="border:2px solid {{ '#b00020' if pend else '#ddd' }}"><div style="font-weight:700;font-size:1.1rem">Needs Your Signature ({{ pend|length }})</div>
+{% for p in pend %}<div style="border-top:1px solid #eee;padding:8px 0"><b>{{ p.sub|title }}</b> signed v{{ p.version }} on {{ p.signed_at }}<a class="btn go" href="/agreement/countersign/{{ p.id }}">Review and Sign</a></div>{% else %}<div class="muted">Nothing waiting.</div>{% endfor %}</div>
+{% if done %}<div class="job"><div style="font-weight:700">Fully signed copies</div>{% if not smtp %}<div style="color:#b00020;font-weight:700;margin:4px 0">Email not set up. Add SMTP settings in Render to email copies.</div>{% endif %}
+{% for d in done %}<div style="border-top:1px solid #eee;padding:8px 0"><b>{{ d.sub|title }}</b> v{{ d.version }} &middot; fully signed {{ d.co_signed_at }}<div class="muted">Email: {{ d.email_status or 'Not sent' }}{% if d.email_at %} ({{ d.email_at }}){% endif %}</div>
+<div style="display:flex;gap:8px"><a class="btn" href="/agreement/copy/{{ d.id }}">Open Copy</a><form method="post" action="/agreement/email/{{ d.id }}" style="flex:1;margin:0" onsubmit="return confirm('Email the signed copy to the sub and to you?')"><button class="btn gold" type="submit">Email copy</button></form></div></div>{% endfor %}</div>{% endif %}
 <form method="post" action="/agreement/require" class="job" style="border:2px solid {{ '#2e7d32' if required else '#ddd' }}"><div style="font-weight:700;font-size:1.1rem">Require subs to sign: {{ 'ON' if required else 'OFF' }}</div>
 <div class="muted">{{ 'Subs must sign the current version before they can open jobs.' if required else 'Subs are not blocked. They can still sign from a link on their home screen.' }}</div>
 <input type="hidden" name="on" value="{{ '0' if required else '1' }}"><button class="btn {{ '' if required else 'gold' }}" type="submit">{{ 'Turn OFF' if required else 'Turn ON' }}</button></form>
-<div class="job"><div style="font-weight:700">Sub status (current version {{ a.version }})</div><table>{% for n, st, sid in rows %}<tr><td><b>{{ n }}</b></td><td style="color:{{ '#2e7d32' if st.startswith('Signed') else '#b00020' }};font-weight:600">{{ st }}</td><td>{% if sid %}<a href="/agreement/copy/{{ sid }}">Signed copy</a>{% endif %}</td></tr>{% else %}<tr><td>No subs set in Render</td></tr>{% endfor %}</table></div>
+<div class="job"><div style="font-weight:700">Sub status (current version {{ a.version }})</div><table>{% for n, st, sid in rows %}<tr><td><b>{{ n }}</b></td><td style="color:{{ '#2e7d32' if st.startswith('Fully') else ('#b26a00' if st.startswith('Awaiting') else '#b00020') }};font-weight:600">{{ st }}</td><td>{% if sid %}<a href="/agreement/copy/{{ sid }}">Signed copy</a>{% endif %}</td></tr>{% else %}<tr><td>No subs set in Render</td></tr>{% endfor %}</table></div>
 <div class="job"><div style="font-weight:700">Current version {{ a.version }}</div><div class="muted">Added {{ a.created_at }} by {{ a.created_by }}</div>
 <div class="muted" style="margin-top:6px">Yellow = the sub fills in. Orange = set by office. Grey = filled when the sub signs.</div>
 <div class="text" style="max-height:50vh;overflow-y:auto;margin-top:8px">{{ agr(segs, 'office') }}</div></div>
@@ -2288,12 +2295,144 @@ AGR_OFFICE_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement</h2><a c
 <button class="btn gold" type="submit">Save New Version</button></form></body></html>"""
 
 AGR_COPY_HTML = AGR_HEAD + AGR_MACRO + """<h2>Subcontractor Agreement: Signed Copy</h2>
-<div class="noprint"><button class="btn gold" onclick="print()">Print</button><a class="btn" href="/agreement">Back</a></div>
-<div class="job"><div><b>Version:</b> {{ s.version }}</div><div><b>Signed by:</b> {{ s.typed_name }} (login: {{ s.sub|title }})</div><div><b>Date and time:</b> {{ s.signed_at }}</div></div>
+{% if not standalone %}<div class="noprint"><button class="btn gold" onclick="print()">Print</button><a class="btn" href="/agreement">Back</a></div>{% endif %}
+<div class="job"><div style="font-weight:700;font-size:1.1rem;color:{{ '#2e7d32' if s.co_signed_at else '#b26a00' }}">{{ 'Fully signed' if s.co_signed_at else 'Awaiting company signature' }}</div><div><b>Version:</b> {{ s.version }}</div><div><b>Signed by:</b> {{ s.typed_name }} (login: {{ s.sub|title }})</div><div><b>Date and time:</b> {{ s.signed_at }}</div></div>
 <div class="text">{{ agr(segs, 'copy', vals, s) }}</div>
 <div class="job" style="page-break-inside:avoid"><div style="font-weight:700">Subcontractor Signature</div><div><b>Typed name:</b> {{ s.typed_name }}</div><div>&#9745; I AGREE to version {{ s.version }}</div>
 {% if s.signature and s.signature.startswith('data:image/') %}<img src="{{ s.signature }}" alt="signature" style="width:320px;max-width:100%;border-bottom:2px solid #111;display:block;margin:8px 0">{% endif %}
-<div><b>Signed:</b> {{ s.signed_at }}</div><div class="muted" style="font-size:.8rem">Recorded by True Sense Field Ops. IP {{ s.ip or '-' }}. Device: {{ s.user_agent or '-' }}</div></div></body></html>"""
+<div><b>Signed:</b> {{ s.signed_at }}</div><div class="muted" style="font-size:.8rem">Recorded by True Sense Field Ops. IP {{ s.ip or '-' }}. Device: {{ s.user_agent or '-' }}</div></div>
+<div class="job" style="page-break-inside:avoid"><div style="font-weight:700">Company Signature (True Sense Security)</div>{% if s.co_signed_at %}<div><b>Typed name:</b> {{ s.co_name }}</div><div><b>Title:</b> {{ s.co_title or '-' }}</div><div>&#9745; I AGREE to version {{ s.version }}</div>
+{% if s.co_signature and s.co_signature.startswith('data:image/') %}<img src="{{ s.co_signature }}" alt="company signature" style="width:320px;max-width:100%;border-bottom:2px solid #111;display:block;margin:8px 0">{% endif %}
+<div><b>Signed:</b> {{ s.co_signed_at }}</div><div class="muted" style="font-size:.8rem">Recorded by True Sense Field Ops. IP {{ s.co_ip or '-' }}. Device: {{ s.co_user_agent or '-' }}</div>{% else %}<div style="color:#b26a00;font-weight:600">Awaiting company signature</div>{% endif %}</div>
+</body></html>"""
+
+AGR_CO_HTML = AGR_HEAD + AGR_MACRO + """<h2>Company Countersign</h2><a class="btn" href="/agreement">Back</a>
+<div class="job"><div><b>Sub:</b> {{ s.typed_name }} (login: {{ s.sub|title }})</div><div><b>Version:</b> {{ s.version }}</div><div><b>Sub signed:</b> {{ s.signed_at }}</div></div>
+<div class="text" style="max-height:55vh;overflow-y:auto">{{ agr(segs, 'copy', vals, s) }}</div>
+<div class="job"><div style="font-weight:700">Sub Signature</div>{% if s.signature and s.signature.startswith('data:image/') %}<img src="{{ s.signature }}" alt="signature" style="width:260px;max-width:100%;border-bottom:2px solid #111;display:block;margin:8px 0">{% endif %}</div>
+<form method="post" class="job" onsubmit="return go()"><div style="font-weight:700;font-size:1.1rem">Sign for True Sense Security</div><input type="hidden" name="signature" id="sigdata">
+<label style="font-weight:600">Your full name<input type="text" name="co_name" value="{{ pre_name }}" required maxlength="100"></label>
+<label style="font-weight:600">Title<input type="text" name="co_title" value="{{ pre_title }}" maxlength="100"></label>
+<label style="display:flex;gap:10px;align-items:center;font-weight:700;font-size:1.1rem;margin:10px 0"><input type="checkbox" name="agree" value="1" required style="width:28px;height:28px"> I AGREE to version {{ s.version }}</label>
+<div style="font-weight:600">Sign with your finger</div><canvas id="pad" style="width:100%;height:180px;border:2px solid #ccc;border-radius:10px;background:#fff;touch-action:none"></canvas>
+<button type="button" class="btn" onclick="clr()">Clear Signature</button><button type="submit" class="btn go" style="font-size:1.2rem">Sign</button>
+<div class="muted">When you sign, the fully signed copy is emailed to the sub and to you.</div></form>
+<script>
+const c=document.getElementById('pad'),x=c.getContext('2d');let d=false,inked=false;
+function fit(){c.width=c.clientWidth*2;c.height=c.clientHeight*2;x.scale(2,2);x.lineWidth=2.5;x.lineCap='round';x.strokeStyle='#111';inked=false}fit();
+function pt(e){const r=c.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
+c.addEventListener('pointerdown',e=>{d=true;c.setPointerCapture(e.pointerId);const [a,b]=pt(e);x.beginPath();x.moveTo(a,b)});
+c.addEventListener('pointermove',e=>{if(!d)return;const [a,b]=pt(e);x.lineTo(a,b);x.stroke();inked=true});
+c.addEventListener('pointerup',()=>d=false);c.addEventListener('pointercancel',()=>d=false);
+function clr(){x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,c.width,c.height);fit()}
+function go(){if(!inked){alert('Please sign with your finger');return false}document.getElementById('sigdata').value=c.toDataURL('image/png');return true}
+</script></body></html>"""
+
+def agr_sign_data(conn, sid):
+    s=conn.execute('SELECT * FROM agreement_signs WHERE id=?',(sid,)).fetchone()
+    if not s: return None, None, None, None
+    a=conn.execute('SELECT body FROM agreements WHERE id=?',(s['agreement_id'],)).fetchone(); body=a['body'] if a else ''
+    try: vals=json.loads(s['fields'] or '{}')
+    except Exception: vals={}
+    return s, body, agr_parse(body), vals
+
+def pending_countersign(conn):
+    return conn.execute('SELECT * FROM agreement_signs s WHERE co_signed_at IS NULL AND id=(SELECT MAX(id) FROM agreement_signs WHERE sub=s.sub) ORDER BY id').fetchall()
+
+def agr_view_token(sid, co_at): return hmac.new(app.secret_key.encode(), ('agr:%s:%s'%(sid,co_at)).encode(), hashlib.sha256).hexdigest()[:32]
+
+SMTP_VARS = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'AGREEMENT_NOTIFY_TO']
+def smtp_ready(): return bool(os.environ.get('SMTP_HOST') and os.environ.get('SMTP_FROM'))
+
+def sub_email(segs, vals):
+    for g in segs:
+        if g['t']=='sub' and g['label'].strip().lower()=='email':
+            v=(vals.get(g['key']) or '').strip()
+            if re.fullmatch(r'[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+', v): return v
+    return ''
+
+def queue_agreement_email(conn, sid, base):
+    s, body, segs, vals = agr_sign_data(conn, sid)
+    if not s or not s['co_signed_at']: return 'not fully signed'
+    if not smtp_ready():
+        app.logger.warning('AGREEMENT_EMAIL_SKIPPED %s: SMTP not set up', sid)
+        conn.execute("UPDATE agreement_signs SET email_status='Email not set up',email_at=? WHERE id=?",(now_local_str(),sid)); conn.commit(); return 'Email not set up'
+    to=[x for x in [sub_email(segs, vals), (os.environ.get('AGREEMENT_NOTIFY_TO') or '').strip()] if x]
+    if not to:
+        conn.execute("UPDATE agreement_signs SET email_status='Failed: no email address',email_at=? WHERE id=?",(now_local_str(),sid)); conn.commit(); return 'no address'
+    html=render_template_string(AGR_COPY_HTML, s=s, segs=segs, vals=vals, standalone=True)
+    link=base.rstrip('/')+'/agreement/view/%d?t=%s'%(sid, agr_view_token(sid, s['co_signed_at']))
+    fname=secure_filename('TrueSense_Subcontractor_Agreement_%s_v%s.html'%(s['typed_name'] or s['sub'], s['version'])) or 'TrueSense_Subcontractor_Agreement.html'
+    conn.execute("UPDATE agreement_signs SET email_status='Sending',email_at=? WHERE id=?",(now_local_str(),sid)); conn.commit()
+    threading.Thread(target=send_agreement_email, args=(sid, to, html, link, fname, s['version']), daemon=True).start()
+    return 'Sending'
+
+def send_agreement_email(sid, to, html, link, fname, version):
+    import smtplib
+    from email.message import EmailMessage
+    sent, errs = [], []
+    host=os.environ.get('SMTP_HOST'); port=int(os.environ.get('SMTP_PORT') or 587); user=os.environ.get('SMTP_USER'); pw=os.environ.get('SMTP_PASS') or ''
+    for addr in to:
+        try:
+            m=EmailMessage(); m['Subject']='TrueSense Subcontractor Agreement, fully signed'; m['From']=os.environ.get('SMTP_FROM'); m['To']=addr
+            m.set_content('Hello,\n\nThe True Sense Security Subcontractor Agreement (version %s) is now signed by both parties.\n\nA copy is attached. You can also view it here:\n%s\n\nTrue Sense Security\n' % (version, link))
+            m.add_attachment(html.encode('utf-8'), maintype='text', subtype='html', filename=fname)
+            if port==465: srv=smtplib.SMTP_SSL(host, port, timeout=20)
+            else:
+                srv=smtplib.SMTP(host, port, timeout=20); srv.ehlo()
+                if srv.has_extn('starttls'): srv.starttls(); srv.ehlo()
+            if user: srv.login(user, pw)
+            srv.send_message(m); srv.quit(); sent.append(addr)
+        except Exception as e:
+            errs.append('%s (%s)' % (addr, type(e).__name__)); app.logger.warning('AGREEMENT_EMAIL_FAILED %s %s %s', sid, addr, type(e).__name__)
+    st=('Sent to '+', '.join(sent) if sent else '')+(('; ' if sent else '')+'Failed: '+', '.join(errs) if errs else '')
+    try:
+        conn=get_db(); conn.execute('UPDATE agreement_signs SET email_status=?,email_at=? WHERE id=?',(st[:300],now_local_str(),sid)); conn.commit(); conn.close()
+    except Exception: pass
+
+def base_url(): return (os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
+
+@app.route('/agreement/countersign/<int:sid>', methods=['GET','POST'])
+def agreement_countersign(sid):
+    if not is_office(): return ('Office only',403)
+    conn=get_db(); s, body, segs, vals = agr_sign_data(conn, sid)
+    if not s: conn.close(); return ('Not found',404)
+    if s['co_signed_at']: conn.close(); return redirect(f'/agreement/copy/{sid}')
+    if request.method=='POST':
+        f=request.form; name=(f.get('co_name') or '').strip()[:100]; sig=f.get('signature') or ''
+        if not name or f.get('agree')!='1' or not sig.startswith('data:image/png;base64,') or len(sig)>600000: conn.close(); return ('Type your name, check I agree, and sign.',400)
+        ip=(request.headers.get('X-Forwarded-For') or request.remote_addr or '').split(',')[0].strip()[:60]
+        n=conn.execute('UPDATE agreement_signs SET co_name=?,co_title=?,co_signature=?,co_signed_at=?,co_by=?,co_ip=?,co_user_agent=? WHERE id=? AND co_signed_at IS NULL',
+                       (name,(f.get('co_title') or '').strip()[:100],sig,now_local_str(),me(),ip,(request.headers.get('User-Agent') or '')[:300],sid)).rowcount
+        conn.commit()
+        if not n: conn.close(); return ('Already countersigned',409)
+        queue_agreement_email(conn, sid, base_url()); conn.close()
+        return redirect(f'/agreement/copy/{sid}')
+    cur_body=current_agreement(conn)['body']; conn.close()
+    def pre(lbl):
+        for b in (body, cur_body):
+            m1=re.search(r'COMPANY SIGNER(.*)', b, re.S); m=re.search(r'^\s*'+lbl+r':\s*(.+)$', m1.group(1) if m1 else '', re.M); v=(m.group(1).strip() if m else '')
+            if v and '[' not in v: return v
+        return ''
+    return render_template_string(AGR_CO_HTML, s=s, segs=segs, vals=vals, pre_name=pre('Typed name') or me(), pre_title=pre('Title'))
+
+@app.route('/agreement/email/<int:sid>', methods=['POST'])
+def agreement_email(sid):
+    if not is_office(): return ('',403)
+    conn=get_db(); st=queue_agreement_email(conn, sid, base_url()); conn.close()
+    return redirect('/agreement#pending')
+
+@app.route('/agreement/view/<int:sid>')
+def agreement_view(sid):
+    conn=get_db(); s, body, segs, vals = agr_sign_data(conn, sid); conn.close()
+    if not s or not s['co_signed_at'] or not hmac.compare_digest(request.args.get('t',''), agr_view_token(sid, s['co_signed_at'])): return ('Link not valid',404)
+    return render_template_string(AGR_COPY_HTML, s=s, segs=segs, vals=vals, standalone=True)
+
+@app.route('/api/agreements/pending')
+def agreements_pending():
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); rows=[{'id':r['id'],'sub':nice_name(r['sub']),'version':r['version'],'signed_at':r['signed_at']} for r in pending_countersign(conn)]; conn.close()
+    return jsonify(rows)
 
 @app.route('/agreement')
 def agreement_page():
@@ -2303,11 +2442,13 @@ def agreement_page():
         for n in sub_names(conn):
             ls=last_sign(conn, n)
             if not ls: rows.append((n,'Not signed',None))
-            elif ls['agreement_id']==a['id']: rows.append((n,'Signed v'+ls['version']+' on '+ls['signed_at'],ls['id']))
+            elif ls['agreement_id']==a['id']: rows.append((n,('Fully signed v'+ls['version']+' on '+ls['co_signed_at']) if ls['co_signed_at'] else ('Awaiting company signature (sub signed v'+ls['version']+' on '+ls['signed_at']+')'),ls['id']))
             else: rows.append((n,'Needs re-sign (signed v'+ls['version']+')',ls['id']))
-        req=agreement_required(conn); conn.close()
+        req=agreement_required(conn)
+        pend_rows=pending_countersign(conn)
+        done_rows=conn.execute('SELECT s.* FROM agreement_signs s WHERE co_signed_at IS NOT NULL AND id=(SELECT MAX(id) FROM agreement_signs WHERE sub=s.sub) ORDER BY id DESC').fetchall(); conn.close()
         segs=agr_parse(a['body'])
-        return render_template_string(AGR_OFFICE_HTML, a=a, segs=segs, office_fields=[g for g in segs if g['t']=='office'], rows=rows, required=req, next_v=bump_version(a['version']))
+        return render_template_string(AGR_OFFICE_HTML, pend=pend_rows, done=done_rows, smtp=smtp_ready(), a=a, segs=segs, office_fields=[g for g in segs if g['t']=='office'], rows=rows, required=req, next_v=bump_version(a['version']))
     mine=last_sign(conn, me()); cur=signed_current(conn, me()); need=agreement_required(conn) and not cur; conn.close()
     return render_template_string(AGR_SUB_HTML, a=a, segs=agr_parse(a['body']), mine=mine, current=cur, need=need)
 
@@ -2339,7 +2480,7 @@ def agreement_copy(sid):
     a=conn.execute('SELECT body FROM agreements WHERE id=?',(s['agreement_id'],)).fetchone(); conn.close()
     try: vals=json.loads(s['fields'] or '{}')
     except Exception: vals={}
-    return render_template_string(AGR_COPY_HTML, s=s, segs=agr_parse(a['body'] if a else ''), vals=vals)
+    return render_template_string(AGR_COPY_HTML, s=s, segs=agr_parse(a['body'] if a else ''), vals=vals, standalone=False)
 
 @app.route('/agreement/require', methods=['POST'])
 def agreement_require():
