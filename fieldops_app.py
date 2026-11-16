@@ -752,6 +752,9 @@ body.office{max-width:1100px}body.office #detail{max-width:480px;margin:auto}
 .tile b{display:block;font-size:2rem;color:var(--accent)}.tile.on{border-color:var(--accent);background:#fbfaf0}.tile.red{border-color:#b00020}.tile.red b{color:#b00020}
 .menu{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}.menu .big-btn{margin:0;padding:18px 8px;box-sizing:border-box;font-family:inherit}
 .tech-h{font-weight:700;font-size:1.1rem;margin:18px 0 6px;padding-bottom:4px;border-bottom:2px solid var(--accent)}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.mgrid .big-btn{margin:0;display:flex;align-items:center;justify-content:center;text-align:center;text-decoration:none;min-height:64px;box-sizing:border-box;cursor:pointer}.mgrid.small .big-btn{min-height:52px;font-size:1rem}
+.tiles4{grid-template-columns:1fr 1fr!important}.tile{cursor:pointer}.more-box{margin:8px 0;border:1px solid var(--border);border-radius:10px;padding:0 10px;background:#fff}.more-box summary{cursor:pointer;padding:14px 4px;font-weight:600;min-height:24px}
+@media(min-width:600px){.mgrid{grid-template-columns:repeat(3,1fr)}.tiles4{grid-template-columns:repeat(4,1fr)!important}}
 @media(min-width:900px){.dash{display:flex;gap:20px;align-items:flex-start}.menu{display:flex;flex-direction:column;flex:0 0 210px;position:sticky;top:12px}.dash main{flex:1;min-width:0}.tiles{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}}
 .pal{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0}.pal button{padding:12px 4px;border:2px solid var(--border);border-radius:10px;background:#fff;font-size:.95rem;font-weight:600;color:var(--text)}.pal button.on{border-color:var(--text);background:#fbfaf0}
 .pal i,.pin{display:inline-block;color:#fff;font-style:normal;font-weight:700;border-radius:16px;text-align:center}.pal i{min-width:22px;padding:0 3px;line-height:22px;font-size:.75rem;margin-right:4px}
@@ -772,12 +775,18 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/qbo" class="big-btn gray">QuickBooks</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
+{% if office %}<main>
+<div{% if view=='new' %} style="display:none"{% endif %}>
+<div class="tiles tiles4"><button class="tile" data-f="active" onclick="setF(this.dataset.f)"><b id="t-active">0</b>Active Jobs</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="surveys" onclick="setF(this.dataset.f)"><b id="t-surveys">0</b>Surveys Pending</button><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Scheduled Today</button></div>
+<button class="big-btn gray" id="f-all" style="display:none" onclick="setF('')">All Jobs</button>
+<div class="mgrid"><a href="/new-job" class="big-btn">+ New Job</a><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/history" class="big-btn gray">Job History</a></div>
+<details class="more-box"><summary>Other lists</summary><div class="tiles"><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div></details>
+<details class="more-box"><summary>More tools</summary><div class="mgrid small"><a href="/schedule" class="big-btn gray">Schedule</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/qbo" class="big-btn gray">QuickBooks</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></div></details>
+</div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
-<div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
-{% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
+<div id="search-box" class="row" style="align-items:center{% if view=='new' %};display:none{% endif %}"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
+{% if office and view=='new' %}<div id="office" class="job"><a href="/" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:0 0 8px">&larr; Back</a><h2 style="margin:4px 0 8px">New Job</h2>
 <div class="row" style="flex-wrap:wrap;gap:6px">{% for t in job_types %}<button class="big-btn gray qa" style="flex:1 1 45%" data-t="{{ t }}" onclick="quickType(this.dataset.t)">+ {{ t }}</button>{% endfor %}</div>
 <datalist id="cl-list"></datalist>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -791,8 +800,8 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <textarea id="n-scope" placeholder="Scope" rows="3"></textarea>
 <div style="font-size:.85rem;color:#666">Scheduled date</div><input type="date" id="n-date">
 <textarea id="n-checklist" placeholder="Checklist, one item per line (optional)" rows="3"></textarea>
-<button class="big-btn" onclick="addJob()">Add Job</button><button class="big-btn gray" onclick="toggleNew()">Cancel</button></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
-<div id="list"></div>
+<button class="big-btn" onclick="addJob()">Save Job</button><a href="/" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box">Cancel</a></div>{% else %}<div id="office" class="hidden"></div>{% endif %}
+<div id="list"{% if view=='new' %} style="display:none"{% endif %}></div>
 {% if office %}</main>{% endif %}</div>
 <div id="toast" class="hidden"></div>
 <div id="detail" class="hidden">
@@ -915,7 +924,7 @@ canvas.style.touchAction='none';
 ['touchstart','touchmove'].forEach(t=>canvas.addEventListener(t,e=>e.preventDefault(),{passive:false}));
 function clearSig(){ctx.clearRect(0,0,canvas.width,canvas.height)}
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
-const OFFICE={{ office|tojson }};let F='';
+const OFFICE={{ office|tojson }};const VIEW={{ view|tojson }};let F='';
 const card=j=>`<div class="job"><div class="job-id">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>':''}<span class="badge">${esc(j.status_label)}</span>${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}</div><div style="font-weight:600">${esc(j.title)}</div><div style="color:#666">${esc(j.customer)}</div><div style="color:#666">${esc(j.address)}</div>${j.company?'<div style="color:#666">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<button class="big-btn" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)">Open Job</button></div>`;
 const dcard=j=>`<div class="job" style="cursor:pointer" data-id="${esc(j.id)}" onclick="openJob(this.dataset.id)"><div class="job-id" style="font-size:1rem">${esc(j.id)}${j.help_open?'<span class="badge" style="background:#b00020;color:#fff">Needs Help</span>':''}${j.job_type?'<span class="badge">'+esc(j.job_type)+'</span>':''}<span class="badge">${esc(j.status_label)}</span></div><div style="font-weight:600">${esc(j.customer||j.title)}</div><div class="muted">${esc(j.title)}</div>${j.company?'<div class="muted">Sub: '+esc(j.tech)+' ('+esc(j.company)+')</div>':''}<div class="muted">${j.scheduled_date?esc(dayLabel(j.scheduled_date)):'No date'}</div></div>`;
 function setF(f){F=F===f?'':f;load()}
@@ -948,12 +957,12 @@ document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLa
 async function loadDash(){const [a,c,fu,tx,dx,sg]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json()),fetch('/api/agreements/pending').then(r=>r.json())]);
 document.getElementById('t-sign').textContent=sg.length;document.getElementById('tile-sign').classList.toggle('red',sg.length>0);
 document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.missing?' missing':(x.expired?' expired ':' expires ')+x.expires)).join(', ');
-const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),review:a.filter(j=>j.status==='review'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
+const today=ymd(new Date());const lists={active:a,surveys:a.filter(j=>j.job_type==='Survey'),today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),review:a.filter(j=>j.status==='review'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
 document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="review"]').classList.toggle('red',lists.review.length>0);document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
 if(F==='follow'||F==='texts'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return F==='follow'?renderFollowList(fu,today):renderTextList(tx)}
 Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});
 document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);
-const jobs=F?lists[F]:a;const g={};jobs.forEach(j=>{const k=(j.tech||'').trim()||'Unassigned';(g[k]=g[k]||[]).push(j)});
+document.getElementById('f-all').style.display=F?'':'none';const jobs=F?lists[F]:a;const g={};jobs.forEach(j=>{const k=(j.tech||'').trim()||'Unassigned';(g[k]=g[k]||[]).push(j)});
 const keys=Object.keys(g).sort((x,y)=>x==='Unassigned'?-1:y==='Unassigned'?1:x.localeCompare(y));
 keys.forEach(k=>g[k].sort((x,y)=>(x.scheduled_date||'9999').localeCompare(y.scheduled_date||'9999')));
 const title=F?'<div class="day">'+esc(document.querySelector('.tile[data-f="'+F+'"]').textContent.replace(/^\d+/,''))+' <a href="#" onclick="setF(F);return false" style="color:#666;font-weight:400">(show all)</a></div>':'';
@@ -1370,13 +1379,13 @@ const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('addres
 if(!body.id||!body.title){alert('Job ID and title are required');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
-['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';document.getElementById('office').classList.add('hidden');load()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
-load();
+['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';location.href='/?job='+encodeURIComponent(body.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
+if(VIEW==='new'){tplOpts();quickFill();document.getElementById('n-id').focus()}else load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
 
 @app.route('/')
-def index():
+def index(view='home'):
     techs=[(n,n) for n in sub_logins()]+[(nice_name(k),nice_name(k)+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
     tpls=[]
     if is_office():
@@ -1386,7 +1395,30 @@ def index():
         conn=get_db(); low_n=len(low_stock(conn)); conn.close()
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    return render_template_string(HTML, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
+    return render_template_string(HTML, view=view, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
+
+@app.route('/new-job')
+def new_job_page():
+    if not is_office(): return redirect('/')
+    return index(view='new')
+
+@app.route('/history')
+def job_history():
+    if not is_office(): return redirect('/')
+    conn=get_db(); rows=conn.execute("SELECT id,title,customer,job_type,tech,completed_at FROM jobs WHERE status='completed' ORDER BY completed_at DESC LIMIT 500").fetchall(); conn.close()
+    q=(request.args.get('q') or '').strip().lower()
+    if q: rows=[r for r in rows if q in ' '.join(str(r[k] or '') for k in ('id','title','customer','tech','job_type')).lower()]
+    body='<form class="row"><input name="q" value="%s" placeholder="Search history"><button class="big-btn gray" style="flex:0 0 100px">Search</button></form>'%h(request.args.get('q') or '')
+    last=''
+    for r in rows:
+        m=(r['completed_at'] or '')[:7]
+        if m!=last:
+            last=m
+            try: body+='<h2>%s</h2>'%datetime.strptime(m,'%Y-%m').strftime('%B %Y')
+            except ValueError: body+='<h2>No date</h2>'
+        body+='<a class="card" href="/?job=%s"><b>%s</b> <span class="muted">%s</span><div>%s</div><div class="muted">%s%s</div></a>'%(urllib.parse.quote(r['id']),h(r['customer'] or r['title']),h(r['id']),h(r['title']),h(r['job_type'] or 'Job'),(' &middot; '+h(r['tech'])) if r['tech'] else '')
+    if not rows: body+='<div class="muted">No completed jobs yet.</div>'
+    return ops_page('Job History', body)
 
 @app.route('/api/jobs')
 def list_jobs():
