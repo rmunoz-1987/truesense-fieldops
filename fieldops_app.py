@@ -267,6 +267,49 @@ e.waitUntil(self.registration.showNotification(d.title||'Field Ops',{body:d.body
 self.addEventListener('notificationclick',e=>{e.notification.close();const url=(e.notification.data&&e.notification.data.url)||'/';
 e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{for(const w of ws){if('focus' in w){w.navigate(url);return w.focus()}}return clients.openWindow(url)}))});"""
 
+VAPID_PUBLIC_DEFAULT = 'BOE9zipIF8cw8atKM4E0IBGRa7_SP2347axDzashhpPwtE5qt39ynGBkbi51MIDWPnxcCdbTt2JSuyYs5DgQjPs'
+def vapid_public(): return os.environ.get('VAPID_PUBLIC_KEY') or VAPID_PUBLIC_DEFAULT
+
+def push_to_sub(sub, title, body, url='/'):
+    # Free web push (VAPID). Private key lives only in the Render env var VAPID_PRIVATE_KEY.
+    priv=os.environ.get('VAPID_PRIVATE_KEY'); key=ckey(sub)
+    if not priv or not key: return
+    def run():
+        try: from pywebpush import webpush, WebPushException
+        except Exception: return
+        conn=get_db(); rows=conn.execute('SELECT * FROM push_subs WHERE sub=?',(key,)).fetchall(); conn.close()
+        for r in rows:
+            try:
+                webpush({'endpoint':r['endpoint'],'keys':{'p256dh':r['p256dh'],'auth':r['auth']}}, json.dumps({'title':title,'body':body,'url':url}),
+                        vapid_private_key=priv, vapid_claims={'sub':'mailto:rmunoz@truesensesecurity.com'}, timeout=10)
+            except WebPushException as e:
+                code=getattr(getattr(e,'response',None),'status_code',0)
+                if code in (404,410):
+                    c2=get_db(); c2.execute('DELETE FROM push_subs WHERE endpoint=?',(r['endpoint'],)); c2.commit(); c2.close()
+            except Exception: pass
+    threading.Thread(target=run, daemon=True).start()
+
+def nice_day(sd):
+    try: return datetime.strptime(sd,'%Y-%m-%d').strftime('%a %b %-d')
+    except Exception: return 'no date set'
+
+@app.route('/api/push/key')
+def push_key(): return jsonify({'key':vapid_public(),'on':bool(os.environ.get('VAPID_PRIVATE_KEY'))})
+
+@app.route('/api/push/subscribe', methods=['POST'])
+def push_subscribe():
+    if not me(): return jsonify({'error':'login'}),401
+    d=request.get_json(silent=True) or {}; ep=str(d.get('endpoint') or '')[:1000]; k=d.get('keys') or {}
+    if not ep.startswith('https://') or not k.get('p256dh') or not k.get('auth'): return jsonify({'error':'bad subscription'}),400
+    conn=get_db(); conn.execute('INSERT OR REPLACE INTO push_subs (endpoint,sub,p256dh,auth,created_at) VALUES (?,?,?,?,?)',(ep,ckey(me()),str(k['p256dh'])[:200],str(k['auth'])[:100],now_local_str()))
+    conn.commit(); conn.close(); return jsonify({'ok':True})
+
+@app.route('/api/push/unsubscribe', methods=['POST'])
+def push_unsubscribe():
+    if not me(): return jsonify({'error':'login'}),401
+    ep=str((request.get_json(silent=True) or {}).get('endpoint') or '')
+    conn=get_db(); conn.execute('DELETE FROM push_subs WHERE endpoint=? AND sub=?',(ep,ckey(me()))); conn.commit(); conn.close(); return jsonify({'ok':True})
+
 OFFLINE_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Offline</title><style>body{font-family:Arial,sans-serif;background:#fff;color:#111;text-align:center;padding:40px 16px;font-size:1.2rem}button{font-size:1.2rem;padding:18px;width:100%;border:0;border-radius:10px;background:#a49f2a;color:#fff;font-weight:700}</style></head>
 <body><img src="/static/icons/icon-192.png" alt="True Sense" style="width:120px"><h2>No signal</h2><p>You are offline. Anything you saved on a job will send when you are back online.</p><button onclick="location.href='/'">Try Again</button></body></html>"""
 
@@ -601,6 +644,8 @@ def init_db():
     if not conn.execute('SELECT 1 FROM agreements').fetchone():
         conn.execute('INSERT INTO agreements (version,body,created_at,created_by) VALUES (?,?,?,?)',('1.2',AGREEMENT_V12,now_local_str(),'Seed'))
     conn.execute("UPDATE agreements SET body=? WHERE created_by='Seed' AND version='1.2' AND body NOT LIKE '%[SUB:%'",(AGREEMENT_V12,))
+    conn.execute('''CREATE TABLE IF NOT EXISTS push_subs (
+        endpoint TEXT PRIMARY KEY, sub TEXT, p256dh TEXT, auth TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
         sub TEXT, kind TEXT, filename TEXT, orig_name TEXT, expires TEXT, uploaded_at TEXT, PRIMARY KEY (sub, kind))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS job_hours (
@@ -710,6 +755,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
+{% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -1030,6 +1076,20 @@ async function qAll(){const db=await QDB();return new Promise(r=>{const t=db.tra
 async function qPut(v){const db=await QDB();return new Promise(r=>{const t=db.transaction('q','readwrite');t.objectStore('q').add(v);t.oncomplete=r})}
 async function qDel(id){const db=await QDB();return new Promise(r=>{const t=db.transaction('q','readwrite');t.objectStore('q').delete(id);t.oncomplete=r})}
 function qable(u,m){const s=String(u);return m!=='GET'&&(s.startsWith('/api/jobs/')||s.startsWith('/job/'))&&!s.endsWith('/steps')}
+function b64u(x){const p='='.repeat((4-x.length%4)%4);const r=atob((x+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,c=>c.charCodeAt(0))}
+async function pushInit(){const btn=document.getElementById('push-btn');if(!btn)return;
+if(!('serviceWorker' in navigator)||!('PushManager' in window)){if(/iPhone|iPad/.test(navigator.userAgent))document.getElementById('push-hint').classList.remove('hidden');return}
+try{const k=await (await fetch('/api/push/key')).json();if(!k.on)return;const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();
+if(sub&&Notification.permission==='granted'){fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});return}
+if(Notification.permission!=='denied')btn.classList.remove('hidden')}catch(e){}}
+async function pushOn(){const btn=document.getElementById('push-btn');btn.disabled=true;
+try{const perm=await Notification.requestPermission();if(perm!=='granted'){toast('Alerts are off. Turn them on in your phone settings.');btn.disabled=false;return}
+const k=await (await fetch('/api/push/key')).json();const reg=await navigator.serviceWorker.ready;
+const sub=(await reg.pushManager.getSubscription())||(await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(k.key)}));
+const r=await fetch('/api/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});
+if(r.ok){btn.classList.add('hidden');toast('Job alerts on. You will get a ping for new jobs and schedule changes.')}else{toast('Could not turn on alerts. Try again.');btn.disabled=false}}
+catch(e){toast('Could not turn on alerts. Try again.');btn.disabled=false}}
+window.addEventListener('load',()=>setTimeout(pushInit,800));
 async function qBadge(){const n=(await qAll().catch(()=>[])).length;let b=document.getElementById('q-bar');if(!b){b=document.createElement('div');b.id='q-bar';b.style.cssText='position:sticky;top:0;z-index:30;background:#b26a00;color:#fff;font-weight:700;text-align:center;padding:10px;border-radius:8px;margin:4px 0';document.body.prepend(b)}
 b.textContent=n?(navigator.onLine?'Sending '+n+' saved item'+(n>1?'s':'')+'...':'Offline. '+n+' item'+(n>1?'s':'')+' saved on this phone. They send when you are back online.'):(navigator.onLine?'':'Offline. You can keep working.');b.style.display=b.textContent?'block':'none'}
 let qBusy=false;async function qFlush(){if(qBusy||!navigator.onLine)return;qBusy=true;try{for(const it of await qAll()){let body=it.body;if(it.form){body=new FormData();it.form.forEach(([k,v,n])=>n?body.append(k,v,n):body.append(k,v))}
@@ -1308,6 +1368,7 @@ def create_job():
     conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                  (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
     conn.commit(); conn.close()
+    push_to_sub(tech,'New job: '+title,(d.get('customer') or '').strip()+' - '+nice_day(sd),'/?job='+jid)
     return jsonify({'ok':True,'id':jid}),201
 
 @app.route('/api/jobs/<job_id>/type', methods=['POST'])
@@ -2272,7 +2333,14 @@ def schedule_job(job_id):
         try: sd=datetime.strptime(sd,'%Y-%m-%d').date().isoformat()
         except ValueError: return jsonify({'error':'bad date'}),400
     if not tech: return jsonify({'error':'tech required'}),400
-    conn=get_db(); n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount; conn.commit(); conn.close()
+    conn=get_db(); old=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount; conn.commit(); conn.close()
+    if n and old:
+        if ckey(old['tech'])!=ckey(tech):
+            push_to_sub(tech,'New job: '+(old['title'] or job_id),(old['customer'] or '')+' - '+nice_day(sd),'/?job='+job_id)
+            push_to_sub(old['tech'],'Job moved off your list',(old['title'] or job_id),'/')
+        elif (old['scheduled_date'] or '')!=(sd or ''):
+            push_to_sub(tech,'Schedule change: '+(old['title'] or job_id),'Now '+nice_day(sd),'/?job='+job_id)
     return (jsonify({'ok':True}) if n else ('',404))
 
 HUB_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>True Sense Security: {{ j.title }}</title>
@@ -3336,7 +3404,11 @@ def reassign_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
     tech=nice_name((request.get_json(silent=True) or {}).get('tech'))
     if not tech: return jsonify({'error':'tech required'}),400
-    conn=get_db(); n=conn.execute('UPDATE jobs SET tech=? WHERE id=?',(tech,job_id)).rowcount; conn.commit(); conn.close()
+    conn=get_db(); old=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    n=conn.execute('UPDATE jobs SET tech=? WHERE id=?',(tech,job_id)).rowcount; conn.commit(); conn.close()
+    if n and old and ckey(old['tech'])!=ckey(tech):
+        push_to_sub(tech,'New job: '+(old['title'] or job_id),(old['customer'] or '')+' - '+nice_day(old['scheduled_date'] or ''),'/?job='+job_id)
+        push_to_sub(old['tech'],'Job moved off your list',(old['title'] or job_id),'/')
     return (jsonify({'ok':True,'tech':tech}) if n else ('',404))
 
 @app.route('/api/jobs/<job_id>', methods=['DELETE'])
