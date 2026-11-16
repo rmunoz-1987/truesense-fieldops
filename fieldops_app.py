@@ -8,10 +8,10 @@ app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-# Each user gets a Render env var NAME_PASSWORD (e.g. ROLAND_PASSWORD, MIKE_PASSWORD); the login name is NAME.
-USERS = {k[:-len('_PASSWORD')].replace('_', ' ').strip().lower(): v for k, v in os.environ.items()
+# Each user gets a Render env var NAME_PASSWORD (e.g. ROLAND_PASSWORD, WOODY_RODRIGUEZ_PASSWORD); the login name is NAME (underscores = spaces).
+USERS = {' '.join(k[:-len('_PASSWORD')].replace('_', ' ').split()).lower(): v for k, v in os.environ.items()
          if k.endswith('_PASSWORD') and k != 'APP_PASSWORD' and v and k[:-len('_PASSWORD')]}
-OFFICE_NAMES = [n.strip().lower() for n in os.environ.get('OFFICE_NAMES', 'Roland').split(',') if n.strip()]
+OFFICE_NAMES = [' '.join(n.split()).lower() for n in os.environ.get('OFFICE_NAMES', 'Roland').split(',') if n.strip()]
 app.secret_key = os.environ.get('SECRET_KEY') or hashlib.sha256(('fieldops:' + json.dumps(sorted(USERS.items()))).encode()).hexdigest()
 app.permanent_session_lifetime = timedelta(days=30)
 
@@ -167,6 +167,7 @@ def parse_materials(raw):
 def job_dict(row):
     d = dict(row); d['checklist'] = parse_checklist(d.get('checklist'))
     d['materials_list'] = parse_materials(d.get('materials_list'))
+    d['tech'] = nice_name(d.get('tech'))
     d['status_label'] = STATUS_LABEL.get(d.get('status') or 'assigned', (d.get('status') or 'Open').replace('_', ' ').title())
     d['hours'] = round((d.get('total_minutes') or 0) / 60, 2); d['total_miles'] = d.get('total_miles') or 0
     d['job_type'] = d.get('job_type') or ''
@@ -185,11 +186,14 @@ def job_dict(row):
         for k in ('private_notes','hub_nonce','hub_created_at','hub_approved_at','hub_approved_name','labor_rates','review_by','review_at'): d.pop(k, None)
     return d
 
+def nice_name(n): return ' '.join((n or '').split()).title()
 def me():
-    n = (session.get('name') or '').strip()
+    n = nice_name(session.get('name'))
     return n if n.lower() in USERS else ''
 def is_office(): return me().lower() in OFFICE_NAMES
-def can_see(job): return is_office() or (job['tech'] or '').strip().lower() == me().lower()
+def can_see(job): return is_office() or ' '.join((job['tech'] or '').split()).lower() == me().lower()
+def sub_logins(): return [nice_name(k) for k in sorted(USERS) if k not in OFFICE_NAMES]
+def default_sub(): return (sub_logins() or [''])[0]
 
 LOGIN_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Field Ops"><title>True Sense Field</title>
 <style>body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:420px;margin:auto;padding:24px}
@@ -198,7 +202,7 @@ button{width:100%;background:#a49f2a;color:#fff;border:none;padding:16px;border-
 .err{color:#b00020}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
 <div style="text-align:center;color:#a49f2a;font-weight:600;margin-bottom:16px">Field Ops</div>
-{% if setup %}<p>Add user passwords in Render, e.g. ROLAND_PASSWORD and MIKE_PASSWORD</p>{% else %}
+{% if setup %}<p>Add user passwords in Render, e.g. ROLAND_PASSWORD and WOODY_RODRIGUEZ_PASSWORD</p>{% else %}
 <form method="post" action="/login"><input name="name" placeholder="Your name" autocomplete="username" required>
 <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}<button type="submit">Log In</button></form>{% endif %}
@@ -223,11 +227,11 @@ def login():
     if not USERS: return render_template_string(LOGIN_HTML, setup=True), 503
     error = None
     if request.method == 'POST':
-        name = (request.form.get('name') or '').strip()
+        name = nice_name(request.form.get('name'))
         pw = request.form.get('password') or ''
         expected = USERS.get(name.lower())
         if expected and hmac.compare_digest(pw.encode(), expected.encode()):
-            session.permanent = True; session['name'] = name.title()
+            session.permanent = True; session['name'] = name
             return redirect('/')
         error = 'Wrong name or password'
     return render_template_string(LOGIN_HTML, setup=False, error=error)
@@ -519,9 +523,9 @@ def init_db():
     if count == 0:
         now = datetime.utcnow().isoformat()
         conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at) VALUES (?,?,?,?,?,?,?,?)',
-                     ('TS-2026-0142','Access Control - Main Entrance','ABC Warehouse','1234 Industrial Blvd, Houston, TX','Install 2 Maglocks, 1 Aiphone, 1 Card Reader.','assigned','Mike',now))
+                     ('TS-2026-0142','Access Control - Main Entrance','ABC Warehouse','1234 Industrial Blvd, Houston, TX','Install 2 Maglocks, 1 Aiphone, 1 Card Reader.','assigned',default_sub(),now))
         conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at) VALUES (?,?,?,?,?,?,?,?)',
-                     ('TS-2026-0143','Camera Service Call','XYZ Retail','567 Commerce St, Houston, TX','Troubleshoot offline NVR.','assigned','Mike',now))
+                     ('TS-2026-0143','Camera Service Call','XYZ Retail','567 Commerce St, Houston, TX','Troubleshoot offline NVR.','assigned',default_sub(),now))
         conn.execute("UPDATE jobs SET phone='713-555-0142' WHERE id='TS-2026-0142'")
         conn.execute("UPDATE jobs SET phone='713-555-0143' WHERE id='TS-2026-0143'")
         t = today_local()
@@ -1041,7 +1045,7 @@ const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 
 @app.route('/')
 def index():
-    techs=[(k.title(),k.title()) for k in sorted(USERS) if k not in OFFICE_NAMES]+[(k.title(),k.title()+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
+    techs=[(n,n) for n in sub_logins()]+[(nice_name(k),nice_name(k)+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
     tpls=[]
     if is_office():
         conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
@@ -1077,8 +1081,10 @@ def create_job():
     chk = json.dumps([{'text': x, 'done': False} for x in (lines or DEFAULT_CHECKLIST)])
     sd = (d.get('scheduled_date') or '').strip() or today_local().isoformat()
     jt = (d.get('job_type') or '').strip(); jt = jt if jt in JOB_TYPES else 'Install'
+    tech = nice_name(d.get('tech')) or default_sub()
+    if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
     conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',(d.get('tech') or 'Mike').strip(),datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
+                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
     conn.commit(); conn.close()
     return jsonify({'ok':True,'id':jid}),201
 
@@ -1774,13 +1780,13 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 {% endif %}
 </body></html>'''
 
-def ckey(name): return (name or '').strip().lower()
+def ckey(name): return ' '.join((name or '').split()).lower()
 
 SUB_DOCS = [('insurance', 'Insurance')]  # license rows stay in the DB but are hidden
 def sub_names(conn):
-    n=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
+    n=sub_logins()
     for r in conn.execute("SELECT DISTINCT TRIM(tech) t FROM jobs WHERE status!='completed' AND IFNULL(TRIM(tech),'')!=''").fetchall():
-        if r['t'].lower() not in [x.lower() for x in n] and r['t'].lower() not in OFFICE_NAMES: n.append(r['t'].title())
+        if ckey(r['t']) not in [x.lower() for x in n] and ckey(r['t']) not in OFFICE_NAMES: n.append(nice_name(r['t']))
     return n
 def doc_alerts(conn):
     soon=(today_local()+timedelta(days=30)).isoformat(); t=today_local().isoformat(); out=[]
@@ -2024,15 +2030,15 @@ def schedule_page():
     start=start-timedelta(days=start.weekday()); end=start+timedelta(days=6)
     conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' AND (scheduled_date IS NULL OR scheduled_date='' OR scheduled_date BETWEEN ? AND ?) ORDER BY created_at",(start.isoformat(),end.isoformat())).fetchall(); co=sub_companies(conn); conn.close()
     jobs=[job_dict(r) for r in rows]
-    techs=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]+[k.title() for k in sorted(USERS) if k in OFFICE_NAMES]
-    techs+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().lower() not in [x.lower() for x in techs]})
+    techs=sub_logins()+[nice_name(k) for k in sorted(USERS) if k in OFFICE_NAMES]
+    techs+=sorted({j['tech'] for j in jobs if j['tech'] and j['tech'].lower() not in [x.lower() for x in techs]})
     days=[{'iso':(start+timedelta(days=i)).isoformat(),'label':(start+timedelta(days=i)).strftime('%a %b ')+str((start+timedelta(days=i)).day),'today':start+timedelta(days=i)==t} for i in range(7)]
     return render_template_string(SCHED_HTML, co=co, days=days, techs=techs, jobs=jobs, prev=(start-timedelta(days=7)).isoformat(), next=(start+timedelta(days=7)).isoformat())
 
 @app.route('/api/jobs/<job_id>/schedule', methods=['POST'])
 def schedule_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
-    d=request.get_json(silent=True) or {}; sd=str(d.get('scheduled_date') or '').strip(); tech=str(d.get('tech') or '').strip()[:60]
+    d=request.get_json(silent=True) or {}; sd=str(d.get('scheduled_date') or '').strip(); tech=nice_name(str(d.get('tech') or ''))[:60]
     if sd:
         try: sd=datetime.strptime(sd,'%Y-%m-%d').date().isoformat()
         except ValueError: return jsonify({'error':'bad date'}),400
@@ -2352,7 +2358,7 @@ def add_client():
 @app.route('/api/jobs/<job_id>/reassign', methods=['POST'])
 def reassign_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
-    tech=((request.get_json(silent=True) or {}).get('tech') or '').strip()
+    tech=nice_name((request.get_json(silent=True) or {}).get('tech'))
     if not tech: return jsonify({'error':'tech required'}),400
     conn=get_db(); n=conn.execute('UPDATE jobs SET tech=? WHERE id=?',(tech,job_id)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True,'tech':tech}) if n else ('',404))
