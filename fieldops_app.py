@@ -763,7 +763,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div>{% endif %}
 {% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
 {% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
@@ -2170,8 +2170,9 @@ th{font-size:.85rem;color:#666}td:first-child{min-width:120px}.num{text-align:ri
 <a href="{{ back or '/' }}" class="big-btn gray">&larr; Back</a><h1>{{ title }}</h1>{% if msg %}<div class="msg">{{ msg }}</div>{% endif %}{{ body }}</body></html>'''
 def ops_page(title, body, back='/', msg=''): return render_template_string(OPS_HTML, title=title, body=Markup(body), back=back, msg=msg)
 def money(v):
-    try: return '${:,.2f}'.format(float(v or 0))
+    try: x=float(v or 0)
     except Exception: return '$0.00'
+    return ('-' if x<0 else '')+'${:,.2f}'.format(abs(x))
 
 @app.route('/search')
 def search_page():
@@ -2383,6 +2384,57 @@ def plans_page():
     body+='<form method="post"><input type="hidden" name="action" value="run"><button class="big-btn gray">Make due visits now</button></form>'
     if not ed: body+='<h2>New plan</h2>'+form(None)
     return ops_page('Service Plans', body, msg=msg)
+
+def job_parts_cost(conn, job_id):
+    r=conn.execute('SELECT SUM(-qty*IFNULL(unit_cost,0)) c FROM stock_moves WHERE job_id=? AND qty<0',(job_id,)).fetchone()
+    return round(r['c'] or 0,2)
+
+@app.route('/reports')
+def reports_page():
+    if not is_office(): return redirect('/')
+    t=today_local(); fr=(request.args.get('from') or '%d-01-01'%t.year)[:10]; to=(request.args.get('to') or '%d-12-31'%t.year)[:10]
+    conn=get_db(); jobs=[]
+    for r in conn.execute('SELECT * FROM jobs').fetchall():
+        day=(r['scheduled_date'] or (r['created_at'] or '')[:10])
+        if not (fr<=day<=to) or r['job_type']=='Office Task': continue
+        lab=job_labor(conn, r); parts=job_parts_cost(conn, r['id']); sale=r['sale_amount'] or 0
+        jobs.append({'id':r['id'],'title':r['title'] or '','client':r['customer'] or '','type':r['job_type'] or 'Install','tech':nice_name(r['tech']),'date':day,'status':r['status'],
+                     'sale':sale,'labor':lab['total'],'parts':parts,'profit':round(sale-lab['total']-parts,2),'hours':round(sum(l['hours'] for l in lab['lines']),2),'lines':lab['lines'],'no_sale':not r['sale_amount']})
+    conn.close()
+    subs={}; types={}
+    for j in jobs:
+        for l in j['lines']:
+            s_=subs.setdefault(l['sub'],{'name':l['sub'],'jobs':set(),'hours':0,'labor':0,'sale':0,'profit':0}); s_['jobs'].add(j['id']); s_['hours']+=l['hours']; s_['labor']+=l['cost']
+        if j['tech']:
+            s_=subs.setdefault(j['tech'],{'name':j['tech'],'jobs':set(),'hours':0,'labor':0,'sale':0,'profit':0}); s_['jobs'].add(j['id']); s_['sale']+=j['sale']; s_['profit']+=j['profit']
+        ty=types.setdefault(j['type'],{'name':j['type'],'jobs':0,'hours':0,'sale':0,'labor':0,'parts':0,'profit':0})
+        ty['jobs']+=1; ty['hours']+=j['hours']; ty['sale']+=j['sale']; ty['labor']+=j['labor']; ty['parts']+=j['parts']; ty['profit']+=j['profit']
+    kind=request.args.get('csv')
+    if kind in ('jobs','subs','types'):
+        import csv, io
+        b=io.StringIO(); w=csv.writer(b)
+        if kind=='jobs':
+            w.writerow(['Job ID','Date','Client','Title','Type','Sub','Status','Sale','Labor','Parts','Profit','Hours'])
+            for j in jobs: w.writerow([j['id'],j['date'],j['client'],j['title'],j['type'],j['tech'],j['status'],j['sale'],j['labor'],j['parts'],j['profit'],j['hours']])
+        elif kind=='subs':
+            w.writerow(['Sub','Jobs','Hours','Labor cost','Sales on their jobs','Profit on their jobs'])
+            for x in sorted(subs.values(),key=lambda x:x['name']): w.writerow([x['name'],len(x['jobs']),round(x['hours'],2),round(x['labor'],2),round(x['sale'],2),round(x['profit'],2)])
+        else:
+            w.writerow(['Job type','Jobs','Hours','Sales','Labor','Parts','Profit'])
+            for x in types.values(): w.writerow([x['name'],x['jobs'],round(x['hours'],2),round(x['sale'],2),round(x['labor'],2),round(x['parts'],2),round(x['profit'],2)])
+        from flask import Response
+        return Response(b.getvalue(),mimetype='text/csv',headers={'Content-Disposition':'attachment; filename=fieldops-%s-%s-to-%s.csv'%(kind,fr,to)})
+    q=urllib.parse.urlencode({'from':fr,'to':to})
+    tot=lambda k:sum(j[k] for j in jobs)
+    body='<form class="row"><div><label>From</label><input type="date" name="from" value="%s"></div><div><label>To</label><input type="date" name="to" value="%s"></div><button class="big-btn" style="flex:1 1 100%%">Show</button></form>'%(h(fr),h(to))
+    body+='<div class="card"><table><tr><td>Sales</td><td class="num"><b>%s</b></td></tr><tr><td>Sub labor</td><td class="num">%s</td></tr><tr><td>Parts from stock</td><td class="num">%s</td></tr><tr><td><b>Profit</b></td><td class="num"><b>%s</b></td></tr><tr><td>Sub hours</td><td class="num">%s</td></tr></table></div>'%(money(tot('sale')),money(tot('labor')),money(tot('parts')),money(tot('profit')),'%g'%round(tot('hours'),2))
+    miss=sum(1 for j in jobs if j['no_sale'])
+    if miss: body+='<div class="muted">%d jobs have no sale amount yet, so they show $0 sales.</div>'%miss
+    body+='<h2>By sub</h2><table><tr><th>Sub</th><th class="num">Jobs</th><th class="num">Hours</th><th class="num">Labor</th><th class="num">Profit</th></tr>'+''.join('<tr><td>%s</td><td class="num">%d</td><td class="num">%s</td><td class="num">%s</td><td class="num">%s</td></tr>'%(h(x['name']),len(x['jobs']),'%g'%round(x['hours'],2),money(x['labor']),money(x['profit'])) for x in sorted(subs.values(),key=lambda x:-x['hours']))+'</table><a class="big-btn gray" href="/reports?%s&csv=subs">Download sub CSV</a>'%q
+    body+='<h2>By job type</h2><table><tr><th>Type</th><th class="num">Jobs</th><th class="num">Sales</th><th class="num">Profit</th></tr>'+''.join('<tr><td>%s</td><td class="num">%d</td><td class="num">%s</td><td class="num">%s</td></tr>'%(h(x['name']),x['jobs'],money(x['sale']),money(x['profit'])) for x in types.values())+'</table><a class="big-btn gray" href="/reports?%s&csv=types">Download job type CSV</a>'%q
+    body+='<h2>By job</h2><table><tr><th>Job</th><th class="num">Sale</th><th class="num">Cost</th><th class="num">Profit</th></tr>'+''.join('<tr><td><a href="/?job=%s">%s</a><div class="muted">%s %s %s</div></td><td class="num">%s</td><td class="num">%s</td><td class="num"%s><b>%s</b></td></tr>'%(
+        urllib.parse.quote(j['id']),h(j['title'] or j['id']),h(j['date']),h(j['client']),h(j['tech']),money(j['sale']),money(j['labor']+j['parts']),' style="color:#c62828"' if j['profit']<0 else '',money(j['profit'])) for j in sorted(jobs,key=lambda j:j['date'],reverse=True))+'</table><a class="big-btn gray" href="/reports?%s&csv=jobs">Download job CSV</a>'%q
+    return ops_page('Reports', body)
 
 def stock_locations(): return ['Shop']+['Truck: '+n for n in sub_logins()]
 def my_truck(): return 'Truck: '+me()
