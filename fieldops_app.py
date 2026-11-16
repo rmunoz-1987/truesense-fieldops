@@ -335,7 +335,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="return confirm('Log out?')">Log out</a></div>
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
+{% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Techs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
 <div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
@@ -1590,6 +1590,60 @@ def checklists_delete():
     tid=request.form.get('id') or ''
     if tid.isdigit(): conn=get_db(); conn.execute('DELETE FROM checklist_templates WHERE id=?',(int(tid),)); conn.commit(); conn.close()
     return redirect('/checklists')
+
+SCHED_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Schedule</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:1200px;margin:auto;padding:12px}
+h2{color:#a49f2a;margin:8px 0}.btn{display:block;flex:1;background:#f0f0f0;color:#111;padding:14px;border-radius:10px;text-align:center;text-decoration:none;font-weight:600;margin:8px 0}
+.wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #e5e5e5;border-radius:10px;background:#fff}
+table{border-collapse:collapse;min-width:100%}th,td{border:1px solid #eee;vertical-align:top;padding:4px}th{background:#fafafa;font-size:.85rem;white-space:nowrap;padding:8px 4px}
+th.today{background:#a49f2a;color:#fff}td{min-width:130px;height:70px}td.tech{min-width:80px;font-weight:700;background:#fafafa;position:sticky;left:0;z-index:1}
+td.drop{cursor:pointer}td.drop.hot{background:#fbfaf0;outline:2px dashed #a49f2a}
+.card{background:#fff;border:1px solid #ddd;border-left:5px solid #a49f2a;border-radius:8px;padding:8px;margin:3px 0;font-size:.85rem;cursor:grab;user-select:none}
+.card.sel{outline:3px solid #111}.card .id{color:#a49f2a;font-weight:700}.card a{color:#666;font-size:.8rem}
+#bar{position:sticky;top:0;z-index:5;background:#111;color:#fff;padding:12px;border-radius:10px;font-weight:700;text-align:center;margin:8px 0}#bar.hidden{display:none}</style></head><body>
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
+<h2>Schedule</h2><a class="btn" href="/">Back to Jobs</a>
+<div style="display:flex;gap:8px"><a class="btn" href="/schedule?start={{ prev }}">&larr; Prev</a><a class="btn" href="/schedule">This Week</a><a class="btn" href="/schedule?start={{ next }}">Next &rarr;</a></div>
+<div style="color:#666">Drag a job to a day and tech. On a phone, tap the job, then tap the box where it goes.</div>
+<div id="bar" class="hidden"></div>
+<div class="wrap"><table><tr><th>Tech</th><th>No date</th>{% for d in days %}<th class="{{ 'today' if d.today else '' }}">{{ d.label }}</th>{% endfor %}</tr>
+{% for t in techs %}<tr><td class="tech">{{ t }}</td>{% for d in [{'iso':''}] + days %}<td class="drop" data-date="{{ d.iso }}" data-tech="{{ t }}">{% for j in jobs if (j.tech or '').strip().lower() == t.lower() and (j.scheduled_date or '') == d.iso %}<div class="card" draggable="true" data-id="{{ j.id }}"><div class="id">{{ j.id }}</div><div><b>{{ j.customer or j.title }}</b></div><div>{{ j.job_type or 'Job' }} &middot; {{ j.status_label }}</div><a href="/?job={{ j.id|urlencode }}" onclick="event.stopPropagation()">Open</a></div>{% endfor %}</td>{% endfor %}</tr>{% endfor %}
+</table></div>
+<script>
+let sel=null;const bar=document.getElementById('bar');
+function pick(c){document.querySelectorAll('.card.sel').forEach(x=>x.classList.remove('sel'));if(sel===c.dataset.id){sel=null;bar.classList.add('hidden');return}sel=c.dataset.id;c.classList.add('sel');bar.textContent='Tap the box where '+sel+' goes. Tap the job again to cancel.';bar.classList.remove('hidden')}
+async function move(id,date,tech){bar.textContent='Moving '+id+'...';bar.classList.remove('hidden');const r=await fetch('/api/jobs/'+encodeURIComponent(id)+'/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scheduled_date:date,tech:tech})});
+if(r.ok)location.reload();else{const d=await r.json().catch(()=>({}));alert(d.error||'Error');bar.classList.add('hidden')}}
+document.querySelectorAll('.card').forEach(c=>{c.addEventListener('click',e=>{e.stopPropagation();pick(c)});c.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',c.dataset.id)})});
+document.querySelectorAll('td.drop').forEach(td=>{td.addEventListener('click',()=>{if(sel)move(sel,td.dataset.date,td.dataset.tech)});
+td.addEventListener('dragover',e=>{e.preventDefault();td.classList.add('hot')});td.addEventListener('dragleave',()=>td.classList.remove('hot'));
+td.addEventListener('drop',e=>{e.preventDefault();td.classList.remove('hot');const id=e.dataTransfer.getData('text/plain');if(id)move(id,td.dataset.date,td.dataset.tech)})});
+</script></body></html>'''
+
+@app.route('/schedule')
+def schedule_page():
+    if not is_office(): return redirect('/')
+    t=today_local()
+    try: start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
+    except ValueError: start=t
+    start=start-timedelta(days=start.weekday()); end=start+timedelta(days=6)
+    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' AND (scheduled_date IS NULL OR scheduled_date='' OR scheduled_date BETWEEN ? AND ?) ORDER BY created_at",(start.isoformat(),end.isoformat())).fetchall(); conn.close()
+    jobs=[job_dict(r) for r in rows]
+    techs=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]+[k.title() for k in sorted(USERS) if k in OFFICE_NAMES]
+    techs+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().lower() not in [x.lower() for x in techs]})
+    days=[{'iso':(start+timedelta(days=i)).isoformat(),'label':(start+timedelta(days=i)).strftime('%a %b ')+str((start+timedelta(days=i)).day),'today':start+timedelta(days=i)==t} for i in range(7)]
+    return render_template_string(SCHED_HTML, days=days, techs=techs, jobs=jobs, prev=(start-timedelta(days=7)).isoformat(), next=(start+timedelta(days=7)).isoformat())
+
+@app.route('/api/jobs/<job_id>/schedule', methods=['POST'])
+def schedule_job(job_id):
+    if not is_office(): return jsonify({'error':'office only'}),403
+    d=request.get_json(silent=True) or {}; sd=str(d.get('scheduled_date') or '').strip(); tech=str(d.get('tech') or '').strip()[:60]
+    if sd:
+        try: sd=datetime.strptime(sd,'%Y-%m-%d').date().isoformat()
+        except ValueError: return jsonify({'error':'bad date'}),400
+    if not tech: return jsonify({'error':'tech required'}),400
+    conn=get_db(); n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount; conn.commit(); conn.close()
+    return (jsonify({'ok':True}) if n else ('',404))
 
 @app.route('/techs')
 def techs_page():
