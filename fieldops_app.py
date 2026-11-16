@@ -269,6 +269,8 @@ def init_db():
     for col in ['rate_hourly REAL', 'rate_flat REAL']:
         try: conn.execute(f'ALTER TABLE subs ADD COLUMN {col}')
         except: pass
+    conn.execute('''CREATE TABLE IF NOT EXISTS sub_docs (
+        sub TEXT, kind TEXT, filename TEXT, orig_name TEXT, expires TEXT, uploaded_at TEXT, PRIMARY KEY (sub, kind))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS job_hours (
         job_id TEXT, sub TEXT, minutes INTEGER DEFAULT 0, PRIMARY KEY (job_id, sub))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
@@ -346,7 +348,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 </div>
 <div id="home"{% if office %} class="dash"{% endif %}>
 {% if office %}<nav class="menu"><button class="big-btn" onclick="toggleNew()">+ New Job</button><a href="/clients" class="big-btn">Clients &amp; Surveys</a><a href="/schedule" class="big-btn gray">Schedule</a><a href="/calendar" class="big-btn gray">Calendar</a><a href="/to-order" class="big-btn gray">To Order</a><a href="/techs" class="big-btn gray">Subs</a><a href="/checklists" class="big-btn gray">Checklists</a></nav><main>
-<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button></div>{% endif %}
+<div class="tiles"><button class="tile" data-f="today" onclick="setF(this.dataset.f)"><b id="t-today">0</b>Today</button><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="help" onclick="setF(this.dataset.f)"><b id="t-help">0</b>Needs Help</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button></div>{% endif %}
 <div id="search-box" class="row" style="align-items:center"><input type="search" id="q" placeholder="Search client, address, or job ID" onkeydown="if(event.key==='Enter')load()"><button class="big-btn gray" style="flex:0 0 90px" onclick="load()">Search</button></div>
 {% if office %}<div id="office" class="job hidden"><div style="font-weight:600;margin-bottom:4px">Add New Job</div>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -481,7 +483,8 @@ const r=await fetch(q?'/api/jobs?q='+encodeURIComponent(q):'/api/jobs?status=ass
 const groups={};jobs.forEach(j=>{const k=j.scheduled_date||'';(groups[k]=groups[k]||[]).push(j)});
 const keys=Object.keys(groups).sort((a,b)=>a===''?1:b===''?-1:a.localeCompare(b));
 document.getElementById('list').innerHTML=(keys.map(k=>`<div class="day">${dayLabel(k)}</div>`+groups[k].map(card).join('')).join('')||'<div class="job">'+(q?'No matching jobs':'No jobs')+'</div>')}
-async function loadDash(){const [a,c,fu,tx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json())]);
+async function loadDash(){const [a,c,fu,tx,dx]=await Promise.all([fetch('/api/jobs?status=assigned').then(r=>r.json()),fetch('/api/jobs?status=completed').then(r=>r.json()),fetch('/api/followups').then(r=>r.json()),fetch('/api/drafts').then(r=>r.json()),fetch('/api/sub-docs/alerts').then(r=>r.json())]);
+document.getElementById('t-docs').textContent=dx.length;document.getElementById('tile-docs').classList.toggle('red',dx.length>0);document.getElementById('tile-docs').title=dx.map(x=>x.sub+' '+x.kind+(x.expired?' expired ':' expires ')+x.expires).join(', ');
 const today=ymd(new Date());const lists={today:a.filter(j=>j.scheduled_date===today),progress:a.filter(j=>j.status==='in_progress'),help:a.filter(j=>j.help_open),invoice:c.filter(j=>j.job_type!=='Survey'),follow:fu.filter(x=>x.due<=today),texts:tx.filter(x=>x.status==='pending')};
 document.querySelector('.tile[data-f="follow"]').classList.toggle('red',fu.some(x=>x.due<today));document.querySelector('.tile[data-f="texts"]').classList.toggle('red',lists.texts.length>0);
 if(F==='follow'||F==='texts'){Object.keys(lists).forEach(k=>{document.getElementById('t-'+k).textContent=lists[k].length;document.querySelector('.tile[data-f="'+k+'"]').classList.toggle('on',F===k)});document.querySelector('.tile[data-f="help"]').classList.toggle('red',lists.help.length>0);return F==='follow'?renderFollowList(fu,today):renderTextList(tx)}
@@ -1492,6 +1495,19 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 
 def ckey(name): return (name or '').strip().lower()
 
+SUB_DOCS = [('insurance', 'Insurance'), ('license', 'License')]
+def sub_names(conn):
+    n=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
+    for r in conn.execute("SELECT DISTINCT TRIM(tech) t FROM jobs WHERE status!='completed' AND IFNULL(TRIM(tech),'')!=''").fetchall():
+        if r['t'].lower() not in [x.lower() for x in n] and r['t'].lower() not in OFFICE_NAMES: n.append(r['t'].title())
+    return n
+def doc_alerts(conn):
+    soon=(today_local()+timedelta(days=30)).isoformat(); t=today_local().isoformat(); out=[]
+    names={x.lower() for x in sub_names(conn)}
+    for r in conn.execute("SELECT * FROM sub_docs WHERE IFNULL(expires,'')!='' AND expires<=? ORDER BY expires",(soon,)).fetchall():
+        if r['sub'] in names: out.append({'sub':r['sub'].title(),'kind':dict(SUB_DOCS).get(r['kind'],r['kind']),'expires':r['expires'],'expired':r['expires']<t})
+    return out
+
 def sub_companies(conn): return {r['key']:r['company'] for r in conn.execute("SELECT key,company FROM subs WHERE IFNULL(company,'')!=''").fetchall()}
 
 def tech_has_client(conn, customer):
@@ -1637,6 +1653,12 @@ TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <label style="flex:1;font-weight:600">Flat per job $<input name="rate_flat" type="number" step="0.01" min="0" inputmode="decimal" value="{{ rates.get(t.lower(), {}).get('f', '') }}" placeholder="Per job" style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label></div>
 <div style="color:#666;font-size:.85rem">Rates are office only. Subs never see them. Leave blank if not used.</div>
 <button type="submit" style="width:100%;background:#a49f2a;color:#fff;border:0;padding:14px;border-radius:10px;font-size:1rem;font-weight:600;margin-top:6px">Save</button></form>
+{% for k, label in doc_kinds %}{% set d = docs.get((t.lower(), k)) %}<form method="post" action="/subs/doc" enctype="multipart/form-data" class="job" style="border-color:{{ '#b00020' if d and d.expires and d.expires < today else ('#e69500' if d and d.expires and d.expires <= soon else '#e5e5e5') }}"><input type="hidden" name="name" value="{{ t }}"><input type="hidden" name="kind" value="{{ k }}">
+<div style="font-weight:700">{{ label }}: {% if not d %}<span style="color:#b00020">Missing</span>{% elif d.expires < today %}<span style="color:#b00020">EXPIRED {{ d.expires }}</span>{% elif d.expires <= soon %}<span style="color:#e69500">Expires soon {{ d.expires }}</span>{% else %}<span style="color:#2e7d32">Good until {{ d.expires }}</span>{% endif %}</div>
+{% if d %}<a href="/uploads/{{ d.filename|urlencode }}" target="_blank" style="display:block;margin:4px 0">Open {{ d.orig_name or 'file' }}</a>{% endif %}
+<label style="font-weight:600;display:block">{{ 'Replace file (optional)' if d else 'Upload file' }}<input type="file" name="file" accept="image/*,application/pdf" {{ '' if d else 'required' }} style="display:block;margin:6px 0"></label>
+<label style="font-weight:600;display:block">Expiration date<input type="date" name="expires" value="{{ d.expires if d else '' }}" required style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label>
+<button type="submit" style="width:100%;background:#f0f0f0;color:#111;border:0;padding:14px;border-radius:10px;font-size:1rem;font-weight:600">Save {{ label }}</button></form>{% endfor %}
 {% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.customer or j.title }}</b></a>{% if j.help_open %} <span style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.title }} &middot; {{ j.scheduled_date or 'No date' }} &middot; {{ j.status_label }}</div></div>{% else %}<div class="job muted">No open jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
 
@@ -1849,9 +1871,9 @@ def techs_page():
     if not is_office(): return redirect('/')
     conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date, '9999')").fetchall(); co=sub_companies(conn)
     rates={r['key']:{'h':('' if r['rate_hourly'] is None else r['rate_hourly']),'f':('' if r['rate_flat'] is None else r['rate_flat'])} for r in conn.execute('SELECT * FROM subs').fetchall()}; conn.close()
-    jobs=[job_dict(r) for r in rows]; names=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
-    names+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().title() not in names})
-    return render_template_string(TECHS_HTML, co=co, rates=rates, techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
+    conn=get_db(); docs={(r['sub'],r['kind']):r for r in conn.execute('SELECT * FROM sub_docs').fetchall()}; names=sub_names(conn); conn.close()
+    jobs=[job_dict(r) for r in rows]
+    return render_template_string(TECHS_HTML, co=co, rates=rates, docs=docs, doc_kinds=SUB_DOCS, today=today_local().isoformat(), soon=(today_local()+timedelta(days=30)).isoformat(), techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
 
 @app.route('/subs/save', methods=['POST'])
 def subs_save():
@@ -1864,6 +1886,31 @@ def subs_save():
     conn=get_db(); conn.execute('INSERT INTO subs (key,company,rate_hourly,rate_flat,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET company=excluded.company,rate_hourly=excluded.rate_hourly,rate_flat=excluded.rate_flat,updated_at=excluded.updated_at',
                  (k,(request.form.get('company') or '').strip()[:100],rate('rate_hourly'),rate('rate_flat'),now_local_str())); conn.commit(); conn.close()
     return redirect('/techs')
+
+@app.route('/subs/doc', methods=['POST'])
+def subs_doc():
+    if not is_office(): return ('',403)
+    k=ckey(request.form.get('name')); kind=request.form.get('kind')
+    if not k or kind not in dict(SUB_DOCS): return ('Bad request',400)
+    try: exp=datetime.strptime(request.form.get('expires',''),'%Y-%m-%d').date().isoformat()
+    except ValueError: return ('Pick an expiration date',400)
+    f=request.files.get('file'); conn=get_db(); old=conn.execute('SELECT * FROM sub_docs WHERE sub=? AND kind=?',(k,kind)).fetchone()
+    if f and f.filename:
+        ext=os.path.splitext(f.filename)[1].lower()
+        if ext not in ('.pdf','.jpg','.jpeg','.png','.heic','.webp'): conn.close(); return ('PDF or photo only',400)
+        fn=secure_filename(f"subdoc_{k}_{kind}_{uuid.uuid4().hex[:8]}{ext}"); f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        if old and old['filename']:
+            try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(old['filename'])))
+            except OSError: pass
+        conn.execute('INSERT OR REPLACE INTO sub_docs (sub,kind,filename,orig_name,expires,uploaded_at) VALUES (?,?,?,?,?,?)',(k,kind,fn,secure_filename(f.filename)[:100],exp,now_local_str()))
+    elif old: conn.execute('UPDATE sub_docs SET expires=? WHERE sub=? AND kind=?',(exp,k,kind))
+    else: conn.close(); return ('Pick a file',400)
+    conn.commit(); conn.close(); return redirect('/techs')
+
+@app.route('/api/sub-docs/alerts')
+def sub_doc_alerts():
+    if not is_office(): return jsonify({'error':'Office only'}),403
+    conn=get_db(); a=doc_alerts(conn); conn.close(); return jsonify(a)
 
 @app.route('/to-order')
 def to_order():
