@@ -266,6 +266,11 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, kind TEXT, phone TEXT, body TEXT, status TEXT DEFAULT 'pending', ref_date TEXT, created_by TEXT, created_at TEXT, approved_by TEXT, approved_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS subs (
         key TEXT PRIMARY KEY, company TEXT, updated_at TEXT)''')
+    for col in ['rate_hourly REAL', 'rate_flat REAL']:
+        try: conn.execute(f'ALTER TABLE subs ADD COLUMN {col}')
+        except: pass
+    conn.execute('''CREATE TABLE IF NOT EXISTS job_hours (
+        job_id TEXT, sub TEXT, minutes INTEGER DEFAULT 0, PRIMARY KEY (job_id, sub))''')
     conn.execute('''CREATE TABLE IF NOT EXISTS checklist_templates (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, job_type TEXT, items TEXT, created_at TEXT)''')
     conn.execute('''CREATE TABLE IF NOT EXISTS invoice_drafts (
@@ -414,7 +419,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="row" style="align-items:center"><input type="text" id="mat-new" placeholder="Add material (e.g. 2x Maglock)" onkeydown="if(event.key==='Enter')addMat()"><button class="big-btn" style="flex:0 0 70px" onclick="addMat()">Add</button></div></div></div>
 <div id="sec-time"><div class="job"><div style="font-weight:600">Time</div><div id="totals" style="font-size:1.1rem;margin:6px 0"></div>
 <input type="number" id="hours" placeholder="Hours" step="0.25" inputmode="decimal">
-<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div></div></div>
+<div class="row"><button class="big-btn" onclick="saveTime('add')">Add</button><button class="big-btn gray" onclick="saveTime('set')">Set Totals</button></div>{% if office %}<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:8px"><div style="font-weight:600">Labor cost (office only)</div><div id="labor"></div></div>{% endif %}</div></div>
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
@@ -575,11 +580,14 @@ const s=document.createElement('span');s.textContent=x.text;const b=document.cre
 if(!m.length)el.innerHTML='<div class="muted">No materials yet. Check items off as you use them.</div>'}
 async function saveMats(){await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/materials',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({materials:currentJob.materials_list})})}
 function addMat(){const n=document.getElementById('mat-new');const t=n.value.trim();if(!t)return;(currentJob.materials_list=currentJob.materials_list||[]).push({text:t,used:false});n.value='';renderMats();saveMats()}
-function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs'}
+function renderTotals(){document.getElementById('totals').textContent='Total: '+(currentJob.hours||0)+' hrs';renderLabor()}
+const money=n=>'$'+Number(n||0).toFixed(2);
+function renderLabor(){const el=document.getElementById('labor');if(!el||!currentJob.labor)return;const L=currentJob.labor;
+el.innerHTML=L.lines.map(l=>'<div>'+esc(l.sub)+': '+l.hours+' hrs'+(l.no_rate?' &middot; <b style="color:#b00020">No rate set</b>':(l.rate_hourly!=null?' x '+money(l.rate_hourly)+'/hr':'')+(l.rate_flat!=null?' + '+money(l.rate_flat)+' flat':'')+' = <b>'+money(l.cost)+'</b>')+'</div>').join('')+'<div style="font-size:1.2rem;font-weight:700;margin-top:4px">Total labor: '+money(L.total)+'</div>'}
 async function saveTime(mode){const h=document.getElementById('hours');if(!h.value)return;
 const body={mode:mode,hours:h.value,miles:mode==='set'?(currentJob.total_miles||0):0};
 const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/time',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;h.value='';renderTotals()}else alert('Error')}
+if(r.ok){const d=await r.json();currentJob.hours=d.hours;currentJob.total_miles=d.total_miles;if(d.labor)currentJob.labor=d.labor;h.value='';renderTotals()}else alert('Error')}
 async function setStatus(v){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:v})});
 if(r.ok){currentJob.status=v;renderKelly()}else{alert('Error');document.getElementById('status').value=currentJob.status}}
 async function savePrivate(){const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/private-notes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({private_notes:document.getElementById('private-notes').value})});alert(r.ok?'Saved':'Error')}
@@ -904,7 +912,7 @@ def get_job(job_id):
     extra={}
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
-        extra=hub_info(job_id,n,c)
+        extra=hub_info(job_id,n,c); extra['labor']=job_labor(conn,row)
     conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
@@ -954,6 +962,7 @@ def complete(job_id):
         conn.execute('UPDATE jobs SET status=?,notes=?,materials=?,signature=?,total_minutes=total_minutes+?,total_miles=total_miles+?,completed_at=? WHERE id=?',
                      ('completed',notes,materials,sig,minutes,miles,now,job_id))
     for ptype in PHOTO_TYPES: save_photos(conn, job_id, request.files.getlist(ptype), ptype, now)
+    if row['job_type']!='Survey' and minutes: add_sub_minutes(conn, row, minutes)
     conn.commit()
     if row['job_type']=='Survey': notify_kelly(conn, job_id, kelly_event)
     pkg=build_invoice_draft(conn, job_id, now); conn.close()
@@ -969,6 +978,25 @@ def build_invoice_draft(conn, job_id, now):
     conn.commit()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
     return pkg
+
+def add_sub_minutes(conn, row, delta):
+    if not delta: return
+    if not conn.execute('SELECT 1 FROM job_hours WHERE job_id=?',(row['id'],)).fetchone() and (row['total_minutes'] or 0) and ckey(row['tech']):
+        conn.execute('INSERT INTO job_hours (job_id,sub,minutes) VALUES (?,?,?)',(row['id'],ckey(row['tech']),row['total_minutes']))
+    who=ckey(row['tech'] or me()) if is_office() else ckey(me())
+    conn.execute('INSERT INTO job_hours (job_id,sub,minutes) VALUES (?,?,0) ON CONFLICT(job_id,sub) DO NOTHING',(row['id'],who))
+    conn.execute('UPDATE job_hours SET minutes=MAX(0,minutes+?) WHERE job_id=? AND sub=?',(int(delta),row['id'],who))
+
+def job_labor(conn, row):
+    hrs={r['sub']:r['minutes'] for r in conn.execute('SELECT sub,minutes FROM job_hours WHERE job_id=?',(row['id'],)).fetchall()}
+    if not hrs and (row['total_minutes'] or 0) and ckey(row['tech']): hrs={ckey(row['tech']):row['total_minutes']}
+    if ckey(row['tech']): hrs.setdefault(ckey(row['tech']),0)
+    rates={r['key']:r for r in conn.execute('SELECT * FROM subs').fetchall()}
+    lines=[]
+    for k,m in hrs.items():
+        r=rates.get(k); rh=(r['rate_hourly'] if r else None); rf=(r['rate_flat'] if r else None); h=round(m/60,2)
+        lines.append({'sub':k.title(),'hours':h,'rate_hourly':rh,'rate_flat':rf,'no_rate':rh is None and rf is None,'cost':round(h*(rh or 0)+(rf or 0),2)})
+    return {'lines':lines,'total':round(sum(l['cost'] for l in lines),2)}
 
 def own_job(conn, job_id):
     row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
@@ -998,12 +1026,16 @@ def save_time(job_id):
     d=request.get_json(silent=True) or {}
     try: hours=float(d.get('hours') or 0); miles=float(d.get('miles') or 0)
     except (TypeError, ValueError): conn.close(); return jsonify({'error':'numbers only'}),400
+    old=row['total_minutes'] or 0
     if d.get('mode')=='set':
         conn.execute('UPDATE jobs SET total_minutes=?,total_miles=? WHERE id=?',(max(0,int(round(hours*60))),max(0.0,miles),job_id))
     else:
         conn.execute('UPDATE jobs SET total_minutes=MAX(0,IFNULL(total_minutes,0)+?),total_miles=MAX(0,IFNULL(total_miles,0)+?) WHERE id=?',(int(round(hours*60)),miles,job_id))
-    conn.commit(); j=conn.execute('SELECT total_minutes,total_miles FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
-    return jsonify({'ok':True,'hours':round((j['total_minutes'] or 0)/60,2),'total_miles':j['total_miles'] or 0})
+    j=conn.execute('SELECT total_minutes,total_miles FROM jobs WHERE id=?',(job_id,)).fetchone()
+    add_sub_minutes(conn, row, (j['total_minutes'] or 0)-old); conn.commit()
+    out={'ok':True,'hours':round((j['total_minutes'] or 0)/60,2),'total_miles':j['total_miles'] or 0}
+    if is_office(): out['labor']=job_labor(conn, conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone())
+    conn.close(); return jsonify(out)
 
 @app.route('/api/jobs/<job_id>/photos', methods=['POST'])
 def upload_photos(job_id):
@@ -1601,7 +1633,10 @@ TECHS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="vie
 <h2>Subs</h2><a class="btn" href="/">Back to Jobs</a>
 {% for t, jobs in techs %}<h3>{{ t }}{% if co.get(t.lower()) %} ({{ co.get(t.lower()) }}){% endif %} &middot; {{ jobs|length }} open job{{ '' if jobs|length == 1 else 's' }}</h3>
 <form method="post" action="/subs/save" class="job"><input type="hidden" name="name" value="{{ t }}"><label style="font-weight:600">Company name<input name="company" value="{{ co.get(t.lower(), '') }}" maxlength="100" placeholder="Company name" style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label>
-<button type="submit" style="width:100%;background:#a49f2a;color:#fff;border:0;padding:14px;border-radius:10px;font-size:1rem;font-weight:600">Save</button></form>
+<div style="display:flex;gap:8px"><label style="flex:1;font-weight:600">Hourly rate $<input name="rate_hourly" type="number" step="0.01" min="0" inputmode="decimal" value="{{ rates.get(t.lower(), {}).get('h', '') }}" placeholder="Per hour" style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label>
+<label style="flex:1;font-weight:600">Flat per job $<input name="rate_flat" type="number" step="0.01" min="0" inputmode="decimal" value="{{ rates.get(t.lower(), {}).get('f', '') }}" placeholder="Per job" style="width:100%;box-sizing:border-box;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:6px 0"></label></div>
+<div style="color:#666;font-size:.85rem">Rates are office only. Subs never see them. Leave blank if not used.</div>
+<button type="submit" style="width:100%;background:#a49f2a;color:#fff;border:0;padding:14px;border-radius:10px;font-size:1rem;font-weight:600;margin-top:6px">Save</button></form>
 {% for j in jobs %}<div class="job"><a href="/?job={{ j.id|urlencode }}"><span class="job-id">{{ j.id }}</span> <b>{{ j.customer or j.title }}</b></a>{% if j.help_open %} <span style="background:#b00020;color:#fff;font-size:.75rem;font-weight:600;padding:2px 8px;border-radius:10px;margin-left:6px">Needs Help</span>{% endif %}<div class="muted">{{ j.title }} &middot; {{ j.scheduled_date or 'No date' }} &middot; {{ j.status_label }}</div></div>{% else %}<div class="job muted">No open jobs</div>{% endfor %}{% endfor %}
 </body></html>'''
 
@@ -1812,17 +1847,22 @@ def update_draft(did):
 @app.route('/techs')
 def techs_page():
     if not is_office(): return redirect('/')
-    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date, '9999')").fetchall(); co=sub_companies(conn); conn.close()
+    conn=get_db(); rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date, '9999')").fetchall(); co=sub_companies(conn)
+    rates={r['key']:{'h':('' if r['rate_hourly'] is None else r['rate_hourly']),'f':('' if r['rate_flat'] is None else r['rate_flat'])} for r in conn.execute('SELECT * FROM subs').fetchall()}; conn.close()
     jobs=[job_dict(r) for r in rows]; names=[k.title() for k in sorted(USERS) if k not in OFFICE_NAMES]
     names+=sorted({(j['tech'] or '').strip().title() for j in jobs if (j['tech'] or '').strip() and (j['tech'] or '').strip().title() not in names})
-    return render_template_string(TECHS_HTML, co=co, techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
+    return render_template_string(TECHS_HTML, co=co, rates=rates, techs=[(n,[j for j in jobs if (j['tech'] or '').strip().lower()==n.lower()]) for n in names])
 
 @app.route('/subs/save', methods=['POST'])
 def subs_save():
     if not is_office(): return ('',403)
     k=ckey(request.form.get('name'))
     if not k: return redirect('/techs')
-    conn=get_db(); conn.execute('INSERT INTO subs (key,company,updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET company=excluded.company,updated_at=excluded.updated_at',(k,(request.form.get('company') or '').strip()[:100],now_local_str())); conn.commit(); conn.close()
+    def rate(f):
+        try: v=float(request.form.get(f) or ''); return round(v,2) if 0<=v<1e6 else None
+        except ValueError: return None
+    conn=get_db(); conn.execute('INSERT INTO subs (key,company,rate_hourly,rate_flat,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET company=excluded.company,rate_hourly=excluded.rate_hourly,rate_flat=excluded.rate_flat,updated_at=excluded.updated_at',
+                 (k,(request.form.get('company') or '').strip()[:100],rate('rate_hourly'),rate('rate_flat'),now_local_str())); conn.commit(); conn.close()
     return redirect('/techs')
 
 @app.route('/to-order')
@@ -1845,7 +1885,7 @@ def delete_client():
         for ph in conn.execute('SELECT filename FROM photos WHERE job_id=?',(row['id'],)).fetchall():
             try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(ph['filename'])))
             except OSError: pass
-        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
+        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
     conn.execute('DELETE FROM jobs WHERE LOWER(TRIM(customer))=?',(k,))
     conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,)); conn.commit(); conn.close()
     return redirect('/clients')
@@ -1876,7 +1916,7 @@ def delete_job(job_id):
     for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
         try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
         except OSError: pass
-    for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
+    for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
     n=conn.execute('DELETE FROM jobs WHERE id=?',(job_id,)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
 
