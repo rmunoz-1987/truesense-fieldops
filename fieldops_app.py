@@ -873,7 +873,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-follow">{% if office %}<div class="job"><div style="font-weight:600">Follow-ups (office only)</div><div id="fu-list"></div>
 <div style="font-size:.85rem;color:#666;margin-top:8px">Remind me on</div><input type="date" id="fu-date"><input type="text" id="fu-note" placeholder="What to follow up on (e.g. call about estimate)"><button class="big-btn" onclick="addFollow()">Add Follow-up</button></div>{% endif %}</div>
 <div id="sec-hub">{% if office %}<div class="job"><div style="font-weight:600">Client Link (office only)</div><div class="muted" style="font-size:.9rem">Anyone with this link can see this job's summary, plan, photos and signature. Copy it and send it yourself.</div>
-<input type="text" id="hub-url" readonly onclick="this.select()"><div id="hub-exp" style="font-weight:600"></div><div class="row"><button class="big-btn gray" onclick="copyHub()">Copy Link</button><button class="big-btn gray" onclick="newHub()">New Link</button></div><a class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/estimate'">Estimate: Good, Better, Best</a><div id="hub-appr" style="font-weight:700;font-size:1.1rem;color:#2e7d32"></div></div>{% endif %}</div>
+<input type="text" id="hub-url" readonly onclick="this.select()"><div id="hub-exp" style="font-weight:600"></div><div class="row"><button class="big-btn gray" onclick="copyHub()">Copy Link</button><button class="big-btn gray" onclick="newHub()">New Link</button></div><a class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/estimate'">Estimate</a><div id="hub-appr" style="font-weight:700;font-size:1.1rem;color:#2e7d32"></div></div>{% endif %}</div>
 <div id="sec-private">{% if office %}<div class="job"><div style="font-weight:600">Private Office Notes</div><div class="muted" style="font-size:.85rem">Only office can see these</div>
 <textarea id="private-notes" rows="3" placeholder="Private notes"></textarea><button class="big-btn gray" onclick="savePrivate()">Save Private Notes</button></div>{% endif %}</div>
 <div id="sec-sig"><div class="job"><div style="font-weight:600">Customer Signature</div><canvas id="sig"></canvas>
@@ -2443,9 +2443,8 @@ def qbo_lines(conn, row):
     except Exception: pkg={}
     if pkg.get('line_items'): return [{'description':str(l.get('description'))[:4000],'qty':fnum(l.get('qty'),1),'rate':round(fnum(l.get('rate')),2),'amount':round(fnum(l.get('amount')),2)} for l in pkg['line_items']]
     e=load_estimate(row)
-    if e.get('signed_at') and 0<=e.get('chosen',-1)<len(e['options']):
-        o=e['options'][e['chosen']]
-        return [{'description':'%s option: %s'%(o['tier'],o['name'])+(' - '+'; '.join(o['items']) if o['items'] else ''),'qty':1,'rate':o['price'],'amount':o['price']}]
+    if e.get('signed_at') and e['ready']:
+        return [{'description':e['desc']+(' - '+'; '.join(e['items']) if e['items'] else ''),'qty':1,'rate':e['price'],'amount':e['price']}]
     if row['sale_amount']: return [{'description':(row['title'] or row['id'])+(' - '+row['scope'] if row['scope'] else ''),'qty':1,'rate':round(row['sale_amount'],2),'amount':round(row['sale_amount'],2)}]
     return []
 def qbo_payload(conn, row):
@@ -2902,30 +2901,28 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 <table><tr><th>Label</th><th>Device</th><th>Note</th>{% if j.job_type != 'Survey' %}<th>Status</th>{% endif %}</tr>{% for d in j.devices %}<tr><td><b>{{ d.label }}</b></td><td>{{ d.type }}</td><td>{{ d.note }}</td>{% if j.job_type != 'Survey' %}<td>{{ 'Installed' if d.installed else 'Planned' }}</td>{% endif %}</tr>{% endfor %}</table>{% endif %}{% endif %}
 {% if j.photos %}<h2>Photos</h2><div class="ph">{% for p in j.photos %}<a href="{{ signed(p.filename) }}" target="_blank"><img src="{{ signed(p.filename) }}" alt="photo"></a>{% endfor %}</div>{% endif %}
 {% if j.job_type not in ('Survey','Office Task') and j.status == 'completed' and j.signature and j.signature.startswith('data:image/') %}<h2>Completion Signature</h2><img src="{{ j.signature }}" alt="signature" style="width:260px;max-width:100%;border:1px solid #ddd">{% if j.completed_at %}<div class="muted">Completed {{ j.completed_at[:10] }}</div>{% endif %}{% endif %}
-{% if est.options %}<h2>Your Options</h2>{% if est.note %}<div class="card" style="white-space:pre-wrap">{{ est.note }}</div>{% endif %}
-{% if est.signed_at %}{% set c = est.options[est.chosen] %}<div class="ok">&#10003; {{ est.signed_name }} approved the {{ c.tier }} option ({{ c.name }}, {{ money(c.price) }}) on {{ est.signed_at }}</div>
+{% if est.ready %}<h2>Estimate</h2><div class="card"><div style="white-space:pre-wrap;font-size:1.1rem">{{ est.desc }}</div>
+{% if est['items'] %}<ul style="margin:8px 0 8px 18px;padding:0">{% for x in est['items'] %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}<div style="font-size:1.6rem;font-weight:800;margin-top:6px">{{ money(est.price) }}</div>
+{% if est.note %}<div class="muted" style="white-space:pre-wrap;margin-top:6px">{{ est.note }}</div>{% endif %}</div>
+{% if est.signed_at %}<div class="ok">&#10003; {{ est.signed_name }} approved this estimate ({{ money(est.price) }}) on {{ est.signed_at }}</div>
 {% if est.signature and est.signature.startswith('data:image/png;base64,') %}<img src="{{ est.signature }}" alt="signature" style="width:260px;max-width:100%;border:1px solid #ddd;margin-top:6px">{% endif %}
-{% else %}<form method="post" action="/hub/{{ j.id|urlencode }}/estimate" id="est-form" onsubmit="return estSubmit()"><input type="hidden" name="t" value="{{ t }}"><input type="hidden" name="choice" id="est-choice"><input type="hidden" name="signature" id="est-sig">
-{% for o in est.options %}<div class="card opt" data-i="{{ loop.index0 }}" onclick="estPick(this.dataset.i)" style="cursor:pointer;border-width:2px"><div style="font-size:.9rem;color:#a49f2a;font-weight:700">{{ o.tier|upper }}</div><div style="font-size:1.2rem;font-weight:800">{{ o.name }}</div>
-{% if o['items'] %}<ul style="margin:6px 0 6px 18px;padding:0">{% for x in o['items'] %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}<div style="font-size:1.4rem;font-weight:800">{{ money(o.price) }}</div><button type="button" class="btn" style="background:#a49f2a;margin-top:6px">Pick {{ o.tier }}</button></div>{% endfor %}
-<div id="est-sign" style="display:none"><h2>Sign to approve</h2><div id="est-picked" style="font-weight:700"></div><input name="name" placeholder="Your full name" required maxlength="100">
+{% else %}<form method="post" action="/hub/{{ j.id|urlencode }}/estimate" onsubmit="return estSubmit()"><input type="hidden" name="t" value="{{ t }}"><input type="hidden" name="signature" id="est-sig">
+<h2>Sign to approve</h2><input name="name" placeholder="Your full name" required maxlength="100">
 <div class="muted">Sign with your finger below</div><canvas id="est-pad" width="600" height="200" style="width:100%;height:160px;border:2px solid #ccc;border-radius:10px;background:#fff;touch-action:none"></canvas>
 <button type="button" style="background:#eee;color:#111;border:0;border-radius:10px;padding:12px;width:100%;font-size:1rem" onclick="estClear()">Clear signature</button>
-<label style="display:flex;gap:10px;align-items:center;margin:12px 0;font-size:1.05rem"><input type="checkbox" name="agree" value="1" required style="width:28px;height:28px;margin:0"> I approve this option and price.</label>
-<button class="btn" type="submit">Approve and Sign</button></div></form>
+<label style="display:flex;gap:10px;align-items:center;margin:12px 0;font-size:1.05rem"><input type="checkbox" name="agree" value="1" required style="width:28px;height:28px;margin:0"> I approve this estimate and price.</label>
+<button class="btn" type="submit">Approve and Sign</button></form>
 <script>
-var estDrawn=false;function estPick(i){document.getElementById("est-choice").value=i;var cs=document.querySelectorAll(".opt");for(var k=0;k<cs.length;k++){cs[k].style.borderColor=(cs[k].dataset.i==i)?"#2e7d32":"#e5e5e5";cs[k].style.background=(cs[k].dataset.i==i)?"#e8f5e9":"#fff"}
-var s=document.getElementById("est-sign");s.style.display="block";document.getElementById("est-picked").textContent="You picked: "+cs[i].querySelector("div:nth-child(2)").textContent;s.scrollIntoView({behavior:"smooth"})}
+var estDrawn=false;
 (function(){var c=document.getElementById("est-pad"),x=c.getContext("2d"),on=false;x.lineWidth=4;x.lineCap="round";x.strokeStyle="#111";
 function p(e){var r=c.getBoundingClientRect();return [(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height]}
 c.addEventListener("pointerdown",function(e){on=true;var q=p(e);x.beginPath();x.moveTo(q[0],q[1]);c.setPointerCapture(e.pointerId)});
 c.addEventListener("pointermove",function(e){if(!on)return;var q=p(e);x.lineTo(q[0],q[1]);x.stroke();estDrawn=true});
 c.addEventListener("pointerup",function(){on=false})})();
 function estClear(){var c=document.getElementById("est-pad");c.getContext("2d").clearRect(0,0,c.width,c.height);estDrawn=false}
-function estSubmit(){if(document.getElementById("est-choice").value===""){alert("Pick an option first");return false}if(!estDrawn){alert("Please sign in the box");return false}
-document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
+function estSubmit(){if(!estDrawn){alert("Please sign in the box");return false}document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
 </script>{% endif %}{% endif %}
-{% if j.job_type == 'Survey' and not est.options %}<h2>Estimate</h2>{% if j.hub_approved_at %}<div class="ok">&#10003; Estimate approved by {{ j.hub_approved_name or 'client' }} on {{ j.hub_approved_at }}</div>
+{% if j.job_type == 'Survey' and not est.ready %}<h2>Estimate</h2>{% if j.hub_approved_at %}<div class="ok">&#10003; Estimate approved by {{ j.hub_approved_name or 'client' }} on {{ j.hub_approved_at }}</div>
 {% else %}<form method="post" action="/hub/{{ j.id|urlencode }}/approve" onsubmit="return confirm('Approve the estimate?')"><input type="hidden" name="t" value="{{ t }}"><input name="name" placeholder="Your name" required maxlength="100"><button class="btn" type="submit">Approve Estimate</button></form>
 <div class="muted" style="margin-top:6px">Tapping Approve tells True Sense Security you approve the estimate you were sent.</div>{% endif %}{% endif %}
 <div class="muted" style="margin-top:24px;text-align:center">True Sense Security</div></body></html>'''
@@ -2967,17 +2964,23 @@ def hub_approve(job_id):
     conn.close()
     return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+urllib.parse.quote(request.values.get('t','')))
 
-TIERS = ['Good','Better','Best']
 def load_estimate(row):
+    # One estimate per job. Older Good/Better/Best data converts to one: the signed pick, else the first filled option.
     try: e=json.loads(row['estimate_json'] or '{}')
     except Exception: e={}
     e=e if isinstance(e,dict) else {}
-    opts=[]
-    for o in (e.get('options') or [])[:3]:
-        if isinstance(o,dict) and str(o.get('name') or '').strip():
-            opts.append({'tier':str(o.get('tier') or '')[:10],'name':str(o.get('name'))[:120],'items':[str(x)[:200] for x in (o.get('items') or [])][:30],'price':round(fnum(o.get('price')),2)})
-    e['options']=opts
+    if 'options' in e:
+        opts=[o for o in (e.get('options') or []) if isinstance(o,dict) and str(o.get('name') or '').strip()]
+        ch=e.get('chosen') if isinstance(e.get('chosen'),int) and 0<=e.get('chosen')<len(opts) else 0
+        o=opts[ch] if opts else {}
+        e={'desc':str(o.get('name') or ''),'items':o.get('items') or [],'price':o.get('price') or 0,'note':e.get('note',''),
+           **{k:e[k] for k in ('signed_name','signature','signed_at','ip') if k in e}}
+    e['desc']=str(e.get('desc') or '')[:4000]; e['items']=[str(x)[:200] for x in (e.get('items') or []) if str(x).strip()][:30]
+    e['price']=round(fnum(e.get('price')),2); e['note']=str(e.get('note') or '')[:1000]
+    e['ready']=bool(e['desc'].strip())
     return e
+def save_estimate(conn, job_id, e):
+    conn.execute('UPDATE jobs SET estimate_json=? WHERE id=?',(json.dumps({k:v for k,v in e.items() if k!='ready'}),job_id))
 
 @app.route('/job/<job_id>/estimate', methods=['GET','POST'])
 def estimate_edit(job_id):
@@ -2986,45 +2989,36 @@ def estimate_edit(job_id):
     if not row: conn.close(); return redirect('/')
     e=load_estimate(row); msg=''
     if request.method=='POST':
-        if e.get('signed_at'): msg='Already signed. Clear it first to change.'
         if request.form.get('action')=='clear':
-            e={'options':e['options'],'note':e.get('note','')}; msg='Signature cleared. You can edit the options.'
-        elif not e.get('signed_at'):
-            opts=[]
-            for i,t in enumerate(TIERS):
-                n=(request.form.get('name%d'%i) or '').strip()
-                if n: opts.append({'tier':t,'name':n[:120],'items':[x.strip() for x in (request.form.get('items%d'%i) or '').splitlines() if x.strip()][:30],'price':max(0,round(fnum(request.form.get('price%d'%i)),2))})
-            e={'options':opts,'note':(request.form.get('note') or '').strip()[:1000]}; msg='Saved. Send the client their portal link when ready.'
-        conn.execute('UPDATE jobs SET estimate_json=? WHERE id=?',(json.dumps(e),job_id)); conn.commit()
+            e={k:e[k] for k in ('desc','items','price','note')}; msg='Signature cleared. You can edit the estimate.'
+        elif e.get('signed_at'): msg='Already signed. Clear it first to change.'
+        else:
+            e={'desc':(request.form.get('desc') or '').strip()[:4000],'items':[x.strip() for x in (request.form.get('items') or '').splitlines() if x.strip()][:30],
+               'price':max(0,round(fnum(request.form.get('price')),2)),'note':(request.form.get('note') or '').strip()[:1000]}
+            msg='Saved. Send the client their portal link when ready.'
+        save_estimate(conn, job_id, e); conn.commit(); e=load_estimate(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone())
     conn.close()
     body='<div class="muted">%s &middot; %s</div>'%(h(row['customer']),h(row['title']))
     if e.get('signed_at'):
-        ch=e['options'][e['chosen']] if 0<=e.get('chosen',-1)<len(e['options']) else {}
-        body+='<div class="card"><span class="okf">Approved</span> <b>%s: %s</b> %s<div>Signed by %s on %s</div><img src="%s" alt="signature" style="width:260px;max-width:100%%;border:1px solid #ddd;margin-top:6px"></div>'%(h(ch.get('tier')),h(ch.get('name')),money(ch.get('price')),h(e.get('signed_name')),h(e.get('signed_at')),h(e.get('signature') if str(e.get('signature','')).startswith('data:image/png;base64,') else ''))
+        body+='<div class="card"><span class="okf">Approved</span> <b>%s</b><div style="white-space:pre-wrap">%s</div><div>Signed by %s on %s</div><img src="%s" alt="signature" style="width:260px;max-width:100%%;border:1px solid #ddd;margin-top:6px"></div>'%(money(e['price']),h(e['desc']),h(e.get('signed_name')),h(e.get('signed_at')),h(e.get('signature') if str(e.get('signature','')).startswith('data:image/png;base64,') else ''))
         body+='<form method="post" onsubmit="return confirm(\'Clear the client signature?\')"><input type="hidden" name="action" value="clear"><button class="big-btn gray">Clear signature to edit</button></form>'
     else:
-        body+='<form method="post">'
-        for i,t in enumerate(TIERS):
-            o=next((x for x in e['options'] if x['tier']==t),{})
-            body+='<h2>%s</h2><label>Option name</label><input name="name%d" value="%s" placeholder="%s"><label>What is included, one per line</label><textarea name="items%d" rows="4">%s</textarea><label>Price $</label><input name="price%d" type="number" step="0.01" min="0" value="%s">'%(
-                t,i,h(o.get('name','')),{'Good':'4 cameras, 1 NVR','Better':'6 cameras, 1 NVR, app setup','Best':'8 cameras, AI NVR, 2 year service'}[t],i,h('\n'.join(o.get('items',[]))),i,('%g'%o['price']) if o.get('price') else '')
-        body+='<h2>Note to client</h2><textarea name="note" rows="3" placeholder="Optional">%s</textarea><button class="big-btn">Save Estimate</button></form>'%h(e.get('note',''))
-        body+='<div class="muted">Leave an option name blank to skip it. The client sees these on their portal link and can pick one and sign. Nothing is sent from here.</div>'
-    return ops_page('Estimate: Good, Better, Best', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
+        body+='<form method="post"><label>Description and scope</label><textarea name="desc" rows="5" placeholder="Install 6 cameras, NVR and phone app setup">%s</textarea>'%h(e['desc'])
+        body+='<label>Line items, one per line (optional)</label><textarea name="items" rows="4" placeholder="6 x 4MP dome camera">%s</textarea>'%h('\n'.join(e['items']))
+        body+='<label>Price $</label><input name="price" type="number" step="0.01" min="0" value="%s"><label>Note to client (optional)</label><textarea name="note" rows="3">%s</textarea><button class="big-btn">Save Estimate</button></form>'%(('%g'%e['price']) if e['price'] else '',h(e['note']))
+        body+='<div class="muted">The client sees this on their portal link, signs with a finger and approves. Nothing is sent from here.</div>'
+    return ops_page('Estimate', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
 
 @app.route('/hub/<job_id>/estimate', methods=['POST'])
 def hub_estimate_sign(job_id):
     conn,row=hub_job(job_id)
     if not row: return (HUB_EXPIRED_HTML,410)
-    e=load_estimate(row); f=request.form; sig=(f.get('signature') or '')
-    try: ch=int(f.get('choice'))
-    except (TypeError, ValueError): ch=-1
-    name=(f.get('name') or '').strip()[:100]
-    if not e.get('signed_at') and 0<=ch<len(e['options']) and name and sig.startswith('data:image/png;base64,') and len(sig)<300000 and f.get('agree')=='1':
-        e.update({'chosen':ch,'signed_name':name,'signature':sig,'signed_at':now_local_str(),'ip':(request.headers.get('X-Forwarded-For') or request.remote_addr or '')[:60]})
-        pick=e['options'][ch]
-        conn.execute('UPDATE jobs SET estimate_json=?,hub_approved_at=?,hub_approved_name=?,sale_amount=? WHERE id=?',(json.dumps(e),now_local_str(),name,pick['price'] or None,job_id))
-        conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,'Client portal','%s approved and signed the %s option: %s'%(name,pick['tier'],pick['name']),now_local_str()))
+    e=load_estimate(row); f=request.form; sig=(f.get('signature') or ''); name=(f.get('name') or '').strip()[:100]
+    if e['ready'] and not e.get('signed_at') and name and sig.startswith('data:image/png;base64,') and len(sig)<300000 and f.get('agree')=='1':
+        e.update({'signed_name':name,'signature':sig,'signed_at':now_local_str(),'ip':(request.headers.get('X-Forwarded-For') or request.remote_addr or '')[:60]})
+        save_estimate(conn, job_id, e)
+        conn.execute('UPDATE jobs SET hub_approved_at=?,hub_approved_name=?,sale_amount=? WHERE id=?',(now_local_str(),name,e['price'] or None,job_id))
+        conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,'Client portal','%s approved and signed the estimate'%name,now_local_str()))
         conn.commit()
     conn.close()
     return redirect('/hub/'+urllib.parse.quote(job_id)+'?t='+urllib.parse.quote(f.get('t','')))
