@@ -119,10 +119,10 @@ def parse_devices(raw):
                     'port': str(i.get('port') or '').strip()[:40], 'clabel': str(i.get('clabel') or '').strip()[:60], 'photo': secure_filename(str(i.get('photo') or ''))[:100],
                     'part': str(i.get('part') or '').strip()[:80]})
         if i['type'] in ('Dome Cam', 'Bullet Cam', 'PTZ Cam'):
-            for k, lo, hi in (('dir', 0, 359), ('fov', 10, 360), ('range', 2, 100)):
+            for k, lo, hi in (('dir', 0, 359), ('fov', 10, 360), ('range', 2, 100), ('rft', 1, 2000)):
                 if i.get(k) not in (None, ''):
                     v = _num(i.get(k), lo, hi, None)
-                    if v is not None: out[-1][k] = round(v) if k != 'range' else round(v, 1)
+                    if v is not None: out[-1][k] = round(v) if k in ('dir', 'fov') else round(v, 1)
     return out
 
 def number_devices(devs):
@@ -1661,9 +1661,12 @@ if((s.obstacles||[]).length)out.push('Obstacles: '+s.obstacles.join(', '));if(s.
 function svCall(){const ph=document.getElementById('sv-contact_phone').value.replace(/[^0-9+]/g,''),a=document.getElementById('sv-call');if(ph){a.href='tel:'+ph;a.textContent='Call Contact ('+document.getElementById('sv-contact_phone').value+')';a.style.display='block'}else{a.removeAttribute('href');a.style.display='none'}}
 let svEditing=false;
 const DEVS={{ dev_types|tojson }};let devType='',devSel=null,devMove=null;
-const DEV_SYM={{ DEV_SYM|tojson }},CAM_DEF={{ CAM_DEF|tojson }},CAM_RANGE={{ CAM_RANGE|tojson }};
+const DEV_SYM={{ DEV_SYM|tojson }},CAM_DEF={{ CAM_DEF|tojson }},CAM_RANGE={{ CAM_RANGE|tojson }},CAM_FT={{ CAM_FT|tojson }};
 function devSvg(t,col,solid,size){size=size||34;const bg=solid?col:'#fff',fg=solid?'#fff':col;return '<svg class="dsym" viewBox="0 0 24 24" width="'+size+'" height="'+size+'" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="'+bg+'" stroke="'+(solid?'#fff':col)+'" stroke-width="1.6"'+(solid?'':' stroke-dasharray="3 2"')+'/><g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="'+fg+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(DEV_SYM[t]||'<circle cx="12" cy="12" r="3"/>')+'</g></svg>'}
-function camView(d){return {dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE}}
+function pinfo(fn){return (currentJob.plan_info||[]).find(p=>p.fn===fn)}
+function camView(d){const p=pinfo(d.plan),v={dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE,ft:null};if(p&&p.ppf&&p.w){v.ft=d.rft||CAM_FT[d.type]||30;v.range=+(v.ft*p.ppf/p.w*100).toFixed(2)}return v}
+function setRange(d,pct){d.range=Math.max(2,Math.min(100,+pct.toFixed(1)));const p=pinfo(d.plan);if(p&&p.ppf&&p.w)d.rft=Math.max(1,Math.min(2000,Math.round(pct/100*p.w/p.ppf)))}
+function rangeStr(v){return v.ft?v.ft+' ft':v.range+'% of plan (set the scale for feet)'}
 function conePath(cx,cy,r,dir,fov){if(fov>=360)return 'M'+cx+' '+cy+'m-'+r+' 0a'+r+' '+r+' 0 1 0 '+2*r+' 0a'+r+' '+r+' 0 1 0 -'+2*r+' 0z';const a1=(dir-fov/2)*Math.PI/180,a2=(dir+fov/2)*Math.PI/180;
 return 'M'+cx+' '+cy+'L'+(cx+r*Math.sin(a1)).toFixed(1)+' '+(cy-r*Math.cos(a1)).toFixed(1)+'A'+r+' '+r+' 0 '+(fov>180?1:0)+' 1 '+(cx+r*Math.sin(a2)).toFixed(1)+' '+(cy-r*Math.cos(a2)).toFixed(1)+'Z'}
 function covOn(){return localStorage.getItem('fo_cov')!=='0'}
@@ -1672,8 +1675,8 @@ function drawCones(box,fn,devs){const img=box.querySelector('img');const go=()=>
 const p=devs.filter(d=>d.plan===fn&&CAM_DEF[d.type]).map(d=>{const v=camView(d),col=devColor(d.type);return '<path d="'+conePath(d.x*W/100,d.y*H/100,v.range*W/100,v.dir,v.fov)+'" fill="'+col+'" fill-opacity="'+(devSel===d.id?.24:.14)+'" stroke="'+col+'" stroke-opacity=".75" stroke-width="2" vector-effect="non-scaling-stroke"'+(d.type==='PTZ Cam'?' stroke-dasharray="6 4"':'')+(devSel===d.id&&!devLock()?' class="cone-sel" style="pointer-events:auto;cursor:move;touch-action:none"':'')+'/>'}).join('');
 if(!p)return;box.insertAdjacentHTML('afterbegin','<svg class="cov" viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" aria-hidden="true">'+p+'</svg>')};if(img.complete&&img.naturalWidth)go();else img.addEventListener('load',go,{once:true})}
 function camCh(k,dv){const d=currentJob.devices.find(x=>x.id===devSel);if(!d)return;devSnap();const v=camView(d);
-if(k==='dir')d.dir=((v.dir+dv)%360+360)%360;else if(k==='fov')d.fov=dv==='360'?360:Math.max(10,Math.min(360,v.fov+dv));else if(k==='range')d.range=Math.max(2,Math.min(100,+(v.range+dv).toFixed(1)));
-d.dir=d.dir??v.dir;d.fov=d.fov||v.fov;d.range=d.range||v.range;renderDevices();clearTimeout(window.camT);window.camT=setTimeout(saveDevices,500)}
+if(k==='dir')d.dir=((v.dir+dv)%360+360)%360;else if(k==='fov')d.fov=dv==='360'?360:Math.max(10,Math.min(360,v.fov+dv));else if(k==='range'){if(v.ft)d.rft=Math.max(5,Math.min(2000,v.ft+(dv>0?5:-5)));else d.range=Math.max(2,Math.min(100,+(v.range+dv).toFixed(1)))}
+d.dir=d.dir??v.dir;d.fov=d.fov||v.fov;if(!v.ft)d.range=d.range||v.range;renderDevices();clearTimeout(window.camT);window.camT=setTimeout(saveDevices,500)}
 function devLock(){return currentJob.job_type==='Survey'&&currentJob.status==='completed'&&!svEditing}
 function isAB(){return currentJob.job_type!=='Survey'}
 function devColor(t){const d=DEVS.find(x=>x[0]===t);return d?d[2]:'#333'}
@@ -1694,7 +1697,7 @@ if(!lock){const rb=document.createElement('button');rb.className='big-btn gray';
 document.getElementById('dev-undo').classList.toggle('hidden',lock||!devUndo.length);document.getElementById('dv-move').classList.toggle('hidden',lock);document.getElementById('dv-movehint').classList.toggle('hidden',lock);
 const d=devs.find(x=>x.id===devSel);const ed=document.getElementById('dev-edit');ed.classList.toggle('hidden',!d);
 let cc=document.getElementById('cam-ctl');if(!cc){cc=document.createElement('div');cc.id='cam-ctl';document.getElementById('dv-title').after(cc)}cc.innerHTML='';
-if(d&&CAM_DEF[d.type]){const v=camView(d),cmp=['N','NE','E','SE','S','SW','W','NW'][Math.round(v.dir/45)%8];cc.innerHTML='<div class="muted" style="margin:4px 0">Facing '+cmp+' ('+v.dir+'\u00b0), view '+v.fov+'\u00b0, range '+v.range+'</div>'+(lock?'':'<div class="cam-ctl"><button onclick="camCh(&quot;dir&quot;,-15)">&#8634; Turn left</button><button onclick="camCh(&quot;dir&quot;,15)">Turn right &#8635;</button><button onclick="camCh(&quot;fov&quot;,&quot;360&quot;)">360&deg;</button><button onclick="camCh(&quot;fov&quot;,-10)">Narrower</button><button onclick="camCh(&quot;fov&quot;,10)">Wider</button><button onclick="camCh(&quot;range&quot;,-3)">Shorter</button><button onclick="camCh(&quot;range&quot;,3)">Longer</button></div>')}
+if(d&&CAM_DEF[d.type]){const v=camView(d),cmp=['N','NE','E','SE','S','SW','W','NW'][Math.round(v.dir/45)%8];cc.innerHTML='<div class="muted" style="margin:4px 0">Facing '+cmp+' ('+v.dir+'\u00b0), view '+v.fov+'\u00b0, range '+rangeStr(v)+'</div>'+(lock?'':'<div class="cam-ctl"><button onclick="camCh(&quot;dir&quot;,-15)">&#8634; Turn left</button><button onclick="camCh(&quot;dir&quot;,15)">Turn right &#8635;</button><button onclick="camCh(&quot;fov&quot;,&quot;360&quot;)">360&deg;</button><button onclick="camCh(&quot;fov&quot;,-10)">Narrower</button><button onclick="camCh(&quot;fov&quot;,10)">Wider</button><button onclick="camCh(&quot;range&quot;,-3)">Shorter</button><button onclick="camCh(&quot;range&quot;,3)">Longer</button></div>')}
 if(d){document.getElementById('dv-title').textContent=d.label+' \u00b7 '+d.type;['note','height','cable'].forEach(k=>{const el=document.getElementById('dv-'+k);el.value=d[k]||'';el.disabled=lock});document.getElementById('dv-btns').classList.toggle('hidden',lock);
 document.querySelectorAll('#dev-edit .ab-only').forEach(e=>e.classList.toggle('hidden',!ab));
 if(ab){['mac','ip','port','clabel'].forEach(k=>document.getElementById('dv-'+k).value=d[k]||'');document.getElementById('dv-installed').checked=!!d.installed;
@@ -1723,9 +1726,9 @@ if(!d||d.plan!==fn||!CAM_DEF[d.type]||devLock()||!covOn())return;const im=box.qu
 [['tip',v.dir,v.range,'Drag to turn and set range'],['edge',v.fov>=360?v.dir+90:v.dir+v.fov/2,v.range*.72,'Drag to widen or narrow']].forEach(([k,a,rad,tl])=>{const el=document.createElement('div');el.className='chd '+k;el.dataset.k=k;el.title=tl;el.style.color=c;el.innerHTML='<i style="background:'+(k==='tip'?c:'#fff')+'"></i>';
 const [x,y]=handlePos(d,a,rad,box);el.style.left=x+'%';el.style.top=y+'%';el.onpointerdown=e=>coneDown(e,k,box,fn,el);el.onpointermove=coneMove;el.onpointerup=coneUp;el.onpointercancel=coneUp;el.onclick=e=>e.stopPropagation();box.appendChild(el)})}
 function coneDown(e,k,box,fn,cap){const d=currentJob.devices.find(x=>x.id===devSel);if(!d||devLock())return;e.preventDefault();e.stopPropagation();try{cap.setPointerCapture(e.pointerId)}catch(_){}
-const v=camView(d);coneDrag={k:k,pid:e.pointerId,box:box,fn:fn,d:d,before:JSON.stringify(currentJob.devices),moved:false};d.dir=v.dir;d.fov=v.fov;d.range=v.range}
+const v=camView(d);coneDrag={k:k,pid:e.pointerId,box:box,fn:fn,d:d,before:JSON.stringify(currentJob.devices),moved:false};d.dir=v.dir;d.fov=v.fov;d.range=Math.min(100,v.range);if(v.ft)d.rft=v.ft}
 function coneMove(e){const g=coneDrag;if(!g||e.pointerId!==g.pid)return;e.preventDefault();e.stopPropagation();g.moved=true;const d=g.d,o=angOf(d,e,g.box);
-if(g.k==='tip'){d.dir=Math.round(o.a);d.range=Math.max(2,Math.min(100,+o.dist.toFixed(1)))}
+if(g.k==='tip'){d.dir=Math.round(o.a);setRange(d,Math.max(2,o.dist))}
 else if(g.k==='edge'){let df=Math.abs(((o.a-d.dir)%360+540)%360-180);d.fov=Math.max(10,Math.min(359,Math.round(df*2)))}
 else d.dir=Math.round(o.a);
 drawCones(g.box,g.fn,currentJob.devices);const v=camView(d);g.box.querySelectorAll('.chd').forEach(el=>{const tip=el.dataset.k==='tip',[x,y]=handlePos(d,tip?v.dir:v.dir+v.fov/2,tip?v.range:v.range*.72,g.box);el.style.left=x+'%';el.style.top=y+'%'})}
@@ -2735,9 +2738,13 @@ DEV_SYM = {
  'TV':'<rect x="2.5" y="5" width="19" height="12" rx="1"/><path d="M8 21h8M12 17v4"/>',
 }
 CAM_DEF = {'Dome Cam': 100, 'Bullet Cam': 60, 'PTZ Cam': 90}
-CAM_RANGE = 15  # percent of plan width
-def cam_view(d):
-    return {'dir': d.get('dir', 0) or 0, 'fov': d.get('fov') or CAM_DEF.get(d['type'], 90), 'range': d.get('range') or CAM_RANGE}
+CAM_RANGE = 15  # percent of plan width, used when the plan has no scale
+CAM_FT = {'Dome Cam': 30, 'Bullet Cam': 60, 'PTZ Cam': 100}  # default range in feet once the plan is scaled
+def cam_view(d, ppf=None, W=None):
+    v = {'dir': d.get('dir', 0) or 0, 'fov': d.get('fov') or CAM_DEF.get(d['type'], 90), 'range': d.get('range') or CAM_RANGE, 'ft': None}
+    if ppf and W:
+        v['ft'] = d.get('rft') or CAM_FT.get(d['type'], 30); v['range'] = v['ft'] * ppf / W * 100
+    return v
 
 def dev_icon(t, color, solid=True, size=34, label=None):
     """Self-contained SVG marker: ring + symbol. Solid = installed / survey, white = planned."""
@@ -2781,13 +2788,13 @@ def cone_path(cx, cy, r, d, fov):
 
 def plan_svg(fn, devs, ab=False, cones=True):
     """One vector overlay for print and client views: coverage cones, symbols and labels."""
-    W, H = img_size(fn); s = W * 0.034; out = []
+    W, H = img_size(fn); s = W * 0.034; out = []; ppf = plan_scale_of(fn)[1] if cones else None
     colors = {n: c for n, p, c in DEVICE_TYPES}
     ds = [d for d in devs if d.get('plan') == fn]
     if cones:
         for d in ds:
             if d['type'] not in CAM_DEF: continue
-            v = cam_view(d); col = colors[d['type']]; cx, cy = d['x'] * W / 100, d['y'] * H / 100
+            v = cam_view(d, ppf, W); col = colors[d['type']]; cx, cy = d['x'] * W / 100, d['y'] * H / 100
             out.append('<path d="%s" fill="%s" fill-opacity=".14" stroke="%s" stroke-opacity=".7" stroke-width="%.1f"%s/>' % (
                 cone_path(cx, cy, v['range'] * W / 100, v['dir'], v['fov']), col, col, W * 0.002, ' stroke-dasharray="%.1f %.1f"' % (W * .008, W * .006) if d['type'] == 'PTZ Cam' else ''))
     for d in ds:
@@ -2797,7 +2804,7 @@ def plan_svg(fn, devs, ab=False, cones=True):
         lf = d['x'] > 82
         out.append('<text x="%.1f" y="%.1f" font-size="%.1f" font-weight="700" font-family="Arial,sans-serif" fill="#111" stroke="#fff" stroke-width="%.1f" paint-order="stroke" dominant-baseline="middle" text-anchor="%s">%s</text>' % (cx - s * .62 if lf else cx + s * .62, cy, s * .62, s * .2, 'end' if lf else 'start', lab))
     return Markup('<svg class="plan-svg" viewBox="0 0 %d %d" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%%;height:100%%;pointer-events:none;-webkit-print-color-adjust:exact;print-color-adjust:exact">%s</svg>' % (W, H, ''.join(out)))
-app.jinja_env.globals.update(DEV_SYM=DEV_SYM, CAM_DEF=CAM_DEF, CAM_RANGE=CAM_RANGE, plan_svg=plan_svg, dev_icon=lambda t, c, solid=True, size=28: Markup(dev_icon(t, c, solid, size)))
+app.jinja_env.globals.update(DEV_SYM=DEV_SYM, CAM_DEF=CAM_DEF, CAM_RANGE=CAM_RANGE, CAM_FT=CAM_FT, plan_svg=plan_svg, dev_icon=lambda t, c, solid=True, size=28: Markup(dev_icon(t, c, solid, size)))
 # ---------- end device symbols ----------
 
 OPS_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{{ title }}</title>
@@ -5232,7 +5239,7 @@ DESIGN_BODY = r'''<div class="pd-top"><a class="pd-btn" href="__BACK__">&larr; J
 <div class="pd-side" id="pd-side">
 <div id="pd-x1"></div>
 <div class="pd-card hidden" id="pd-sc"><h3>Set scale</h3><div class="pd-muted">Real distance between the two points you tapped</div><label class="pd-l" for="pd-ft">Feet</label><input class="pd-in" id="pd-ft" type="number" inputmode="decimal" min="0.1" step="any" placeholder="e.g. 20"><div class="pd-row"><button class="pd-btn gold" onclick="scaleSave()">Save scale</button><button class="pd-btn" onclick="scaleCancel()">Cancel</button></div></div>
-<div class="pd-card" id="pd-plancard"><h3 id="pd-pname">Plan</h3><div class="pd-muted" id="pd-pinfo"></div><div class="pd-row edit-only" style="margin-top:8px"><button class="pd-btn" onclick="scaleStart()">Set scale</button><button class="pd-btn" onclick="renamePlan()">Rename</button><button class="pd-btn" onclick="pickFile()">+ Add plan</button><button class="pd-btn red" onclick="removePlan()">Remove</button></div>
+<div class="pd-card" id="pd-plancard"><h3 id="pd-pname">Plan</h3><div class="pd-muted" id="pd-pinfo"></div><div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-meas" onclick="measToggle()">Measure</button></div><div class="pd-row edit-only" style="margin-top:8px"><button class="pd-btn" onclick="scaleStart()">Set scale</button><button class="pd-btn" onclick="renamePlan()">Rename</button><button class="pd-btn" onclick="pickFile()">+ Add plan</button><button class="pd-btn red" onclick="removePlan()">Remove</button></div>
 <div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-cov" onclick="covToggle()">Coverage: On</button><span id="pd-x2"></span></div></div>
 <div class="pd-card" id="pd-legend"></div></div></div>
 <input type="file" id="pd-file" accept="image/*,.pdf,application/pdf" multiple style="display:none" onchange="upload(this)">
@@ -5244,7 +5251,7 @@ const D=JSON.parse(document.getElementById('pd-data').textContent);
 const JID=D.job.id,API='/api/jobs/'+encodeURIComponent(JID),EDIT=D.edit;
 let P=D.plans,DEV=D.devices,cur=0,vb=null,sel=null,tool='',scaleMode=0,scalePts=[];
 const $=id=>document.getElementById(id),svg=$('pd-svg');
-const TYPES=D.types,SYM=D.sym,CAM_DEF=D.camdef,CAM_RANGE=D.camrange;
+const TYPES=D.types,SYM=D.sym,CAM_DEF=D.camdef,CAM_RANGE=D.camrange,CAM_FT=D.camft||{};let measMode=0,measPts=[];
 function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
 function plan(){return P[cur]}
 function col(t){const d=TYPES.find(x=>x[0]===t);return d?d[2]:'#333'}
@@ -5253,8 +5260,12 @@ function symG(t,x,y,s,solid){const c=col(t),u=s/24;return '<g transform="transla
 function symHtml(t,size){return '<svg viewBox="0 0 24 24" width="'+size+'" height="'+size+'" aria-hidden="true">'+symG(t,12,12,24)+'</svg>'}
 function covOn(){return localStorage.getItem('fo_cov')!=='0'}
 function covToggle(){localStorage.setItem('fo_cov',covOn()?'0':'1');draw();side()}
-function camView(d){return {dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE}}
+function pinfo(fn){return P.find(p=>p.fn===fn)}
+function camView(d){const p=pinfo(d.plan),v={dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE,ft:null};if(p&&p.ppf&&p.w){v.ft=d.rft||CAM_FT[d.type]||30;v.range=+(v.ft*p.ppf/p.w*100).toFixed(2)}return v}
 function rangePct(d){return camView(d).range}
+function measFt(){const p=plan();if(!p||!p.ppf||measPts.length<2)return null;const [a,b]=measPts;return Math.hypot((b.x-a.x)/100*p.w,(b.y-a.y)/100*p.h)/p.ppf}
+function ftStr(f){if(f<100){const ft=Math.floor(f),inch=Math.round((f-ft)*12);return inch===12?(ft+1)+' ft':ft+' ft '+inch+' in'}return Math.round(f)+' ft'}
+function measToggle(){const p=plan();if(!p)return;if(!p.ppf&&!measMode){alert('Set the scale first. Tap Set scale and tap two points of a known distance.');return}measMode=measMode?0:1;measPts=[];tool='';sel=null;if(window.trayMark)trayMark();$('pd-meas').classList.toggle('on',!!measMode);$('pd-meas').textContent=measMode?'Stop measuring':'Measure';draw();if(window.PD_SIDE)PD_SIDE()}
 function conePath(cx,cy,r,dir,fov){if(fov>=360)return 'M'+cx+' '+cy+'m-'+r+' 0a'+r+' '+r+' 0 1 0 '+2*r+' 0a'+r+' '+r+' 0 1 0 -'+2*r+' 0z';const a1=(dir-fov/2)*Math.PI/180,a2=(dir+fov/2)*Math.PI/180;
 return 'M'+cx+' '+cy+'L'+(cx+r*Math.sin(a1)).toFixed(1)+' '+(cy-r*Math.cos(a1)).toFixed(1)+'A'+r+' '+r+' 0 '+(fov>180?1:0)+' 1 '+(cx+r*Math.sin(a2)).toFixed(1)+' '+(cy-r*Math.cos(a2)).toFixed(1)+'Z'}
 function box(){return svg.getBoundingClientRect()}
@@ -5275,14 +5286,17 @@ planDevs().forEach(d=>{const x=d.x*W/100,y=d.y*H/100,lf=d.x>82;h+='<g data-id="'
 '<circle cx="'+x+'" cy="'+y+'" r="'+(s*.75)+'" fill="transparent"/>'+symG(d.type,x,y,s)+'<text x="'+(lf?x-s*.62:x+s*.62)+'" y="'+y+'" font-size="'+(13*K)+'" font-weight="700" fill="#111" stroke="#fff" stroke-width="'+(3.5*K)+'" paint-order="stroke" dominant-baseline="middle" text-anchor="'+(lf?'end':'start')+'" pointer-events="none">'+esc(d.label||pre(d.type))+'</text></g>'});
 scalePts.forEach((q,i)=>{const x=q.x*W/100,y=q.y*H/100;h+='<circle cx="'+x+'" cy="'+y+'" r="'+(7*K)+'" fill="#d32f2f" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
 if(scalePts.length===2)h+='<line x1="'+scalePts[0].x*W/100+'" y1="'+scalePts[0].y*H/100+'" x2="'+scalePts[1].x*W/100+'" y2="'+scalePts[1].y*H/100+'" stroke="#d32f2f" stroke-width="3" stroke-dasharray="8 5" vector-effect="non-scaling-stroke"/>';
-ov.innerHTML=h;scalebar();hint();svg.classList.toggle('place',!!tool||scaleMode>0)}
+measPts.forEach(q=>{h+='<circle cx="'+q.x*W/100+'" cy="'+q.y*H/100+'" r="'+(7*K)+'" fill="#111" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
+if(measPts.length===2){const [a,b]=measPts,x1=a.x*W/100,y1=a.y*H/100,x2=b.x*W/100,y2=b.y*H/100,f=measFt();h+='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="#111" stroke-width="3" vector-effect="non-scaling-stroke"/>';
+if(f!=null)h+='<text x="'+(x1+x2)/2+'" y="'+((y1+y2)/2-12*K)+'" font-size="'+(16*K)+'" font-weight="800" fill="#111" stroke="#fff" stroke-width="'+(4*K)+'" paint-order="stroke" text-anchor="middle">'+ftStr(f)+'</text>'}
+ov.innerHTML=h;scalebar();hint();svg.classList.toggle('place',!!tool||scaleMode>0||measMode>0)}
 function niceFt(pxFt){const n=[1,2,5,10,20,25,50,100,200,250,500,1000,2000,5000];return n.find(v=>v*pxFt>=64)||n[n.length-1]}
 function scalebar(){const p=plan(),el=$('pd-scale');if(!p){el.classList.add('hidden');return}el.classList.remove('hidden');
 if(!p.ppf){el.innerHTML=EDIT?'Not to scale yet':'Not to scale';return}const pxFt=p.ppf/k(),ft=niceFt(pxFt);el.innerHTML='<i style="width:'+Math.round(ft*pxFt)+'px"></i><span>'+ft+' ft</span>'}
-function hintText(){if(scaleMode===1)return 'Tap the first point of a known distance';if(scaleMode===2)return 'Tap the second point';if(scaleMode===3)return 'Enter the real distance below';return window.PD_HINT?PD_HINT():''}
+function hintText(){if(scaleMode===1)return 'Tap the first point of a known distance';if(scaleMode===2)return 'Tap the second point';if(scaleMode===3)return 'Enter the real distance below';if(measMode)return measPts.length<2?(measPts.length?'Tap the second point':'Tap two points to measure'):ftStr(measFt()||0)+'. Tap again to measure something else.';return window.PD_HINT?PD_HINT():''}
 function hint(){const t=hintText(),el=$('pd-hint');el.textContent=t;el.classList.toggle('hidden',!t)}
 function tabs(){$('pd-tabs').innerHTML=P.map((p,i)=>'<button class="pd-btn'+(i===cur?' on':'')+'" onclick="go('+i+')">'+esc(p.name)+'</button>').join('')+(EDIT?'<button class="pd-btn" onclick="pickFile()">+ Plan</button>':'')}
-function go(i){cur=i;vb=null;sel=null;scaleCancel(true);render()}
+function go(i){cur=i;vb=null;sel=null;scaleCancel(true);if(measMode)measToggle();render()}
 function legend(){const L=$('pd-legend'),all={},here={};DEV.forEach(d=>all[d.type]=(all[d.type]||0)+1);planDevs().forEach(d=>here[d.type]=(here[d.type]||0)+1);
 const p=plan();if(!DEV.length){L.innerHTML='<h3>Legend</h3><div class="pd-muted">No devices yet</div>';return}
 L.innerHTML='<h3>Legend</h3><div class="pd-muted">'+(p?esc(p.name)+': '+planDevs().length+' &middot; ':'')+'All plans: '+DEV.length+'</div>'+TYPES.filter(t=>all[t[0]]).map(t=>'<div class="pd-leg">'+symHtml(t[0],26)+'<span>'+esc(t[0])+'</span><b>'+(here[t[0]]||0)+(P.length>1?' / '+all[t[0]]:'')+'</b></div>').join('')}
@@ -5298,7 +5312,7 @@ if(ptr.size>2)return;const t=e.target.closest&&e.target.closest('[data-id]');g={
 svg.addEventListener('pointermove',e=>{if(!ptr.has(e.pointerId))return;ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});if(!g)return;const r=box();
 if(g.pinch){if(ptr.size<2)return;const [a,b]=[...ptr.values()],m=mid(a,b),f=g.d0/(dist(a,b)||1),px=g.vb0.x+(g.m0.x-r.left)/r.width*g.vb0.w,py=g.vb0.y+(g.m0.y-r.top)/r.height*g.vb0.h;
 vb.w=g.vb0.w*f;vb.h=g.vb0.h*f;clampZoom();vb.x=px-(m.x-r.left)/r.width*vb.w;vb.y=py-(m.y-r.top)/r.height*vb.h;draw();return}
-const dx=e.clientX-g.x0,dy=e.clientY-g.y0;if(!g.moved&&Math.hypot(dx,dy)>6){g.moved=true;if(g.dev&&window.PD_DRAGSTART&&!scaleMode)PD_DRAGSTART(g)}
+const dx=e.clientX-g.x0,dy=e.clientY-g.y0;if(!g.moved&&Math.hypot(dx,dy)>6){g.moved=true;if(g.dev&&window.PD_DRAGSTART&&!scaleMode&&!measMode)PD_DRAGSTART(g)}
 if(!g.moved)return;if(g.drag&&window.PD_DRAG){PD_DRAG(g,e);return}vb.x=g.vb0.x-dx/r.width*vb.w;vb.y=g.vb0.y-dy/r.height*vb.h;draw()});
 function up(e){if(!ptr.has(e.pointerId))return;ptr.delete(e.pointerId);if(!g)return;
 if(!g.pinch){if(!g.moved&&e.type==='pointerup')tap(e,g.dev);else if(g.drag&&window.PD_DRAGEND)PD_DRAGEND(g)}
@@ -5308,6 +5322,7 @@ svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.15:1/1.1
 window.addEventListener('resize',()=>{if(!vb)return;const r=box(),cx=vb.x+vb.w/2,cy=vb.y+vb.h/2;vb.h=vb.w*r.height/r.width;vb.x=cx-vb.w/2;vb.y=cy-vb.h/2;draw()});
 function tap(e,id){const p=plan();if(!p)return;const q=toPlan(e),pc={x:Math.max(0,Math.min(100,q.x/p.w*100)),y:Math.max(0,Math.min(100,q.y/p.h*100))};
 if(scaleMode===1||scaleMode===2){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;scalePts.push(pc);scaleMode++;if(scaleMode===3){$('pd-sc').classList.remove('hidden');$('pd-ft').value='';setTimeout(()=>{$('pd-sc').scrollIntoView({behavior:'smooth',block:'nearest'});$('pd-ft').focus()},50)}draw();return}
+if(measMode){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;if(measPts.length>=2)measPts=[];measPts.push(pc);draw();return}
 if(window.PD_TAP){PD_TAP(e,id,pc,q);return}}
 // plans
 function busy(t){$('pd-busy').classList.toggle('hidden',!t);if(t)$('pd-busytxt').textContent=t}
@@ -5329,7 +5344,7 @@ if(!r.ok){alert(d.error||'Could not add the pages');return}await reload();cur=be
 async function meta(body){const r=await fetch(API+'/plans/meta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({filename:plan().fn},body))});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Not saved');return false}P=d.plan_info;return true}
 async function renamePlan(){const p=plan();if(!p)return;const n=prompt('Plan name (for example Floor 1)',p.name);if(n===null||!n.trim())return;if(await meta({name:n.trim()}))render()}
 async function removePlan(){const p=plan();if(!p||!confirm('Remove '+p.name+' and the devices on it?'))return;const r=await fetch(API+'/plans/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:p.fn})});if(!r.ok){alert('Not removed');return}await reload();cur=Math.max(0,cur-1);vb=null;sel=null;render()}
-function scaleStart(){if(!plan())return;sel=null;tool='';scalePts=[];scaleMode=1;if(window.PD_SIDE)PD_SIDE();draw();$('pd-view').scrollIntoView({behavior:'smooth',block:'nearest'})}
+function scaleStart(){if(!plan())return;if(measMode)measToggle();sel=null;tool='';scalePts=[];scaleMode=1;if(window.PD_SIDE)PD_SIDE();draw();$('pd-view').scrollIntoView({behavior:'smooth',block:'nearest'})}
 function scaleCancel(quiet){scaleMode=0;scalePts=[];$('pd-sc').classList.add('hidden');if(!quiet)draw()}
 async function scaleSave(){const ft=parseFloat($('pd-ft').value);if(!(ft>0)){alert('Enter the real distance in feet');return}const [a,b]=scalePts;
 if(await meta({scale:{ax:a.x,ay:a.y,bx:b.x,by:b.y,ft:ft}})){scaleCancel(true);render()}}
@@ -5340,7 +5355,7 @@ render();requestAnimationFrame(()=>{vb=null;draw()});
 '''
 def design_page(row, conn, js_extra='', body_extra=''):
     data={'job':{'id':row['id'],'title':row['title'] or '','customer':row['customer'] or '','type':row['job_type'] or ''},
-          'plans':plan_info(conn, row['id']),'devices':parse_devices(row['survey_devices']),'types':DEVICE_TYPES,'sym':DEV_SYM,'camdef':CAM_DEF,'camrange':CAM_RANGE,
+          'plans':plan_info(conn, row['id']),'devices':parse_devices(row['survey_devices']),'types':DEVICE_TYPES,'sym':DEV_SYM,'camdef':CAM_DEF,'camft':CAM_FT,'camrange':CAM_RANGE,
           'edit':design_can_edit(row),'office':is_office()}
     data.update(design_data_extra(conn, row))
     js=json.dumps(data).replace('</','<\\/')
@@ -5394,7 +5409,7 @@ if(!T.drag){tool=tool===T.t?'':T.t;sel=null;trayMark();draw();side();return}
 const r=box();if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom){const q=toPlan(e),p=plan();place(T.t,q.x/p.w*100,q.y/p.h*100)}});
 document.addEventListener('pointercancel',e=>{if(TD&&e.pointerId===TD.id){if(TD.ghost)TD.ghost.remove();TD=null}});
 function place(t,x,y){const p=plan();if(!p||x<0||x>100||y<0||y>100)return;const before=snap(),id=newId();DEV.push({id:id,type:t,plan:p.fn,x:+x.toFixed(2),y:+y.toFixed(2),label:''});sel=id;commit(before);draw();side()}
-window.PD_TAP=function(e,id,pc,q){const p=plan();if(id){sel=id;tool='';trayMark()}else if(tool&&EDIT){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;place(tool,pc.x,pc.y);return}else sel=null;draw();side()};
+window.PD_TAP=function(e,id,pc,q){if(measMode)return;const p=plan();if(id){sel=id;tool='';trayMark()}else if(tool&&EDIT){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;place(tool,pc.x,pc.y);return}else sel=null;draw();side()};
 window.PD_DRAGSTART=function(g){if(!EDIT)return;g.drag=true;g.before=snap();sel=g.dev;tool='';trayMark()};
 window.PD_DRAG=function(g,e){const d=DEV.find(x=>x.id===g.dev),p=plan();if(!d)return;const q=toPlan(e);d.x=+Math.max(0,Math.min(100,q.x/p.w*100)).toFixed(2);d.y=+Math.max(0,Math.min(100,q.y/p.h*100)).toFixed(2);draw()};
 window.PD_DRAGEND=function(g){if(g.before)commit(g.before);g.before=null;g.drag=false;side()};
@@ -5407,8 +5422,8 @@ function setField(k,v){const d=selDev();if(!d)return;v=v.trim();if((d[k]||'')===
 function camCh(kk,dv){const d=selDev();if(!d||!EDIT)return;const before=snap(),v=camView(d);
 if(kk==='dir')d.dir=((v.dir+dv)%360+360)%360;else if(kk==='fov')d.fov=dv==='360'?360:Math.max(10,Math.min(360,v.fov+dv));else if(kk==='range')rangeStep(d,dv);
 d.dir=d.dir??v.dir;d.fov=d.fov||v.fov;commit(before);draw();side()}
-function rangeStep(d,dv){const v=camView(d);d.range=Math.max(2,Math.min(100,+(v.range+dv*3).toFixed(1)))}
-function rangeText(d){return 'range '+camView(d).range+'% of plan width'}
+function rangeStep(d,dv){const v=camView(d);if(v.ft){d.rft=Math.max(5,Math.min(2000,v.ft+dv*5));return}d.range=Math.max(2,Math.min(100,+(v.range+dv*3).toFixed(1)))}
+function rangeText(d){const v=camView(d);return v.ft?'range '+v.ft+' ft':'range '+v.range+'% of plan width (set the scale for feet)'}
 window.PD_SIDE=function(){const c=$('pd-sel'),d=selDev();c.classList.toggle('hidden',!d);if(!d)return;const cam=!!CAM_DEF[d.type],v=camView(d);
 const cmp=['N','NE','E','SE','S','SW','W','NW'][Math.round(v.dir/45)%8];
 c.innerHTML='<div style="display:flex;align-items:center;gap:10px">'+symHtml(d.type,36)+'<h3 style="margin:0">'+esc(d.label||'New')+' &middot; '+esc(d.type)+'</h3></div>'+
