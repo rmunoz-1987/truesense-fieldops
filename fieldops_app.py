@@ -1020,7 +1020,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT', 'pay_link TEXT', 'paid_at TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT', 'pay_link TEXT', 'paid_at TEXT', 'bom_json TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -1272,7 +1272,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
 <div class="ptitle" style="font-size:1.2rem">3. Site Conditions</div><textarea id="sv-site_conditions" rows="5" style="font-size:1.1rem" placeholder="Current system, power, network, conduit, and obstacles like lift, concrete, long runs, access (tap the mic to talk)"></textarea>
-<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a><a class="big-btn gray" id="pd-full-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)+'?full=1'">&#x26F6; Full screen plan</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
+<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a>{% if office %}<a class="big-btn gray" id="bom-link" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/bom'">Bill of materials</a>{% endif %}<a class="big-btn gray" id="pd-full-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)+'?full=1'">&#x26F6; Full screen plan</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div><button class="big-btn gray hidden" id="dev-undo" onclick="devUndoTap()">&#8630; Undo last change</button>
 <div id="plans"></div>
@@ -4862,6 +4862,10 @@ MR_LINE='''<div class="mr-line"><div class="row"><div><label>Part #</label><inpu
 <label>Description</label><input name="desc" maxlength="300" placeholder="What is it? e.g. Cat6 cable, 1000 ft box, blue">
 <label>Notes</label><input name="lnote" maxlength="300" placeholder="Color, size, brand OK to swap? (optional)"><button type="button" class="big-btn gray" onclick="mrDel(this)">Remove this line</button></div>'''
 
+def mr_line_filled(l):
+    s=MR_LINE.replace('name="part" maxlength="80"','name="part" maxlength="80" value="%s"'%h(l['part'])).replace('value="1" onfocus','value="%s" onfocus'%h(mr_qty(l['qty'])))
+    s=s.replace('name="desc" maxlength="300"','name="desc" maxlength="300" value="%s"'%h(l['desc']))
+    return s.replace('name="lnote" maxlength="300"','name="lnote" maxlength="300" value="%s"'%h(('Plan: '+l['floors']) if l.get('floors') else ''))
 @app.route('/job/<job_id>/materials', methods=['GET','POST'])
 def mr_new(job_id):
     conn=get_db(); row=page_job(conn, job_id)
@@ -4889,11 +4893,14 @@ def mr_new(job_id):
             conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'Requested materials MR-%d: %s'%(rid,', '.join('%s x %s'%(mr_qty(i['qty']),i['desc'] or i['part']) for i in items))[:1000],now_local_str()))
             conn.commit(); conn.close(); mr_webhook(rid)
             return ops_page('Request sent', '<div class="card" style="text-align:center"><div style="font-size:3rem;color:#2e7d32">&#10003;</div><div style="font-size:1.3rem;font-weight:800">MR-%d sent to the office</div><div class="muted" style="font-size:1rem;margin-top:6px">Status: Submitted. You will see the status on the job.</div></div><a class="big-btn" href="%s" style="font-size:1.3rem;padding:20px">Back to Job</a>'%(rid,h(back)), back=False)
+    pre=[]
+    if request.method=='GET' and request.args.get('from')=='bom':
+        _,bl=bom_build(conn,row,False); pre=bl[:60]
     conn.close()
     auto='<div class="auto"><div><b>Job:</b> %s %s</div><div><b>Customer:</b> %s</div><div><b>ADI account #:</b> %s</div><div><b>Sub:</b> %s</div><div><b>Ship to:</b> %s</div></div>'%(
         h(job_id),h(row['title'] or ''),h(row['customer'] or ''),h(acct) if acct else '<span class="muted">Office fills this in</span>',h(sub or '-'),h(MR_SHIP_TO))
     body=MR_FORM_CSS+auto+('<div class="flag" style="display:block;padding:10px;margin:8px 0">%s</div>'%h(err) if err else '')+'''<form method="post" enctype="multipart/form-data" onsubmit="this.querySelector('[type=submit]').disabled=true">
-<h2>Items</h2><div id="mr-lines">'''+MR_LINE+'''</div><button type="button" class="big-btn gray" style="font-size:1.15rem" onclick="mrAdd()">+ Add another item</button>
+<h2>Items</h2>'''+('<div class="muted">Filled in from the floor plan. Change anything you need.</div>' if pre else '')+'''<div id="mr-lines">'''+(''.join(mr_line_filled(l) for l in pre) if pre else MR_LINE)+'''</div><button type="button" class="big-btn gray" style="font-size:1.15rem" onclick="mrAdd()">+ Add another item</button>
 <h2>When</h2><label>Needed by</label><input type="date" name="needed_by" required min="%s" value="%s">
 <label>Urgency</label><div class="seg2"><label><input type="radio" name="urgency" value="Normal" checked><span>Normal</span></label><label><input type="radio" class="urg" name="urgency" value="Urgent"><span>Urgent</span></label></div>
 <h2>Note and photo</h2><textarea name="note" rows="3" maxlength="2000" placeholder="Anything else the office should know (optional)"></textarea>
@@ -5472,7 +5479,138 @@ if(EDIT){$('pd-part').value=d.part||'';$('pd-note').value=d.note||''}};
 document.addEventListener('keydown',e=>{if(!EDIT||/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const m=e.ctrlKey||e.metaKey;
 if(m&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}else if(m&&e.key.toLowerCase()==='y'){e.preventDefault();redo()}else if((e.key==='Delete'||e.key==='Backspace')&&sel){e.preventDefault();del()}else if(e.key==='Escape'){tool='';sel=null;trayMark();draw();side()}});
 trayInit();undoBtns();setTimeout(trayTA,50);
+(function(){const u=encodeURIComponent(JID);let h='';if(D.office)h+='<a class="pd-btn gold" href="/job/'+u+'/bom">Bill of materials</a>';if(EDIT)h+='<a class="pd-btn" href="/job/'+u+'/materials?from=bom">Request materials from plan</a>';
+if(h)$('pd-legend').insertAdjacentHTML('afterend','<div class="pd-card" id="pd-bomcard"><h3>Materials</h3><div class="pd-row">'+h+'</div></div>')})();
 '''
+
+# ---------------- Bill of materials from plan devices (office edits; subs never see prices) ----------------
+def bom_load(row):
+    try: b=json.loads(row['bom_json'] or '{}')
+    except Exception: b={}
+    b=b if isinstance(b,dict) else {}
+    def clean(x):
+        x=x if isinstance(x,dict) else {}
+        q=x.get('qty'); c=x.get('cost')
+        return {'part':str(x.get('part') or '').strip()[:80],'desc':str(x.get('desc') or '').strip()[:200],
+                'qty':(round(fnum(q),2) if q not in (None,'') and fnum(q)>0 else None),'cost':(round(fnum(c),2) if c not in (None,'') and fnum(c)>=0 else None)}
+    return {'defaults':{t:clean(v) for t,v in (b.get('defaults') or {}).items() if t in DEV_PREFIX} if isinstance(b.get('defaults'),dict) else {},
+            'lines':{str(k)[:120]:clean(v) for k,v in (b.get('lines') or {}).items()} if isinstance(b.get('lines'),dict) else {},
+            'extra':[e for e in (clean(x) for x in (b.get('extra') or [])[:60]) if e['part'] or e['desc']]}
+def bom_build(conn, row, prices=False):
+    b=bom_load(row); info=plan_info(conn, row['id']); names={p['fn']:p['name'] for p in info}
+    groups={}; order=[t for t,_,_ in DEVICE_TYPES]
+    for d in parse_devices(row['survey_devices']):
+        if d['plan'] not in names: continue
+        df=b['defaults'].get(d['type'],{}); part=d.get('part') or df.get('part') or ''
+        key=d['type']+'|'+part.lower(); g=groups.setdefault(key,{'key':key,'type':d['type'],'auto_part':part,'count':0,'floors':{}})
+        g['count']+=1; g['floors'][names[d['plan']]]=g['floors'].get(names[d['plan']],0)+1
+    lines=[]
+    for g in sorted(groups.values(), key=lambda g:(order.index(g['type']),g['auto_part'])):
+        o=b['lines'].get(g['key'],{}); df=b['defaults'].get(g['type'],{})
+        ln={'key':g['key'],'src':'plan','type':g['type'],'part':o.get('part') or g['auto_part'],'desc':o.get('desc') or df.get('desc') or g['type'],
+            'auto_qty':g['count'],'qty':o.get('qty') or g['count'],'qty_set':o.get('qty') is not None,'floors':', '.join('%s: %d'%(n,g['floors'][n]) for n in [p['name'] for p in info] if n in g['floors'])}
+        c=o.get('cost') if o.get('cost') is not None else df.get('cost')
+        if prices: ln['cost']=c; ln['cost_set']=o.get('cost') is not None
+        lines.append(ln)
+    for i,e in enumerate(b['extra']):
+        ln={'key':'x%d'%i,'src':'extra','type':'','part':e['part'],'desc':e['desc'] or e['part'],'qty':e['qty'] or 1,'auto_qty':None,'qty_set':True,'floors':''}
+        if prices: ln['cost']=e['cost']
+        lines.append(ln)
+    if prices:
+        for ln in lines:
+            ln['sell']=mr_sell(ln['cost']) if ln.get('cost') is not None else None
+            ln['cost_total']=round((ln['cost'] or 0)*ln['qty'],2); ln['sell_total']=round((ln['sell'] or 0)*ln['qty'],2)
+    return b, lines
+def bom_item_text(ln, prices):
+    t='%s x %s'%(mr_qty(ln['qty']), ln['desc'] or ln['type'])
+    if ln['part'] and ln['part'].lower()!=(ln['desc'] or '').lower(): t+=' (%s)'%ln['part']
+    if prices and ln.get('sell') is not None: t+=' @ %s ea'%money(ln['sell'])
+    return t[:200]
+
+BOM_CSS='''<style>.bl{border:2px solid #e5e5e5;border-radius:12px;padding:10px;margin:8px 0;background:#fafaf5}.bl .row{display:flex;gap:8px;flex-wrap:wrap}.bl .row>div{flex:1 1 120px;min-width:0}
+.bl h3{margin:0 0 4px;font-size:1.05rem;display:flex;align-items:center;gap:8px}.bl .fl{color:#666;font-size:.9rem;margin-bottom:4px}.sellv{font-weight:700;color:#2e7d32;padding:6px 0}
+.tot{background:#f6f6f0;border-radius:12px;padding:10px 12px;margin:10px 0;font-size:1.05rem}.tot div{display:flex;justify-content:space-between;padding:2px 0}
+details.dfl{border:1px solid #e5e5e5;border-radius:12px;padding:8px 10px;margin:10px 0}details.dfl summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:center}
+.chk{display:flex;align-items:center;gap:10px;font-weight:600;min-height:44px}.chk input{width:24px;height:24px}</style>'''
+
+@app.route('/job/<job_id>/bom', methods=['GET','POST'])
+def bom_page(job_id):
+    if not is_office(): return redirect('/?job='+urllib.parse.quote(job_id))
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return redirect('/')
+    msg=''
+    if request.method=='POST':
+        f=request.form; b=bom_load(row)
+        lines={}
+        for k,p,d,q,c in zip(f.getlist('key'),f.getlist('part'),f.getlist('desc'),f.getlist('qty'),f.getlist('cost')):
+            o={'part':p.strip()[:80],'desc':d.strip()[:200],'qty':(fnum(q) if q.strip() and fnum(q)>0 else None),'cost':(round(fnum(c),2) if c.strip() and fnum(c)>=0 else None)}
+            ty=k.split('|',1)[0]; auto_part=k.split('|',1)[1] if '|' in k else ''
+            if o['part'].lower()==auto_part: o['part']=''
+            if o['desc'] in (ty, (b['defaults'].get(ty) or {}).get('desc')): o['desc']=''
+            if any(v not in (None,'') for v in o.values()): lines[k[:120]]=o
+        extra=[]
+        for p,d,q,c in zip(f.getlist('x_part'),f.getlist('x_desc'),f.getlist('x_qty'),f.getlist('x_cost')):
+            if not (p.strip() or d.strip()): continue
+            extra.append({'part':p.strip()[:80],'desc':d.strip()[:200],'qty':max(fnum(q,1),0.01) if q.strip() else 1,'cost':(round(fnum(c),2) if c.strip() and fnum(c)>=0 else None)})
+        defaults={}
+        for t_,p,d,c in zip(f.getlist('d_type'),f.getlist('d_part'),f.getlist('d_desc'),f.getlist('d_cost')):
+            if t_ in DEV_PREFIX and (p.strip() or d.strip() or c.strip()):
+                defaults[t_]={'part':p.strip()[:80],'desc':d.strip()[:200],'qty':None,'cost':(round(fnum(c),2) if c.strip() and fnum(c)>=0 else None)}
+        conn.execute('UPDATE jobs SET bom_json=? WHERE id=?',(json.dumps({'defaults':defaults,'lines':lines,'extra':extra[:60]}),job_id)); conn.commit()
+        row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); msg='Saved.'
+        act=f.get('action')
+        if act=='materials': conn.close(); return redirect('/job/%s/materials?from=bom'%urllib.parse.quote(job_id))
+        if act=='estimate':
+            e=load_estimate(row); _,ls=bom_build(conn,row,True)
+            if e.get('signed_at'): msg='Saved. The estimate is already signed, so it was not changed. Clear the signature on the estimate first.'
+            elif not ls: msg='Saved. No devices or lines to send yet.'
+            else:
+                pr=f.get('prices')=='1'; items=[bom_item_text(l,pr) for l in ls]
+                e={k:e[k] for k in ('desc','items','price','note')}
+                e['items']=items[:30]
+                if not e['desc'].strip(): e['desc']='Supply and install the devices shown on the floor plan.'
+                save_estimate(conn, job_id, e); conn.commit()
+                tot=sum(l['sell_total'] for l in ls)
+                msg='Sent %d lines to the estimate%s.%s Materials total at sell: %s. The estimate price was not changed.'%(min(len(items),30),' with prices' if pr else '',' Only the first 30 lines fit.' if len(items)>30 else '',money(tot))
+    b,ls=bom_build(conn,row,True); e=load_estimate(row); conn.close()
+    present=[t for t,_,_ in DEVICE_TYPES if any(l['type']==t for l in ls)]
+    colors={n:c for n,p,c in DEVICE_TYPES}
+    body=BOM_CSS+'<div class="muted">%s &middot; %s</div>'%(h(row['customer']),h(row['title']))
+    body+='<div class="muted" style="margin:6px 0">Built from the devices on all floor plans. Part # and qty can be changed here. Costs and sell prices are office only. Sell = cost + 25%.</div>'
+    body+='<form method="post" id="bomf"><h2>From the plans</h2>'
+    if not any(l['src']=='plan' for l in ls): body+='<div class="card muted">No devices on the plans yet. Place devices in the Plan Designer and they show up here.</div>'
+    for l in ls:
+        if l['src']!='plan': continue
+        body+=('<div class="bl"><input type="hidden" name="key" value="%s"><h3>%s %s <span style="margin-left:auto">%s</span></h3><div class="fl">%s</div>'
+               '<div class="row"><div><label>Part #</label><input name="part" maxlength="80" value="%s" placeholder="Part # or model"></div><div><label>Qty (plan: %d)</label><input name="qty" type="number" min="0" step="any" inputmode="decimal" value="%s" placeholder="%d"></div></div>'
+               '<label>Description</label><input name="desc" maxlength="200" value="%s">'
+               '<div class="row"><div><label>Unit cost $</label><input name="cost" type="number" min="0" step="0.01" inputmode="decimal" value="%s" placeholder="%s"></div><div><label>Sell each</label><div class="sellv">%s</div></div></div></div>')%(
+               h(l['key']),dev_icon(l['type'],colors[l['type']],True,26),h(l['type']),h('%s'%mr_qty(l['qty'])),h(l['floors']),h(l['part']),l['auto_qty'],h(mr_qty(l['qty'])) if l['qty_set'] else '',l['auto_qty'],
+               h(l['desc']),('%g'%l['cost']) if l.get('cost_set') else '',('%g'%l['cost']) if l.get('cost') is not None else '0.00',money(l['sell']) if l['sell'] is not None else '<span class="muted">add a cost</span>')
+    XL='''<div class="bl xl"><div class="row"><div><label>Part #</label><input name="x_part" maxlength="80" value="%s" placeholder="Part #"></div><div><label>Qty</label><input name="x_qty" type="number" min="0" step="any" inputmode="decimal" value="%s"></div></div>
+<label>Description</label><input name="x_desc" maxlength="200" value="%s" placeholder="e.g. Cat6 cable, 1000 ft box"><div class="row"><div><label>Unit cost $</label><input name="x_cost" type="number" min="0" step="0.01" inputmode="decimal" value="%s"></div><div><label>Sell each</label><div class="sellv">%s</div></div></div>
+<button type="button" class="big-btn gray" onclick="this.closest('.xl').remove()">Remove this line</button></div>'''
+    body+='<h2>Extra lines</h2><div class="muted">Cable, mounts, boxes, labor items. Anything not on the plan.</div><div id="xls">'
+    for l in ls:
+        if l['src']=='extra': body+=XL%(h(l['part']),h(mr_qty(l['qty'])),h(l['desc']),('%g'%l['cost']) if l.get('cost') is not None else '',money(l['sell']) if l['sell'] is not None else '-')
+    body+='</div><button type="button" class="big-btn gray" onclick="bomAdd()">+ Add a line</button>'
+    body+='<details class="dfl"><summary>Default part # for each device type</summary><div class="muted">Used for any device that has no part # of its own.</div>'
+    for t_,_,c_ in DEVICE_TYPES:
+        dv=b['defaults'].get(t_,{})
+        if t_ not in present and not dv: continue
+        body+=('<div class="bl"><input type="hidden" name="d_type" value="%s"><h3>%s %s</h3><div class="row"><div><label>Default part #</label><input name="d_part" maxlength="80" value="%s"></div><div><label>Default cost $</label><input name="d_cost" type="number" min="0" step="0.01" inputmode="decimal" value="%s"></div></div>'
+               '<label>Default description</label><input name="d_desc" maxlength="200" value="%s" placeholder="%s"></div>')%(h(t_),dev_icon(t_,c_,True,24),h(t_),h(dv.get('part','')),('%g'%dv['cost']) if dv.get('cost') is not None else '',h(dv.get('desc','')),h(t_))
+    if not present and not b['defaults']: body+='<div class="muted">Place devices first.</div>'
+    body+='</details>'
+    ct=sum(l['cost_total'] for l in ls); st=sum(l['sell_total'] for l in ls); miss=sum(1 for l in ls if l.get('cost') is None)
+    body+='<div class="tot"><div><span>Lines</span><b>%d</b></div><div><span>Cost total</span><b>%s</b></div><div><span>Sell total (+25%%)</span><b>%s</b></div>%s</div>'%(len(ls),money(ct),money(st),'<div class="muted" style="display:block">%d %s no cost yet.</div>'%(miss,'line has' if miss==1 else 'lines have') if miss else '')
+    body+='<button class="big-btn" name="action" value="save">Save</button>'
+    if e.get('signed_at'): body+='<div class="card muted">The estimate is signed. Clear the signature on the estimate page to send new lines.</div>'
+    else: body+='<label class="chk"><input type="checkbox" name="prices" value="1"> Show sell price on each estimate line</label><button class="big-btn gold" name="action" value="estimate" onclick="return confirm(&quot;Replace the line items on the estimate with these lines?&quot;)">Send to estimate</button>'
+    body+='<button class="big-btn gray" name="action" value="materials">Start a material request</button><div class="muted">The material request opens filled in with these parts and quantities, with no prices. Nothing is ordered or sent until you OK it.</div>'
+    body+='<a class="big-btn gray" href="/job/%s/estimate">Open estimate</a></form>'%h(urllib.parse.quote(job_id))
+    body+='<template id="xtpl">'+XL%('','1','','','-')+'</template><script>function bomAdd(){const t=document.getElementById("xtpl").content.cloneNode(true);document.getElementById("xls").appendChild(t);const L=document.querySelectorAll("#xls .xl");L[L.length-1].querySelector("[name=x_desc]").focus()}</script>'
+    return ops_page('Bill of materials', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
 
 @app.route('/design/<job_id>')
 def design(job_id):
