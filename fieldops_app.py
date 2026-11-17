@@ -1382,7 +1382,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
-<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="asb-link" class="big-btn" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/asbuilt'">As-built PDF and client sign-off</a>{% if office %}<a id="share-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/share'">Share view-only link</a>{% endif %}<a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
+<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="asb-link" class="big-btn" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/asbuilt'">As-built PDF and client sign-off</a>{% if office %}<a id="sys-job-link" class="big-btn gray" href="/" onclick="this.href='/systems?client='+encodeURIComponent(currentJob.customer||'')+'&site='+encodeURIComponent(currentJob.address||'')">Installed systems at this site</a><a id="share-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/share'">Share view-only link</a>{% endif %}<a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
 <div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
@@ -1954,7 +1954,7 @@ const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'applicat
 if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
 ['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';location.href='/?job='+encodeURIComponent(body.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 {const td=document.getElementById('today-date');if(td)td.textContent=new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})}
-if(VIEW==='new'){tplOpts();quickFill();const qt=new URLSearchParams(location.search).get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()}else load();
+if(VIEW==='new'){tplOpts();quickFill();const QS=new URLSearchParams(location.search);['customer','address'].forEach(k=>{const v=QS.get(k);if(v)document.getElementById('n-'+k).value=v});const qt=QS.get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()}else load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
 
@@ -2744,7 +2744,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <div class="job">{% if info.address %}<div>{{ info.address }}</div>{% endif %}{% if info.phone %}<div><a href="tel:{{ info.phone }}">{{ info.phone }}</a></div>{% endif %}
 <div class="muted" style="margin-top:4px">{{ active|length }} active &middot; {{ done|length + surveys|length }} completed</div>
 <div style="margin-top:4px;font-weight:600">Total: {{ (jobs|sum(attribute='hours'))|round(2) }} hrs</div></div>
-<a class="btn" href="/print/client?name={{ client|urlencode }}" target="_blank">Print Summary</a>
+{% if office %}<a class="btn" id="sys-link" href="/systems?client={{ client|urlencode }}">Installed systems and open issues</a>{% endif %}<a class="btn" href="/print/client?name={{ client|urlencode }}" target="_blank">Print Summary</a>
 {% if office %}<form method="post" action="/clients/delete" onsubmit="return confirm('Delete this client and ALL of its jobs, photos and notes? This cannot be undone.')"><input type="hidden" name="name" value="{{ client }}"><button class="btn" type="submit" style="width:100%;border:0;background:#b00020;color:#fff;font-size:1rem">Delete Client</button></form>{% endif %}
 <div class="folder">Active Jobs</div>{% for j in active %}{{ jobcard(j, true) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
 <div class="folder">Completed Surveys</div>{% for j in surveys %}{{ jobcard(j, false) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
@@ -6216,6 +6216,85 @@ def share_file(token, fn):
     fn=secure_filename(fn); ok=fn in set(plan_files(conn,row['id'])); conn.close()
     if not ok: return ('',404)
     return sl_headers(send_from_directory(app.config['UPLOAD_FOLDER'], fn))
+
+# ---------------- Installed systems per customer and site (office only) ----------------
+def sys_day(iso):
+    d=utc_day(iso) if iso and 'T' in str(iso) else str(iso or '')[:10]
+    try: return datetime.fromisoformat(d).strftime('%b %-d, %Y')
+    except Exception: return d or '-'
+def sys_sites(conn, client):
+    jobs=[r for r in conn.execute("SELECT * FROM jobs WHERE LOWER(TRIM(customer))=? AND IFNULL(job_type,'')!='Office Task'",(ckey(client),)).fetchall()]
+    eq=conn.execute('SELECT * FROM equipment WHERE LOWER(TRIM(client))=? ORDER BY device',(ckey(client),)).fetchall()
+    sites={}
+    def site(addr):
+        k=ckey(addr) or '-'
+        return sites.setdefault(k,{'addr':(addr or '').strip(),'jobs':[],'eq':[],'devs':[],'svc':None,'inst':None,'issues':[]})
+    for r in jobs: site(r['address'])['jobs'].append(r)
+    for e in eq:
+        k=ckey(e['site'])
+        if k not in sites and e['job_id']:
+            jr=next((j for j in jobs if j['id']==e['job_id']),None)
+            if jr: k=ckey(jr['address']) or '-'
+        site(e['site'] if k not in sites else sites[k]['addr'] or e['site'])['eq'].append(e)
+    colors={n:c for n,p,c in DEVICE_TYPES}
+    for s in sites.values():
+        for r in sorted(s['jobs'],key=lambda r:r['completed_at'] or r['created_at'] or ''):
+            info=plan_info(conn,r['id']); names={p['fn']:p['name'] for p in info}
+            inst=[d for d in parse_devices(r['survey_devices']) if d['plan'] in names and d.get('installed')]
+            if inst and r['job_type']!='Survey': s['devs'].append({'job':r,'devs':inst,'names':names,'color':colors})
+            done=r['status']=='completed'; svc=work_type(r)=='Service'
+            if done and svc and (not s['svc'] or (r['completed_at'] or '')>(s['svc']['completed_at'] or '')): s['svc']=r
+            if done and not svc and r['job_type']!='Survey' and (not s['inst'] or (r['completed_at'] or '')>(s['inst']['completed_at'] or '')): s['inst']=r
+            if not done and svc: s['issues'].append(('Open service call',r,h(r['title'] or '')+(' &middot; '+h(r['scope'][:120]) if r['scope'] else '')))
+            if r['help_flag'] and not done: s['issues'].append(('Tech needs help',r,h(r['help_note'] or '')))
+            open_p=[t['text'] for t in parse_ticks(r['punch_list']) if not t['done']]
+            if open_p and r['job_type']!='Survey': s['issues'].append(('%d open punch item%s'%(len(open_p),'' if len(open_p)==1 else 's'),r,'<br>'.join(h(x) for x in open_p[:5])))
+    return sorted(sites.values(),key=lambda s:(s['addr']=='',s['addr'].lower()))
+
+SYS_CSS='''<style>.sys{border:2px solid #e5e5e5;border-radius:14px;padding:12px;margin:12px 0}.sys h3{margin:0 0 4px;font-size:1.15rem}.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:8px 0}.kv span:nth-child(odd){color:#666}
+.cnt{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.cnt span{display:inline-flex;align-items:center;gap:6px;border:1px solid #eee;border-radius:999px;padding:4px 10px 4px 4px;font-weight:700}
+.iss{border-left:5px solid #c62828;background:#fff7f7;border-radius:8px;padding:10px;margin:6px 0}.iss a{font-weight:700}.ok{border-left:5px solid #2e7d32;background:#f3faf3;border-radius:8px;padding:10px;margin:6px 0}
+table.dv{width:100%;border-collapse:collapse;font-size:.92rem}table.dv td,table.dv th{padding:7px 4px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}table.dv th{color:#666;font-weight:600}
+details.sj{border:1px solid #e5e5e5;border-radius:12px;margin:8px 0;padding:0 10px}details.sj summary{min-height:48px;display:flex;align-items:center;font-weight:700;cursor:pointer}.lk{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.lk a{flex:1 1 140px;margin:0}</style>'''
+@app.route('/systems')
+def systems_page():
+    if not is_office(): return redirect('/')
+    client=(request.args.get('client') or '').strip(); only=ckey(request.args.get('site') or '')
+    if not client: return redirect('/clients')
+    conn=get_db(); sites=sys_sites(conn, client); conn.close()
+    if only: sites=[s for s in sites if ckey(s['addr'])==only] or sites
+    body=SYS_CSS+'<div class="muted">Devices marked installed on job plans, plus equipment records. No prices.</div>'
+    if only: body+='<a class="big-btn gray" href="/systems?client=%s">Show all sites for %s</a>'%(h(urllib.parse.quote(client)),h(client))
+    if not sites: body+='<div class="card">No jobs for this client yet.</div>'
+    for s in sites:
+        ndev=sum(len(x['devs']) for x in s['devs'])
+        cnt={}
+        for x in s['devs']:
+            for d in x['devs']: cnt[d['type']]=cnt.get(d['type'],0)+1
+        colors={n:c for n,p,c in DEVICE_TYPES}
+        body+='<div class="sys"><h3>%s</h3>'%h(s['addr'] or 'No address on file')
+        body+='<div class="kv"><span>Installed devices</span><span><b>%d</b>%s</span><span>Last install</span><span>%s</span><span>Last service</span><span>%s</span><span>Jobs here</span><span>%d</span></div>'%(ndev,
+            (' + %d equipment record%s'%(len(s['eq']),'' if len(s['eq'])==1 else 's')) if s['eq'] else '',
+            ('<a href="/?job=%s">%s</a> %s'%(h(urllib.parse.quote(s['inst']['id'])),h(s['inst']['id']),sys_day(s['inst']['completed_at']))) if s['inst'] else 'None yet',
+            ('<a href="/?job=%s">%s</a> %s'%(h(urllib.parse.quote(s['svc']['id'])),h(s['svc']['id']),sys_day(s['svc']['completed_at']))) if s['svc'] else 'No service visits yet',len(s['jobs']))
+        if cnt: body+='<div class="cnt">'+''.join('<span>%s%s %d</span>'%(dev_icon(t,colors[t],True,26),h(t),cnt[t]) for t,_,_ in DEVICE_TYPES if t in cnt)+'</div>'
+        body+='<h2>Open troubles and issues</h2>'
+        if s['issues']:
+            for lab,r,txt in s['issues']:
+                body+='<div class="iss"><div><b>%s</b> &middot; <a href="/?job=%s">%s</a></div><div class="muted">%s</div></div>'%(h(lab),h(urllib.parse.quote(r['id'])),h(r['id']),txt)
+        else: body+='<div class="ok">Nothing open at this site.</div>'
+        body+='<a class="big-btn gray" href="/new-job?%s">+ New service call here</a>'%h(urllib.parse.urlencode({'t':'Service','customer':client,'address':s['addr']}))
+        body+='<h2>Installed by job</h2>'
+        if not s['devs']: body+='<div class="muted">No devices marked installed on a plan yet.</div>'
+        for x in reversed(s['devs']):
+            r=x['job']; q=urllib.parse.quote(r['id'])
+            body+='<details class="sj"><summary>%s &middot; %d device%s &middot; %s</summary>'%(h(r['id']),len(x['devs']),'' if len(x['devs'])==1 else 's',h(sys_day(r['completed_at']) if r['completed_at'] else 'In progress'))
+            body+='<div class="muted">%s</div><div class="lk"><a class="big-btn" href="/?job=%s">Open job</a><a class="big-btn gray" href="/design/%s">Open plan</a><a class="big-btn gray" target="_blank" href="/job/%s/asbuilt.pdf">As-built PDF</a></div>'%(h(r['title'] or ''),h(q),h(q),h(q))
+            body+='<table class="dv"><tr><th>Device</th><th>Type</th><th>Floor</th><th>Part #</th></tr>'+''.join('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'%(h(d.get('label') or '-'),h(d['type']),h(x['names'].get(d['plan'],'')),h(d.get('part') or '-')) for d in x['devs'])+'</table></details>'
+        if s['eq']:
+            body+='<h2>Equipment records</h2><table class="dv"><tr><th>Device</th><th>Model</th><th>Installed</th><th>Warranty</th></tr>'+''.join('<tr><td><a href="/equipment/%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>'%(e['id'],h(e['device'] or '-'),h(e['model'] or '-'),h(e['install_date'] or '-'),h(e['warranty_end'] or '-')) for e in s['eq'])+'</table>'
+        body+='</div>'
+    return ops_page('Installed systems: '+client, body, back='/clients?name='+urllib.parse.quote(client))
 
 @app.route('/design/<job_id>')
 def design(job_id):
