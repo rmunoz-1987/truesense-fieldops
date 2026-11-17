@@ -2,3 +2,4 @@ flask
 gunicorn
 tzdata
 pywebpush
+pymupdf

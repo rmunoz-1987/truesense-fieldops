@@ -585,7 +585,7 @@ def theme_of(user):
         return 'dark' if r and r['value']=='dark' else 'light'
     except Exception: return 'light'
 
-SHELL_SKIP = ('/hub/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
+SHELL_SKIP = ('/design/','/hub/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
 def apply_shell(html, path):
     if 'id="shell-css"' in html or not me() or not is_office() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
     office=True; top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
@@ -1271,7 +1271,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
 <div class="ptitle" style="font-size:1.2rem">3. Site Conditions</div><textarea id="sv-site_conditions" rows="5" style="font-size:1.1rem" placeholder="Current system, power, network, conduit, and obstacles like lift, concrete, long runs, access (tap the mic to talk)"></textarea>
-<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
+<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div>
 <div id="plans"></div>
@@ -2043,6 +2043,7 @@ def get_job(job_id):
         extra=hub_info(job_id,n,c); extra['labor']=job_labor(conn,row)
     extra['clock']=clock_state(conn, job_id); extra['steps']=job_steps(conn, row); extra['flow']=flow_state(conn, row)
     conn.close()
+    conn=get_db(); extra['plan_info']=plan_info(conn, job_id); conn.close()
     return jsonify(dict(job_dict(row),photos=photos,blueprints=bps,plans=plans,survey_plan_sources=srcs,**extra))
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
@@ -2242,7 +2243,9 @@ def upload_plans(job_id):
     for f,e in zip(files,exts):
         fn=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{e}")
         f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        nm=pm_next_name(conn, job_id)
         conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,fn,'plan',now,os.path.basename(f.filename)[:200]))
+        pm_add(conn, job_id, fn, nm, os.path.basename(f.filename)[:200])
     conn.commit(); plans=plan_files(conn, job_id); conn.close()
     return jsonify({'ok':True,'plans':plans})
 
@@ -2252,7 +2255,7 @@ def delete_plan(job_id):
     if err: conn.close(); return err
     fn=secure_filename(str((request.get_json(silent=True) or {}).get('filename') or ''))
     if not fn or fn not in plan_files(conn, job_id): conn.close(); return ('',404)
-    conn.execute("DELETE FROM photos WHERE job_id=? AND filename=? AND photo_type='plan'",(job_id,fn))
+    conn.execute("DELETE FROM photos WHERE job_id=? AND filename=? AND photo_type='plan'",(job_id,fn)); conn.execute('DELETE FROM plan_meta WHERE filename=?',(fn,))
     devs=[d for d in parse_devices(row['survey_devices']) if d['plan']!=fn]
     conn.execute('UPDATE jobs SET survey_devices=? WHERE id=?',(json.dumps(devs),job_id)); prune_devphotos(conn, job_id, devs); conn.commit()
     try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],fn))
@@ -2365,7 +2368,7 @@ def copy_plans(conn, src_id, job_id, devs):
         nf=secure_filename(f"{job_id}_plan_{uuid.uuid4().hex[:8]}{os.path.splitext(fn)[1]}")
         try: shutil.copyfile(os.path.join(app.config['UPLOAD_FOLDER'],fn),os.path.join(app.config['UPLOAD_FOLDER'],nf))
         except OSError: continue
-        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,nf,'plan',now,'From survey '+src_id)); mp[fn]=nf
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,nf,'plan',now,'From survey '+src_id)); pm_copy(conn, fn, nf, job_id); mp[fn]=nf
     if not mp: return None
     for d in parse_devices(src['survey_devices']):
         if d['plan'] in mp: devs.append(dict(d,id='',plan=mp[d['plan']],installed=False,mac='',ip='',port='',clabel='',photo=''))
@@ -5030,6 +5033,300 @@ def mr_api_summary(rid):
     conn.execute('UPDATE material_requests SET summary_at=?,updated_at=? WHERE id=?',(now,now,rid)); conn.commit(); conn.close()
     return jsonify({'ok':True,'id':rid,'saved':[k for k,v in (('summary',s),('email_draft',e)) if v],'note':'Saved as draft text. The app never sends email.'})
 
+
+# ---------- Plan designer: plans, PDF pages, names, scale ----------
+PLAN_PDF_DIR = os.path.join(app.config['UPLOAD_FOLDER'], 'pdftmp')
+PLAN_PX = 4000  # long side of a plan rendered from a PDF page
+def pm_init():
+    conn=get_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS plan_meta (filename TEXT PRIMARY KEY, job_id TEXT, name TEXT, scale TEXT, src TEXT, created_at TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_plan_meta_job ON plan_meta(job_id)'); conn.commit(); conn.close()
+pm_init()
+def pm_scale(raw):
+    try: s=json.loads(raw) if isinstance(raw,str) else raw
+    except Exception: return None
+    if not isinstance(s,dict): return None
+    try:
+        v={k:min(100.0,max(0.0,float(s[k]))) for k in ('ax','ay','bx','by')}; ft=float(s['ft'])
+    except (KeyError,TypeError,ValueError): return None
+    if not (0<ft<=100000) or (v['ax'],v['ay'])==(v['bx'],v['by']): return None
+    v['ft']=round(ft,3); return v
+def pm_ppf(fn, s):
+    if not s: return None
+    W,H=img_size(fn); px=math.hypot((s['bx']-s['ax'])/100*W,(s['by']-s['ay'])/100*H)
+    return round(px/s['ft'],5) if px>0 else None
+def plan_info(conn, job_id):
+    meta={r['filename']:r for r in conn.execute('SELECT * FROM plan_meta WHERE job_id=?',(job_id,))}
+    out=[]
+    for i,fn in enumerate(plan_files(conn, job_id)):
+        m=meta.get(fn); s=pm_scale(m['scale']) if m else None; W,H=img_size(fn)
+        out.append({'fn':fn,'name':(m['name'] if m and m['name'] else 'Floor %d'%(i+1)),'scale':s,'ppf':pm_ppf(fn,s),'w':W,'h':H,'src':(m['src'] if m else '') or ''})
+    return out
+def plan_scale_of(fn):
+    try:
+        c=get_db(); r=c.execute('SELECT scale FROM plan_meta WHERE filename=?',(fn,)).fetchone(); c.close()
+        s=pm_scale(r['scale']) if r else None; return s, pm_ppf(fn, s)
+    except Exception: return None, None
+def pm_add(conn, job_id, fn, name, src=''):
+    conn.execute('INSERT OR REPLACE INTO plan_meta (filename,job_id,name,scale,src,created_at) VALUES (?,?,?,?,?,?)',(fn,job_id,name[:60],None,src[:200],datetime.utcnow().isoformat()))
+def pm_next_name(conn, job_id): return 'Floor %d'%(len(plan_files(conn, job_id))+1)
+def pm_copy(conn, src_fn, new_fn, job_id):
+    m=conn.execute('SELECT * FROM plan_meta WHERE filename=?',(src_fn,)).fetchone()
+    if m: conn.execute('INSERT OR REPLACE INTO plan_meta (filename,job_id,name,scale,src,created_at) VALUES (?,?,?,?,?,?)',(new_fn,job_id,m['name'],m['scale'],m['src'],datetime.utcnow().isoformat()))
+def pdf_tmp_clean():
+    try:
+        os.makedirs(PLAN_PDF_DIR, exist_ok=True); cut=time.time()-86400
+        for f in os.listdir(PLAN_PDF_DIR):
+            p=os.path.join(PLAN_PDF_DIR,f)
+            if os.path.getmtime(p)<cut: os.remove(p)
+    except OSError: pass
+def pdf_tok_ok(job_id, tok): return bool(re.fullmatch(re.escape(secure_filename(job_id))+r'_[0-9a-f]{12}', tok or ''))
+
+@app.route('/api/jobs/<job_id>/plans/pdf', methods=['POST'])
+def plan_pdf_upload(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id); conn.close()
+    if err: return err
+    f=request.files.get('file')
+    if not (f and f.filename): return jsonify({'error':'no file'}),400
+    data=f.read()
+    if not data.startswith(b'%PDF'): return jsonify({'error':'That file is not a PDF'}),400
+    try: import pymupdf
+    except ImportError: return jsonify({'error':'PDF support is not installed on the server'}),503
+    pdf_tmp_clean(); tok='%s_%s'%(secure_filename(job_id),uuid.uuid4().hex[:12]); path=os.path.join(PLAN_PDF_DIR,tok+'.pdf')
+    with open(path,'wb') as o: o.write(data)
+    try:
+        doc=pymupdf.open(path); n=doc.page_count
+        if doc.needs_pass: doc.close(); os.remove(path); return jsonify({'error':'That PDF has a password. Save it without one and try again.'}),400
+        for i in range(min(n,60)):
+            pg=doc[i]; z=360/max(pg.rect.width,pg.rect.height); pg.get_pixmap(matrix=pymupdf.Matrix(z,z),alpha=False).save(os.path.join(PLAN_PDF_DIR,'%s_%d.png'%(tok,i)))
+        doc.close()
+    except Exception as e:
+        app.logger.warning('PDF plan failed %s: %s', job_id, e); return jsonify({'error':'Could not read that PDF'}),400
+    return jsonify({'ok':True,'token':tok,'pages':n,'shown':min(n,60),'name':os.path.basename(f.filename)[:120]})
+
+@app.route('/api/jobs/<job_id>/plans/pdf/<tok>/<int:i>.png')
+def plan_pdf_thumb(job_id, tok, i):
+    conn=get_db(); row,err=own_job(conn, job_id); conn.close()
+    if err: return err
+    if not pdf_tok_ok(job_id, tok): return ('',404)
+    return send_from_directory(PLAN_PDF_DIR, '%s_%d.png'%(tok,i), max_age=600)
+
+@app.route('/api/jobs/<job_id>/plans/pdf/<tok>/add', methods=['POST'])
+def plan_pdf_add(job_id, tok):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    path=os.path.join(PLAN_PDF_DIR,tok+'.pdf')
+    if not pdf_tok_ok(job_id, tok) or not os.path.exists(path): conn.close(); return jsonify({'error':'That upload expired. Pick the PDF again.'}),400
+    d=request.get_json(silent=True) or {}; pages=[]
+    for p in (d.get('pages') or [])[:20]:
+        try: pages.append(int(p))
+        except (TypeError,ValueError): pass
+    import pymupdf
+    doc=pymupdf.open(path); pages=[p for p in dict.fromkeys(pages) if 0<=p<doc.page_count]
+    if not pages: doc.close(); conn.close(); return jsonify({'error':'Pick at least one page'}),400
+    now=datetime.utcnow().isoformat(); src=str(d.get('name') or 'PDF')[:120]; added=[]
+    for p in pages:
+        pg=doc[p]; z=min(300/72, PLAN_PX/max(pg.rect.width,pg.rect.height))
+        fn=secure_filename('%s_plan_%s.png'%(job_id,uuid.uuid4().hex[:8]))
+        pg.get_pixmap(matrix=pymupdf.Matrix(z,z),alpha=False).save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+        name=pm_next_name(conn, job_id)
+        conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(job_id,fn,'plan',now,('%s page %d'%(src,p+1))[:200]))
+        pm_add(conn, job_id, fn, name, '%s page %d'%(src,p+1)); added.append(fn)
+    doc.close(); conn.commit(); info=plan_info(conn, job_id); conn.close()
+    return jsonify({'ok':True,'added':added,'plans':[x['fn'] for x in info],'plan_info':info})
+
+@app.route('/api/jobs/<job_id>/plans/meta', methods=['POST'])
+def plan_meta_save(job_id):
+    conn=get_db(); row,err=survey_edit_row(conn, job_id)
+    if err: conn.close(); return err
+    d=request.get_json(silent=True) or {}; fn=secure_filename(str(d.get('filename') or ''))
+    info={x['fn']:x for x in plan_info(conn, job_id)}
+    if fn not in info: conn.close(); return ('',404)
+    if not conn.execute('SELECT 1 FROM plan_meta WHERE filename=?',(fn,)).fetchone(): pm_add(conn, job_id, fn, info[fn]['name'])
+    if 'name' in d:
+        nm=' '.join(str(d.get('name') or '').split())[:60]
+        if nm: conn.execute('UPDATE plan_meta SET name=? WHERE filename=?',(nm,fn))
+    if 'scale' in d:
+        s=pm_scale(d.get('scale')) if d.get('scale') else None
+        if d.get('scale') and not s: conn.close(); return jsonify({'error':'Tap two different points and enter feet above 0'}),400
+        conn.execute('UPDATE plan_meta SET scale=? WHERE filename=?',(json.dumps(s) if s else None,fn))
+    conn.commit(); out=plan_info(conn, job_id); conn.close()
+    return jsonify({'ok':True,'plan_info':out})
+
+def design_can_edit(row):
+    if row['job_type']=='Office Task': return False
+    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): return False
+    return True
+
+DESIGN_CSS = r'''<style>
+*{box-sizing:border-box}html,body{margin:0;background:#fff;color:#111;font-family:Inter,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+.hidden{display:none!important}
+.pd-top{display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #ecebe4;background:#fff;position:sticky;top:0;z-index:6;overflow-x:auto;scrollbar-width:none}
+.pd-top::-webkit-scrollbar{display:none}
+.pd-btn{min-height:44px;min-width:44px;padding:0 14px;border:1px solid #e3e2d8;border-radius:12px;background:#fff;font-weight:600;font-size:15px;line-height:1;font-family:inherit;color:#111;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;white-space:nowrap;flex:none}
+.pd-btn:active{transform:scale(.97)}.pd-btn.on,.pd-btn.gold{background:#a49f2a;border-color:#a49f2a;color:#fff}.pd-btn.red{color:#b00020;border-color:#f1c9cf}
+.pd-btn[disabled]{opacity:.35;cursor:default}
+.pd-title{font-weight:800;font-size:16px;white-space:nowrap;padding:0 4px}
+.pd-tabs{display:flex;gap:6px}
+.pd-main{display:flex;flex-direction:column}
+.pd-view{position:relative;height:58vh;min-height:320px;background:#f4f4ef;overflow:hidden;border-bottom:1px solid #ecebe4;touch-action:none}
+#pd-svg{width:100%;height:100%;display:block;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+#pd-svg.place{cursor:crosshair}
+.pd-scale{position:absolute;left:10px;bottom:10px;background:rgba(255,255,255,.94);border:1px solid #e3e2d8;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;pointer-events:none}
+.pd-scale i{display:block;height:8px;border:1.5px solid #111;background:repeating-linear-gradient(90deg,#111 0 25%,#fff 25% 50%)}
+.pd-zoom{position:absolute;right:10px;bottom:10px;display:flex;flex-direction:column;gap:8px}
+.pd-zoom .pd-btn{background:rgba(255,255,255,.96);font-size:22px;padding:0}
+.pd-hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:#111;color:#fff;border-radius:12px;padding:10px 14px;font-weight:700;font-size:14px;pointer-events:none;max-width:92%;text-align:center}
+.pd-empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px;color:#555}
+.pd-side{padding:10px 12px 40px}
+.pd-card{border:1px solid #ecebe4;border-radius:14px;padding:12px;margin:0 0 10px;background:#fff}
+.pd-card h3{margin:0 0 8px;font-size:16px}
+.pd-row{display:flex;gap:8px;flex-wrap:wrap}.pd-row>.pd-btn{flex:1 1 auto}
+.pd-in{width:100%;min-height:44px;padding:10px 12px;border:1px solid #d9d8ce;border-radius:10px;font-size:16px;font-family:inherit;margin:4px 0 8px}
+label.pd-l{display:block;font-weight:600;font-size:14px;margin-top:4px}
+.pd-muted{color:#666;font-size:13px}
+.pd-leg{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0efe8;font-size:15px}.pd-leg b{margin-left:auto}
+.pd-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.pd-sheet{background:#fff;border-radius:18px 18px 0 0;width:100%;max-width:820px;max-height:88vh;overflow:auto;padding:14px}
+@media(min-width:700px){.pd-modal{align-items:center}.pd-sheet{border-radius:18px}}
+.pd-pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:10px 0}
+.pd-page{border:2px solid #e3e2d8;border-radius:12px;padding:6px;background:#fff;cursor:pointer;text-align:center;font-weight:600;font-size:14px;font-family:inherit}
+.pd-page img{width:100%;height:120px;object-fit:contain;background:#f6f6f2;border-radius:8px;display:block;margin-bottom:4px}
+.pd-page.on{border-color:#a49f2a;box-shadow:0 0 0 3px rgba(164,159,42,.25)}
+@media(min-width:900px){.pd-main{flex-direction:row}.pd-view{flex:1;height:calc(100vh - 61px);border-bottom:0}.pd-side{width:380px;flex:none;height:calc(100vh - 61px);overflow:auto;border-left:1px solid #ecebe4}}
+</style>'''
+
+DESIGN_BODY = r'''<div class="pd-top"><a class="pd-btn" href="__BACK__">&larr; Job</a><span class="pd-title">__TITLE__</span><div class="pd-tabs" id="pd-tabs"></div><span id="pd-topx"></span></div>
+<div class="pd-main"><div class="pd-view" id="pd-view"><svg id="pd-svg" xmlns="http://www.w3.org/2000/svg"><image id="pd-img" x="0" y="0" preserveAspectRatio="none"/><g id="pd-ov"></g></svg>
+<div class="pd-empty hidden" id="pd-empty"><div style="font-size:18px;font-weight:700">No floor plan yet</div><div>Add a photo, image or PDF of the floor plan.</div><button class="pd-btn gold edit-only" onclick="pickFile()">+ Add Floor Plan</button></div>
+<div class="pd-hint hidden" id="pd-hint"></div><div class="pd-scale hidden" id="pd-scale"></div>
+<div class="pd-zoom"><button class="pd-btn" aria-label="Zoom in" onclick="zoomBtn(1/1.3)">+</button><button class="pd-btn" aria-label="Zoom out" onclick="zoomBtn(1.3)">&minus;</button><button class="pd-btn" style="font-size:13px" onclick="fit();draw()">Fit</button></div></div>
+<div class="pd-side" id="pd-side">
+<div id="pd-x1"></div>
+<div class="pd-card hidden" id="pd-sc"><h3>Set scale</h3><div class="pd-muted">Real distance between the two points you tapped</div><label class="pd-l" for="pd-ft">Feet</label><input class="pd-in" id="pd-ft" type="number" inputmode="decimal" min="0.1" step="any" placeholder="e.g. 20"><div class="pd-row"><button class="pd-btn gold" onclick="scaleSave()">Save scale</button><button class="pd-btn" onclick="scaleCancel()">Cancel</button></div></div>
+<div class="pd-card" id="pd-plancard"><h3 id="pd-pname">Plan</h3><div class="pd-muted" id="pd-pinfo"></div><div class="pd-row edit-only" style="margin-top:8px"><button class="pd-btn" onclick="scaleStart()">Set scale</button><button class="pd-btn" onclick="renamePlan()">Rename</button><button class="pd-btn" onclick="pickFile()">+ Add plan</button><button class="pd-btn red" onclick="removePlan()">Remove</button></div>
+<div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-cov" onclick="covToggle()">Coverage: On</button><span id="pd-x2"></span></div></div>
+<div class="pd-card" id="pd-legend"></div></div></div>
+<input type="file" id="pd-file" accept="image/*,.pdf,application/pdf" multiple style="display:none" onchange="upload(this)">
+<div class="pd-modal hidden" id="pd-pdf"><div class="pd-sheet"><h3 style="margin:0">Pick the pages to add</h3><div class="pd-muted" id="pd-pdfinfo"></div><div class="pd-pages" id="pd-pages"></div><div class="pd-row"><button class="pd-btn gold" id="pd-pdfadd" onclick="pdfAdd()">Add pages</button><button class="pd-btn" onclick="pdfClose()">Cancel</button></div></div></div>
+<div class="pd-modal hidden" id="pd-busy"><div class="pd-sheet" style="text-align:center;font-weight:700" id="pd-busytxt">Working...</div></div>'''
+
+DESIGN_JS_CORE = r'''
+const D=JSON.parse(document.getElementById('pd-data').textContent);
+const JID=D.job.id,API='/api/jobs/'+encodeURIComponent(JID),EDIT=D.edit;
+let P=D.plans,DEV=D.devices,cur=0,vb=null,sel=null,tool='',scaleMode=0,scalePts=[];
+const $=id=>document.getElementById(id),svg=$('pd-svg');
+const TYPES=D.types,SYM=D.sym,CAM_DEF=D.camdef,CAM_RANGE=D.camrange;
+function esc(v){const d=document.createElement('div');d.textContent=v==null?'':String(v);return d.innerHTML}
+function plan(){return P[cur]}
+function col(t){const d=TYPES.find(x=>x[0]===t);return d?d[2]:'#333'}
+function pre(t){const d=TYPES.find(x=>x[0]===t);return d?d[1]:'?'}
+function symG(t,x,y,s,solid){const c=col(t),u=s/24;return '<g transform="translate('+(x-s/2)+' '+(y-s/2)+') scale('+u+')"><circle cx="12" cy="12" r="11" fill="'+(solid===false?'#fff':c)+'" stroke="#fff" stroke-width="1.6"/><g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="'+(solid===false?c:'#fff')+'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+(SYM[t]||'<circle cx="12" cy="12" r="3"/>')+'</g></g>'}
+function symHtml(t,size){return '<svg viewBox="0 0 24 24" width="'+size+'" height="'+size+'" aria-hidden="true">'+symG(t,12,12,24)+'</svg>'}
+function covOn(){return localStorage.getItem('fo_cov')!=='0'}
+function covToggle(){localStorage.setItem('fo_cov',covOn()?'0':'1');draw();side()}
+function camView(d){return {dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE}}
+function rangePct(d){return camView(d).range}
+function conePath(cx,cy,r,dir,fov){if(fov>=360)return 'M'+cx+' '+cy+'m-'+r+' 0a'+r+' '+r+' 0 1 0 '+2*r+' 0a'+r+' '+r+' 0 1 0 -'+2*r+' 0z';const a1=(dir-fov/2)*Math.PI/180,a2=(dir+fov/2)*Math.PI/180;
+return 'M'+cx+' '+cy+'L'+(cx+r*Math.sin(a1)).toFixed(1)+' '+(cy-r*Math.cos(a1)).toFixed(1)+'A'+r+' '+r+' 0 '+(fov>180?1:0)+' 1 '+(cx+r*Math.sin(a2)).toFixed(1)+' '+(cy-r*Math.cos(a2)).toFixed(1)+'Z'}
+function box(){return svg.getBoundingClientRect()}
+function fit(){const p=plan();if(!p)return;const r=box(),a=(r.height||1)/(r.width||1),W=p.w*1.06,H=p.h*1.06;
+if(W*a>=H)vb={w:W,h:W*a};else vb={h:H,w:H/a};vb.x=(p.w-vb.w)/2;vb.y=(p.h-vb.h)/2}
+function toPlan(e){const r=box();return {x:vb.x+(e.clientX-r.left)/r.width*vb.w,y:vb.y+(e.clientY-r.top)/r.height*vb.h}}
+function clampZoom(){const p=plan(),r=box(),a=r.height/r.width,maxW=Math.max(p.w,p.h/a)*3,minW=Math.max(p.w,p.h)/30;if(vb.w>maxW){vb.h*=maxW/vb.w;vb.w=maxW}if(vb.w<minW){vb.h*=minW/vb.w;vb.w=minW}}
+function zoomAt(f,cx,cy){if(!vb)return;const r=box(),px=vb.x+(cx-r.left)/r.width*vb.w,py=vb.y+(cy-r.top)/r.height*vb.h;vb.w*=f;vb.h*=f;clampZoom();vb.x=px-(cx-r.left)/r.width*vb.w;vb.y=py-(cy-r.top)/r.height*vb.h;draw()}
+function zoomBtn(f){const r=box();zoomAt(f,r.left+r.width/2,r.top+r.height/2)}
+function k(){return vb.w/(box().width||1)}
+function planDevs(){const p=plan();return p?DEV.filter(d=>d.plan===p.fn):[]}
+function draw(){const p=plan();$('pd-empty').classList.toggle('hidden',!!p);const img=$('pd-img'),ov=$('pd-ov');
+if(!p){img.removeAttribute('href');ov.innerHTML='';svg.removeAttribute('viewBox');$('pd-scale').classList.add('hidden');hint();return}
+const href='/uploads/'+encodeURIComponent(p.fn);if(img.getAttribute('href')!==href){img.setAttribute('href',href)}img.setAttribute('width',p.w);img.setAttribute('height',p.h);
+if(!vb)fit();svg.setAttribute('viewBox',vb.x+' '+vb.y+' '+vb.w+' '+vb.h);const K=k(),s=34*K,W=p.w,H=p.h;let h='';
+if(covOn())planDevs().filter(d=>CAM_DEF[d.type]).forEach(d=>{const v=camView(d),c=col(d.type);h+='<path d="'+conePath(d.x*W/100,d.y*H/100,rangePct(d)*W/100,v.dir,v.fov)+'" fill="'+c+'" fill-opacity="'+(sel===d.id?.2:.11)+'" stroke="'+c+'" stroke-opacity=".55" stroke-width="1.5" vector-effect="non-scaling-stroke"'+(d.type==='PTZ Cam'?' stroke-dasharray="6 4"':'')+' pointer-events="none"/>'});
+planDevs().forEach(d=>{const x=d.x*W/100,y=d.y*H/100,lf=d.x>82;h+='<g data-id="'+esc(d.id)+'" style="cursor:pointer">'+(sel===d.id?'<circle cx="'+x+'" cy="'+y+'" r="'+(s*.78)+'" fill="#a49f2a" fill-opacity=".22" stroke="#a49f2a" stroke-width="2.5" vector-effect="non-scaling-stroke"/>':'')+
+'<circle cx="'+x+'" cy="'+y+'" r="'+(s*.75)+'" fill="transparent"/>'+symG(d.type,x,y,s)+'<text x="'+(lf?x-s*.62:x+s*.62)+'" y="'+y+'" font-size="'+(13*K)+'" font-weight="700" fill="#111" stroke="#fff" stroke-width="'+(3.5*K)+'" paint-order="stroke" dominant-baseline="middle" text-anchor="'+(lf?'end':'start')+'" pointer-events="none">'+esc(d.label||pre(d.type))+'</text></g>'});
+scalePts.forEach((q,i)=>{const x=q.x*W/100,y=q.y*H/100;h+='<circle cx="'+x+'" cy="'+y+'" r="'+(7*K)+'" fill="#d32f2f" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
+if(scalePts.length===2)h+='<line x1="'+scalePts[0].x*W/100+'" y1="'+scalePts[0].y*H/100+'" x2="'+scalePts[1].x*W/100+'" y2="'+scalePts[1].y*H/100+'" stroke="#d32f2f" stroke-width="3" stroke-dasharray="8 5" vector-effect="non-scaling-stroke"/>';
+ov.innerHTML=h;scalebar();hint();svg.classList.toggle('place',!!tool||scaleMode>0)}
+function niceFt(pxFt){const n=[1,2,5,10,20,25,50,100,200,250,500,1000,2000,5000];return n.find(v=>v*pxFt>=64)||n[n.length-1]}
+function scalebar(){const p=plan(),el=$('pd-scale');if(!p){el.classList.add('hidden');return}el.classList.remove('hidden');
+if(!p.ppf){el.innerHTML=EDIT?'Not to scale yet':'Not to scale';return}const pxFt=p.ppf/k(),ft=niceFt(pxFt);el.innerHTML='<i style="width:'+Math.round(ft*pxFt)+'px"></i><span>'+ft+' ft</span>'}
+function hintText(){if(scaleMode===1)return 'Tap the first point of a known distance';if(scaleMode===2)return 'Tap the second point';if(scaleMode===3)return 'Enter the real distance below';return window.PD_HINT?PD_HINT():''}
+function hint(){const t=hintText(),el=$('pd-hint');el.textContent=t;el.classList.toggle('hidden',!t)}
+function tabs(){$('pd-tabs').innerHTML=P.map((p,i)=>'<button class="pd-btn'+(i===cur?' on':'')+'" onclick="go('+i+')">'+esc(p.name)+'</button>').join('')+(EDIT?'<button class="pd-btn" onclick="pickFile()">+ Plan</button>':'')}
+function go(i){cur=i;vb=null;sel=null;scaleCancel(true);render()}
+function legend(){const L=$('pd-legend'),all={},here={};DEV.forEach(d=>all[d.type]=(all[d.type]||0)+1);planDevs().forEach(d=>here[d.type]=(here[d.type]||0)+1);
+const p=plan();if(!DEV.length){L.innerHTML='<h3>Legend</h3><div class="pd-muted">No devices yet</div>';return}
+L.innerHTML='<h3>Legend</h3><div class="pd-muted">'+(p?esc(p.name)+': '+planDevs().length+' &middot; ':'')+'All plans: '+DEV.length+'</div>'+TYPES.filter(t=>all[t[0]]).map(t=>'<div class="pd-leg">'+symHtml(t[0],26)+'<span>'+esc(t[0])+'</span><b>'+(here[t[0]]||0)+(P.length>1?' / '+all[t[0]]:'')+'</b></div>').join('')}
+function side(){const p=plan();$('pd-plancard').classList.toggle('hidden',!p);if(p){$('pd-pname').textContent=p.name;$('pd-pinfo').textContent=(p.ppf?'Scale set: '+p.scale.ft+' ft between two points':'Not to scale yet. Tap Set scale and tap two points of a known distance.')+(p.src?' \u00b7 '+p.src:'')}
+$('pd-cov').textContent='Coverage: '+(covOn()?'On':'Off');legend();if(window.PD_SIDE)PD_SIDE()}
+function render(){tabs();draw();side()}
+// gestures
+const ptr=new Map();let g=null;
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}function mid(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
+svg.addEventListener('pointerdown',e=>{if(!plan())return;svg.setPointerCapture(e.pointerId);ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});
+if(ptr.size===2){const [a,b]=[...ptr.values()];if(g&&g.dev&&g.moved&&window.PD_DRAGEND)PD_DRAGEND(g);g={pinch:true,d0:dist(a,b)||1,m0:mid(a,b),vb0:Object.assign({},vb)};return}
+if(ptr.size>2)return;const t=e.target.closest&&e.target.closest('[data-id]');g={x0:e.clientX,y0:e.clientY,vb0:Object.assign({},vb),dev:t?t.getAttribute('data-id'):null,moved:false}});
+svg.addEventListener('pointermove',e=>{if(!ptr.has(e.pointerId))return;ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});if(!g)return;const r=box();
+if(g.pinch){if(ptr.size<2)return;const [a,b]=[...ptr.values()],m=mid(a,b),f=g.d0/(dist(a,b)||1),px=g.vb0.x+(g.m0.x-r.left)/r.width*g.vb0.w,py=g.vb0.y+(g.m0.y-r.top)/r.height*g.vb0.h;
+vb.w=g.vb0.w*f;vb.h=g.vb0.h*f;clampZoom();vb.x=px-(m.x-r.left)/r.width*vb.w;vb.y=py-(m.y-r.top)/r.height*vb.h;draw();return}
+const dx=e.clientX-g.x0,dy=e.clientY-g.y0;if(!g.moved&&Math.hypot(dx,dy)>6){g.moved=true;if(g.dev&&window.PD_DRAGSTART&&!scaleMode)PD_DRAGSTART(g)}
+if(!g.moved)return;if(g.drag&&window.PD_DRAG){PD_DRAG(g,e);return}vb.x=g.vb0.x-dx/r.width*vb.w;vb.y=g.vb0.y-dy/r.height*vb.h;draw()});
+function up(e){if(!ptr.has(e.pointerId))return;ptr.delete(e.pointerId);if(!g)return;
+if(!g.pinch){if(!g.moved&&e.type==='pointerup')tap(e,g.dev);else if(g.drag&&window.PD_DRAGEND)PD_DRAGEND(g)}
+if(ptr.size===0)g=null;else if(g.pinch&&ptr.size===1){const [a]=[...ptr.values()];g={x0:a.x,y0:a.y,vb0:Object.assign({},vb),dev:null,moved:true}}}
+svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
+svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.15:1/1.15,e.clientX,e.clientY)},{passive:false});
+window.addEventListener('resize',()=>{if(!vb)return;const r=box(),cx=vb.x+vb.w/2,cy=vb.y+vb.h/2;vb.h=vb.w*r.height/r.width;vb.x=cx-vb.w/2;vb.y=cy-vb.h/2;draw()});
+function tap(e,id){const p=plan();if(!p)return;const q=toPlan(e),pc={x:Math.max(0,Math.min(100,q.x/p.w*100)),y:Math.max(0,Math.min(100,q.y/p.h*100))};
+if(scaleMode===1||scaleMode===2){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;scalePts.push(pc);scaleMode++;if(scaleMode===3){$('pd-sc').classList.remove('hidden');$('pd-ft').value='';setTimeout(()=>{$('pd-sc').scrollIntoView({behavior:'smooth',block:'nearest'});$('pd-ft').focus()},50)}draw();return}
+if(window.PD_TAP){PD_TAP(e,id,pc,q);return}}
+// plans
+function busy(t){$('pd-busy').classList.toggle('hidden',!t);if(t)$('pd-busytxt').textContent=t}
+async function reload(){const r=await fetch(API);if(!r.ok)return;const j=await r.json();P=j.plan_info||[];DEV=j.devices||[];if(cur>=P.length)cur=Math.max(0,P.length-1)}
+function pickFile(){if(EDIT)$('pd-file').click()}
+let PDF=null;
+async function upload(inp){const files=[...inp.files];inp.value='';if(!files.length)return;const imgs=files.filter(f=>!/\.pdf$/i.test(f.name)&&f.type!=='application/pdf'),pdfs=files.filter(f=>!imgs.includes(f));const before=P.length;
+if(imgs.length){busy('Uploading plan...');const fd=new FormData();imgs.forEach(f=>fd.append('files',f));const r=await fetch(API+'/plans',{method:'POST',body:fd});busy('');if(!r.ok){const e=await r.json().catch(()=>({}));alert(e.error||'Upload failed');return}await reload();cur=before;vb=null;render()}
+if(pdfs.length){busy('Reading PDF...');const fd=new FormData();fd.append('file',pdfs[0]);const r=await fetch(API+'/plans/pdf',{method:'POST',body:fd});const d=await r.json().catch(()=>({}));busy('');if(!r.ok){alert(d.error||'Could not read that PDF');return}
+PDF={token:d.token,name:d.name,on:new Set([0])};if(d.pages===1){pdfAdd();return}
+$('pd-pdfinfo').textContent=d.name+': '+d.pages+' pages'+(d.pages>d.shown?' (first '+d.shown+' shown)':'')+'. Tap each floor you want.';
+$('pd-pages').innerHTML=Array.from({length:d.shown},(_,i)=>'<button class="pd-page'+(i===0?' on':'')+'" data-i="'+i+'" onclick="pdfPick(this)"><img loading="lazy" src="'+API+'/plans/pdf/'+d.token+'/'+i+'.png" alt="page '+(i+1)+'">Page '+(i+1)+'</button>').join('');pdfBtn();$('pd-pdf').classList.remove('hidden')}}
+function pdfPick(b){const i=+b.dataset.i;if(PDF.on.has(i))PDF.on.delete(i);else PDF.on.add(i);b.classList.toggle('on',PDF.on.has(i));pdfBtn()}
+function pdfBtn(){const n=PDF.on.size;$('pd-pdfadd').textContent=n?'Add '+n+' page'+(n>1?'s':''):'Pick a page';$('pd-pdfadd').disabled=!n}
+function pdfClose(){$('pd-pdf').classList.add('hidden');PDF=null}
+async function pdfAdd(){if(!PDF||!PDF.on.size)return;const before=P.length;$('pd-pdf').classList.add('hidden');busy('Making the plan from the PDF...');
+const r=await fetch(API+'/plans/pdf/'+PDF.token+'/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:[...PDF.on].sort((a,b)=>a-b),name:PDF.name})});const d=await r.json().catch(()=>({}));busy('');PDF=null;
+if(!r.ok){alert(d.error||'Could not add the pages');return}await reload();cur=before;vb=null;render()}
+async function meta(body){const r=await fetch(API+'/plans/meta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({filename:plan().fn},body))});const d=await r.json().catch(()=>({}));if(!r.ok){alert(d.error||'Not saved');return false}P=d.plan_info;return true}
+async function renamePlan(){const p=plan();if(!p)return;const n=prompt('Plan name (for example Floor 1)',p.name);if(n===null||!n.trim())return;if(await meta({name:n.trim()}))render()}
+async function removePlan(){const p=plan();if(!p||!confirm('Remove '+p.name+' and the devices on it?'))return;const r=await fetch(API+'/plans/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:p.fn})});if(!r.ok){alert('Not removed');return}await reload();cur=Math.max(0,cur-1);vb=null;sel=null;render()}
+function scaleStart(){if(!plan())return;sel=null;tool='';scalePts=[];scaleMode=1;if(window.PD_SIDE)PD_SIDE();draw();$('pd-view').scrollIntoView({behavior:'smooth',block:'nearest'})}
+function scaleCancel(quiet){scaleMode=0;scalePts=[];$('pd-sc').classList.add('hidden');if(!quiet)draw()}
+async function scaleSave(){const ft=parseFloat($('pd-ft').value);if(!(ft>0)){alert('Enter the real distance in feet');return}const [a,b]=scalePts;
+if(await meta({scale:{ax:a.x,ay:a.y,bx:b.x,by:b.y,ft:ft}})){scaleCancel(true);render()}}
+document.querySelectorAll('.edit-only').forEach(e=>e.classList.toggle('hidden',!EDIT));
+'''
+DESIGN_JS_INIT = r'''
+render();requestAnimationFrame(()=>{vb=null;draw()});
+'''
+def design_page(row, conn, js_extra='', body_extra=''):
+    data={'job':{'id':row['id'],'title':row['title'] or '','customer':row['customer'] or '','type':row['job_type'] or ''},
+          'plans':plan_info(conn, row['id']),'devices':parse_devices(row['survey_devices']),'types':DEVICE_TYPES,'sym':DEV_SYM,'camdef':CAM_DEF,'camrange':CAM_RANGE,
+          'edit':design_can_edit(row),'office':is_office()}
+    data.update(design_data_extra(conn, row))
+    js=json.dumps(data).replace('</','<\\/')
+    body=DESIGN_BODY.replace('__BACK__',h('/?job='+urllib.parse.quote(row['id']))).replace('__TITLE__',h('Plan Designer'))
+    return ('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Plan Designer %s</title>%s</head><body>%s%s'
+            '<script id="pd-data" type="application/json">%s</script><script>%s%s%s</script></body></html>')%(h(row['id']),DESIGN_CSS,body,body_extra,js,DESIGN_JS_CORE,js_extra,DESIGN_JS_INIT)
+def design_data_extra(conn, row): return {}
+
+@app.route('/design/<job_id>')
+def design(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    if row['job_type']=='Office Task': conn.close(); return redirect('/?job='+urllib.parse.quote(job_id))
+    html=design_page(row, conn); conn.close(); return html
 
 def serve():
     port=int(os.environ.get('PORT',5000))
