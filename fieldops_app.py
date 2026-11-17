@@ -278,7 +278,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -644,7 +644,7 @@ def theme_of(user):
         return 'dark' if r and r['value']=='dark' else 'light'
     except Exception: return 'light'
 
-SHELL_SKIP = ('/design/','/hub/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
+SHELL_SKIP = ('/design/','/hub/','/s/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
 def apply_shell(html, path):
     if 'id="shell-css"' in html or not me() or not is_office() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
     office=True; top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
@@ -1330,7 +1330,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
 <div class="ptitle" style="font-size:1.2rem">3. Site Conditions</div><textarea id="sv-site_conditions" rows="5" style="font-size:1.1rem" placeholder="Current system, power, network, conduit, and obstacles like lift, concrete, long runs, access (tap the mic to talk)"></textarea>
-<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a>{% if office %}<a class="big-btn gray" id="bom-link" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/bom'">Bill of materials</a>{% endif %}<a class="big-btn gray" id="pd-full-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)+'?full=1'">&#x26F6; Full screen plan</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
+<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a>{% if office %}<a class="big-btn gray" id="bom-link" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/bom'">Bill of materials</a><a class="big-btn gray" id="share-link2" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/share'">Share view-only link</a>{% endif %}<a class="big-btn gray" id="pd-full-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)+'?full=1'">&#x26F6; Full screen plan</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div><button class="big-btn gray hidden" id="dev-undo" onclick="devUndoTap()">&#8630; Undo last change</button>
 <div id="plans"></div>
@@ -1382,7 +1382,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
-<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="asb-link" class="big-btn" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/asbuilt'">As-built PDF and client sign-off</a><a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
+<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="asb-link" class="big-btn" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/asbuilt'">As-built PDF and client sign-off</a>{% if office %}<a id="share-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/share'">Share view-only link</a>{% endif %}<a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
 <div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
@@ -6084,6 +6084,138 @@ function sigSubmit(){if(!drawn){alert('Please have the client sign in the box.')
     body+='<form method="post"><input type="hidden" name="action" value="archive"><button class="big-btn gray">Save as-built to job files now</button></form>'
     if files: body+='<h2>Saved as-builts</h2>'+''.join('<a class="big-btn gray" target="_blank" href="/uploads/%s">%s</a>'%(h(urllib.parse.quote(f['filename'])),h(f['name'])) for f in reversed(files))
     return ops_page('As-built', body, back='/?job='+q, msg=msg)
+
+# ---------------- View-only share links (office creates and revokes; no prices; nothing is sent) ----------------
+import secrets
+SHARE_DAYS=(7,30,90)
+def sl_init():
+    conn=get_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY, job_id TEXT, kind TEXT, created_by TEXT, created_at TEXT, expires_at TEXT, revoked_at TEXT, revoked_by TEXT, views INTEGER DEFAULT 0, last_view TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_share_job ON share_links(job_id)'); conn.commit(); conn.close()
+sl_init()
+def sl_state(r):
+    if r['revoked_at']: return 'revoked'
+    try:
+        if datetime.utcnow()>=datetime.fromisoformat(r['expires_at']): return 'expired'
+    except Exception: return 'expired'
+    return 'active'
+def sl_get(token):
+    if not token or len(token)>80: return None, None, None
+    conn=get_db(); r=conn.execute('SELECT * FROM share_links WHERE token=?',(token,)).fetchone()
+    if not r or sl_state(r)!='active': conn.close(); return None, None, None
+    row=conn.execute('SELECT * FROM jobs WHERE id=?',(r['job_id'],)).fetchone()
+    if not row: conn.close(); return None, None, None
+    return conn, r, row
+def sl_when(iso):
+    try:
+        d=datetime.fromisoformat(iso)
+        try:
+            from zoneinfo import ZoneInfo
+            d=d.replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Chicago'))
+        except Exception: d=d-timedelta(hours=6)
+        return d.strftime('%b %-d, %Y %-I:%M %p CT')
+    except Exception: return iso or ''
+SL_KIND={'plan':'Floor plan','asbuilt':'As-built'}
+
+@app.route('/job/<job_id>/share', methods=['GET','POST'])
+def share_page(job_id):
+    if not is_office(): return redirect('/')
+    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    if not row: conn.close(); return redirect('/')
+    q=urllib.parse.quote(job_id); msg=''; new=''
+    if request.method=='POST':
+        act=request.form.get('action')
+        if act=='create':
+            kind=request.form.get('kind') if request.form.get('kind') in SL_KIND else 'plan'
+            try: days=int(request.form.get('days') or 30)
+            except Exception: days=30
+            days=days if days in SHARE_DAYS else 30
+            tok=secrets.token_urlsafe(24); now=datetime.utcnow()
+            conn.execute('INSERT INTO share_links (token,job_id,kind,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?)',(tok,job_id,kind,me(),now.isoformat(timespec='seconds'),(now+timedelta(days=days)).isoformat(timespec='seconds')))
+            conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'Made a view-only %s link (expires in %d days)'%(SL_KIND[kind].lower(),days),now_local_str()))
+            conn.commit(); new=tok; msg='Link made. Copy it and send it yourself. Nothing was sent.'
+        elif act=='revoke':
+            tok=request.form.get('token') or ''
+            n=conn.execute('UPDATE share_links SET revoked_at=?,revoked_by=? WHERE token=? AND job_id=? AND revoked_at IS NULL',(datetime.utcnow().isoformat(timespec='seconds'),me(),tok,job_id)).rowcount
+            if n: conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'Turned off a view-only link',now_local_str()))
+            conn.commit(); msg='Link turned off. It no longer opens.' if n else ''
+    links=conn.execute('SELECT * FROM share_links WHERE job_id=? ORDER BY created_at DESC',(job_id,)).fetchall(); conn.close()
+    base=request.host_url.rstrip('/')
+    body='''<style>.sl{border:2px solid #e5e5e5;border-radius:12px;padding:12px;margin:10px 0}.sl.on{border-color:#a49f2a}.sl.new{box-shadow:0 0 0 3px #e9e7c4}.sl .u{font-family:monospace;font-size:.85rem;background:#f6f6f2;border-radius:8px;padding:10px;margin:8px 0;word-break:break-all}
+.pill{display:inline-block;border-radius:999px;padding:3px 10px;font-weight:700;font-size:.85rem}.pill.active{background:#e8f5e9;color:#2e7d32}.pill.expired,.pill.revoked{background:#eee;color:#666}
+.seg2{display:flex;gap:8px}.seg2 label{flex:1;margin:0}.seg2 input{display:none}.seg2 span{display:block;text-align:center;border:2px solid #ccc;border-radius:10px;padding:13px 4px;font-weight:700;min-height:48px}.seg2 input:checked+span{border-color:#a49f2a;background:#f7f6e6}</style>'''
+    body+='<div class="muted">%s &middot; %s</div><div class="card">Anyone with the link can view it without logging in. It shows the plan and devices only. No prices, no rates, no IP or MAC. The app does not send it. You copy it and send it yourself.</div>'%(h(row['customer']),h(row['title']))
+    body+='''<h2>Make a link</h2><form method="post"><input type="hidden" name="action" value="create"><label>What to share</label><div class="seg2"><label><input type="radio" name="kind" value="plan" checked><span>Floor plan</span></label><label><input type="radio" name="kind" value="asbuilt"><span>As-built</span></label></div>
+<label>Link stops working after</label><div class="seg2">'''+''.join('<label><input type="radio" name="days" value="%d"%s><span>%d days</span></label>'%(d,' checked' if d==30 else '',d) for d in SHARE_DAYS)+'''</div><button class="big-btn">Make view-only link</button></form>'''
+    body+='<h2>Links for this job</h2>'
+    if not links: body+='<div class="muted">No links yet.</div>'
+    for r in links:
+        st=sl_state(r); url=base+'/s/'+r['token']
+        body+='<div class="sl%s%s"><div><b>%s</b> <span class="pill %s">%s</span></div><div class="muted">Made %s by %s &middot; %s %s &middot; opened %d time%s</div>'%(' on' if st=='active' else '',' new' if r['token']==new else '',SL_KIND.get(r['kind'],r['kind']),st,{'active':'Active','expired':'Expired','revoked':'Turned off'}[st],
+            h(sl_when(r['created_at'])),h(nice_name(r['created_by'])),'Expires' if st=='active' else ('Expired' if st=='expired' else 'Was set to expire'),h(sl_when(r['expires_at'])),r['views'] or 0,'' if (r['views'] or 0)==1 else 's')
+        if st=='active':
+            body+='<div class="u">%s</div><button type="button" class="big-btn" onclick="slCopy(this,&quot;%s&quot;)">Copy link</button><a class="big-btn gray" target="_blank" href="%s">Open it (what the client sees)</a>'%(h(url),h(url),h('/s/'+r['token']))
+            body+='<form method="post" onsubmit="return confirm(&quot;Turn off this link? Anyone who has it will not be able to open it.&quot;)"><input type="hidden" name="action" value="revoke"><input type="hidden" name="token" value="%s"><button class="big-btn red">Turn off link</button></form>'%h(r['token'])
+        body+='</div>'
+    body+='''<script>function slCopy(b,u){const done=()=>{b.textContent='Copied';setTimeout(()=>b.textContent='Copy link',2000)};
+if(navigator.clipboard&&window.isSecureContext)navigator.clipboard.writeText(u).then(done,()=>prompt('Copy this link',u));else{const t=document.createElement('textarea');t.value=u;document.body.appendChild(t);t.select();try{document.execCommand('copy');done()}catch(e){prompt('Copy this link',u)}t.remove()}}</script>'''
+    return ops_page('Share view-only link', body, back='/?job='+q, msg=msg)
+
+SHARE_HTML='''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>True Sense Security: {{ kind }}</title>
+<style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:900px;margin:auto;padding:14px;overflow-wrap:anywhere}
+.top{display:flex;align-items:center;gap:12px;border-bottom:3px solid #a49f2a;padding-bottom:10px}.top img{height:42px}.top .t{font-weight:800;font-size:1.3rem}
+h2{font-size:1.15rem;color:#a49f2a;border-bottom:2px solid #a49f2a;margin:22px 0 8px}.muted{color:#666;font-size:.92rem}.plan{position:relative;margin:8px 0;border:1px solid #ddd}.plan img{width:100%;height:auto;display:block}
+.big-btn{display:block;width:100%;text-align:center;padding:16px;border:0;border-radius:10px;background:#a49f2a;color:#fff;font-size:1.1rem;font-weight:700;text-decoration:none;margin:12px 0}
+.leg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}.leg div{display:flex;align-items:center;gap:8px;border:1px solid #eee;border-radius:10px;padding:6px 8px}.leg b{margin-left:auto}
+.info{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0}.info span:nth-child(odd){color:#666}.sig{max-width:320px;width:100%;border:1px solid #ddd;border-radius:10px}</style></head><body>
+<div class="top"><img src="/static/logo.png" alt="True Sense Security"><div><div class="t">{{ kind }}</div><div class="muted">{{ j.customer }}{% if j.title %} &middot; {{ j.title }}{% endif %}</div></div></div>
+<div class="info"><span>Site</span><span>{{ j.address or '-' }}</span><span>Job</span><span>{{ j.id }}</span><span>Devices</span><span>{{ ndev }}{% if ab %} ({{ ninst }} installed){% endif %}</span><span>Link expires</span><span>{{ exp }}</span></div>
+<a class="big-btn" href="{{ pdf }}">Download PDF</a>
+{% for p in plans %}<h2>{{ p.name }}</h2><div class="plan"><img src="{{ p.src }}" alt="floor plan">{{ plan_svg(p.fn, devs, ab) }}</div>{% endfor %}
+{% if not plans %}<div class="muted" style="margin:20px 0">No floor plans yet.</div>{% endif %}
+{% if legend %}<h2>Legend</h2><div class="leg">{% for t,c,n in legend %}<div>{{ dev_icon(t,c,True,26) }}<span>{{ t }}</span><b>{{ n }}</b></div>{% endfor %}</div>{% if ab %}<div class="muted" style="margin-top:6px">Outlined symbols are planned but not marked installed. Shaded areas show approximate camera coverage.</div>{% endif %}{% endif %}
+{% if ab and sig %}<h2>Client sign-off</h2><img class="sig" src="{{ sig.sig }}" alt="signature"><div><b>{{ sig.name }}</b> signed {{ sig.signed_at }}</div>{% endif %}
+<p class="muted" style="margin-top:24px">View-only link from True Sense Security. Device locations are approximate.</p></body></html>'''
+
+def sl_bump(conn, r):
+    conn.execute('UPDATE share_links SET views=COALESCE(views,0)+1,last_view=? WHERE token=?',(datetime.utcnow().isoformat(timespec='seconds'),r['token'])); conn.commit()
+def sl_headers(resp):
+    resp.headers['Cache-Control']='private, no-store'; resp.headers['X-Robots-Tag']='noindex, nofollow'; resp.headers['Referrer-Policy']='no-referrer'; return resp
+SL_GONE='<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Link not available</title></head><body style="font-family:Arial,sans-serif;max-width:560px;margin:40px auto;padding:14px;text-align:center"><img src="/static/logo.png" alt="True Sense Security" style="height:48px"><h2>This link is no longer available</h2><p style="color:#666">It may have expired or been turned off. Please contact True Sense Security for a new link.</p></body></html>'
+
+@app.route('/s/<token>')
+def share_view(token):
+    conn,r,row=sl_get(token)
+    if not r: return SL_GONE,410
+    try:
+        info=plan_info(conn,row['id']); devs=parse_devices(row['survey_devices']); fns={p['fn'] for p in info}
+        mine=[d for d in devs if d['plan'] in fns]; ab=r['kind']=='asbuilt'
+        colors={n:c for n,p,c in DEVICE_TYPES}; cnt={}
+        for d in mine: cnt[d['type']]=cnt.get(d['type'],0)+1
+        legend=[(t,colors[t],cnt[t]) for t,_,_ in DEVICE_TYPES if t in cnt]
+        plans=[{'fn':p['fn'],'name':p['name'],'src':'/s/%s/f/%s'%(token,urllib.parse.quote(p['fn']))} for p in info]
+        sig=ab_load(row) if ab else {}
+        sl_bump(conn,r)
+        html=render_template_string(SHARE_HTML, j=row, kind=SL_KIND.get(r['kind'],'Plan'), plans=plans, devs=mine, ab=ab, legend=legend, ndev=len(mine), ninst=sum(1 for d in mine if d.get('installed')),
+                                    exp=sl_when(r['expires_at']), pdf='/s/%s/pdf'%token, sig=sig if sig.get('sig') else None)
+    finally: conn.close()
+    return sl_headers(app.make_response(html))
+
+@app.route('/s/<token>/pdf')
+def share_pdf(token):
+    conn,r,row=sl_get(token)
+    if not r: return SL_GONE,410
+    try: data=asbuilt_pdf_bytes(conn,row,False,'True Sense Security') if r['kind']=='asbuilt' else plan_pdf_bytes(conn,row,False,True,'True Sense Security')
+    finally: conn.close()
+    return sl_headers(pdf_response(data,'%s-%s.pdf'%(secure_filename(row['id']) or 'job',r['kind'])))
+
+@app.route('/s/<token>/f/<path:fn>')
+def share_file(token, fn):
+    conn,r,row=sl_get(token)
+    if not r: return ('',410)
+    fn=secure_filename(fn); ok=fn in set(plan_files(conn,row['id'])); conn.close()
+    if not ok: return ('',404)
+    return sl_headers(send_from_directory(app.config['UPLOAD_FOLDER'], fn))
 
 @app.route('/design/<job_id>')
 def design(job_id):
