@@ -3039,18 +3039,128 @@ def job_parts_cost(conn, job_id):
     r=conn.execute('SELECT SUM(-qty*IFNULL(unit_cost,0)) c FROM stock_moves WHERE job_id=? AND qty<0',(job_id,)).fetchone()
     return round(r['c'] or 0,2)
 
+# ---------------- Office charts (inline SVG, no libraries) ----------------
+CH_PAL=['#a49f2a','#5f5b16','#cfca72','#2f2d0c','#8f8a3a','#e6e3b5','#9e9e9e']
+WORK_TYPES=['Cameras','Access','Intercom','Data','AV','Service','Other']
+_WT_TPL={'Camera Install':'Cameras','Access Control Install':'Access','Intercom Install':'Intercom','Structured Cabling Install':'Data','Fiber Install':'Data','AV Install':'AV','Service Call':'Service'}
+_WT_KW=[('Cameras',('camera','cctv','nvr','dvr','video surveillance')),('Access',('access','card reader','reader','door lock','maglock','strike','keypad')),('Intercom',('intercom','door station','buzzer')),
+        ('Data',('cabling','cable','cat6','cat5','data drop','fiber','network','wap','wifi','rack')),('AV',('av ','audio','speaker','tv','display','projector','sound'))]
+def work_type(row):
+    if (row['job_type'] or '')=='Service': return 'Service'
+    try: items={str(c.get('text') or '').strip().lower() for c in json.loads(row['checklist'] or '[]') if isinstance(c,dict)}
+    except Exception: items=set()
+    best,score=None,0
+    if items:
+        for name,_,steps in BUILTIN_TEMPLATES:
+            if name not in _WT_TPL: continue
+            n=len(items & {s.lower() for s in steps})
+            if n>score: best,score=_WT_TPL[name],n
+    if best and score>=2: return best
+    txt=' %s %s '%((row['title'] or '').lower(),(row['scope'] or '').lower())
+    for wt,kws in _WT_KW:
+        if any(k in txt for k in kws): return wt
+    return 'Other'
+def ch_short(v):
+    a=abs(v); s='-' if v<0 else ''
+    return s+('$%.1fM'%(a/1e6) if a>=1e6 else '$%gk'%round(a/1000,1) if a>=1000 else '$%d'%round(a))
+def ch_donut(items, empty, money_vals):
+    items=[(n,v,c) for n,v,c in items if v>0]; tot=sum(v for _,v,_ in items)
+    if not tot: return '<div class="ch-empty"><svg viewBox="0 0 120 120" width="96" height="96" aria-hidden="true"><circle cx="60" cy="60" r="44" fill="none" stroke="#eeede4" stroke-width="20"/></svg><div>%s</div></div>'%h(empty)
+    C=2*math.pi*44; off=0; segs=''
+    for n,v,c in items:
+        L=C*v/tot; segs+='<circle cx="60" cy="60" r="44" fill="none" stroke="%s" stroke-width="20" stroke-dasharray="%.3f %.3f" stroke-dashoffset="%.3f" transform="rotate(-90 60 60)"><title>%s: %s</title></circle>'%(c,L,C-L,-off,h(n),h(money(v) if money_vals else '%d'%v)); off+=L
+    center=(ch_short(tot) if money_vals else '%d'%tot)
+    svg='<svg viewBox="0 0 120 120" class="ch-donut" role="img" aria-label="%s">%s<text x="60" y="58" text-anchor="middle" font-size="15" font-weight="800" fill="#111">%s</text><text x="60" y="74" text-anchor="middle" font-size="9" fill="#666">%s</text></svg>'%(h(', '.join('%s %s'%(n,money(v) if money_vals else v) for n,v,_ in items)),segs,h(center),'total' if money_vals else 'jobs')
+    leg=''.join('<div class="ch-li"><i style="background:%s"></i><span>%s</span><b>%s</b><em>%d%%</em></div>'%(c,h(n),h(money(v) if money_vals else '%d'%v),round(v*100/tot)) for n,v,c in items)
+    return '<div class="ch-pie">%s<div class="ch-leg">%s</div></div>'%(svg,leg)
+def ch_hbars(items, empty):
+    if not items: return '<div class="ch-empty"><div>%s</div></div>'%h(empty)
+    mx=max(abs(v) for _,v in items) or 1; neg=any(v<0 for _,v in items); W=360; lw=96; vw=64; bw=W-lw-vw-8; zero=lw+(bw*min(1,max(abs(v) for _,v in items if v<0)/mx)/2 if neg else 0)
+    span=bw-(zero-lw); rows=''; y=4
+    for n,v in items:
+        L=abs(v)/mx*(span if v>=0 else (zero-lw)); x=zero if v>=0 else zero-L
+        rows+='<text x="%d" y="%.1f" font-size="12" fill="#111" text-anchor="end">%s</text><rect x="%.1f" y="%.1f" width="%.1f" height="18" rx="4" fill="%s"><title>%s: %s</title></rect><text x="%d" y="%.1f" font-size="12" font-weight="700" fill="%s" text-anchor="end">%s</text>'%(
+            lw-6,y+13,h(n[:14]),x,y,max(L,1.5),'#a49f2a' if v>=0 else '#c62828',h(n),h(money(v)),W-4,y+13,'#111' if v>=0 else '#c62828',h(ch_short(v))); y+=26
+    if neg: rows+='<line x1="%.1f" x2="%.1f" y1="0" y2="%d" stroke="#999" stroke-width="1"/>'%(zero,zero,y)
+    return '<svg viewBox="0 0 %d %d" class="ch-svg" role="img" aria-label="Profit by sub">%s</svg>'%(W,y,rows)
+def ch_months(rows):
+    if not any(r['n'] for r in rows): return '<div class="ch-empty"><div>No finished jobs in the last 12 months yet.</div></div>'
+    W,H,top,base=360,190,18,160; mx=max(r['n'] for r in rows) or 1; slot=(W-8)/12; out=''
+    for g in range(0,5):
+        y=base-(base-top)*g/4; out+='<line x1="4" x2="%d" y1="%.1f" y2="%.1f" stroke="#f0efe8"/>'%(W-4,y,y)
+    for i,r in enumerate(rows):
+        hh=(base-top)*r['n']/mx; x=4+slot*i+slot*.18; w=slot*.64
+        out+='<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="3" fill="#a49f2a"><title>%s: %d jobs</title></rect>'%(x,base-hh,w,max(hh,0),h(r['label']),r['n'])
+        if r['n']: out+='<text x="%.1f" y="%.1f" text-anchor="middle" font-size="11" font-weight="700" fill="#111">%d</text>'%(x+w/2,base-hh-4,r['n'])
+        out+='<text x="%.1f" y="%d" text-anchor="middle" font-size="11" fill="#555">%s</text>'%(x+w/2,base+16,h(r['short'][0] if False else r['short']))
+    out+='<line x1="4" x2="%d" y1="%d" y2="%d" stroke="#111"/>'%(W-4,base,base)
+    return '<svg viewBox="0 0 %d %d" class="ch-svg" role="img" aria-label="Jobs done per month">%s</svg>'%(W,H,out)
+def ch_months_data(conn):
+    keys=month_keys(12); rows={k:{'month':k,'n':0} for k in keys}
+    for j in conn.execute("SELECT completed_at FROM jobs WHERE status='completed' AND COALESCE(job_type,'')!='Office Task' AND completed_at IS NOT NULL").fetchall():
+        k=local_month(j['completed_at'])
+        if k in rows: rows[k]['n']+=1
+    out=[rows[k] for k in keys]
+    for r in out:
+        d=datetime.strptime(r['month'],'%Y-%m'); r['label']=d.strftime('%b %Y'); r['short']=d.strftime('%b')[:3]
+    return out
+def est_stage(e):
+    if e.get('signed_at'): return 'approved'
+    if e.get('lost_at'): return 'lost'
+    if e.get('ready'): return 'sent'
+    return None
+CH_CSS='''<style>.ch-grid{display:grid;grid-template-columns:1fr;gap:12px;margin:8px 0 14px}@media(min-width:820px){.ch-grid{grid-template-columns:1fr 1fr}}
+.ch{border:1px solid #e5e5e5;border-radius:14px;padding:12px;background:#fff;min-width:0;overflow:hidden}.ch h3{margin:0 0 2px;font-size:1.05rem}.ch .muted{font-size:.85rem;margin-bottom:6px}
+.ch-pie{display:flex;flex-direction:column;gap:8px;align-items:stretch}.ch-donut{width:160px;height:160px;flex:none;align-self:center}.ch-leg{min-width:0}
+.ch-li{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid #f2f1ea;font-size:.95rem}.ch-li i{width:12px;height:12px;border-radius:3px;flex:none}.ch-li span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ch-li b{white-space:nowrap}.ch-li em{font-style:normal;color:#777;font-size:.8rem;width:34px;text-align:right}
+.ch-svg{width:100%;height:auto;display:block}.ch-empty{display:flex;flex-direction:column;align-items:center;gap:6px;color:#777;padding:14px 6px;text-align:center}
+.pl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0}.pl div{border-radius:12px;padding:10px 6px;text-align:center;border:2px solid #e5e5e5;min-width:0}.pl b{display:block;font-size:1.35rem}.pl span{font-size:.85rem;font-weight:700}.pl small{display:block;color:#555;font-size:.85rem;overflow-wrap:anywhere}</style>'''
+def charts_html(conn, jobs_rows, jobs, subs, fr, to):
+    wt={}
+    for r in jobs_rows:
+        s=r['sale_amount'] or 0
+        if s>0: k=work_type(r); wt[k]=wt.get(k,0)+s
+    pie1=ch_donut([(n,wt.get(n,0),CH_PAL[i]) for i,n in enumerate(WORK_TYPES)],'No sales in this date range yet.',True)
+    stc={}
+    for j in jobs: stc[j['status']]=stc.get(j['status'],0)+1
+    pie2=ch_donut([(lab,stc.get(k,0),CH_PAL[i]) for i,(k,lab) in enumerate(STATUSES)],'No jobs in this date range yet.',False)
+    sp=sorted([(x['name'],round(x['profit'],2)) for x in subs.values() if x['name'] and (x['sale'] or x['profit'])],key=lambda t:-t[1])[:12]
+    bars=ch_hbars(sp,'No profit to show yet. Profit shows once jobs have a sale amount.')
+    months=ch_months(ch_months_data(conn))
+    pipe={'sent':[0,0.0],'approved':[0,0.0],'lost':[0,0.0]}
+    for r in jobs_rows:
+        e=load_estimate(r); st=est_stage(e)
+        if st: pipe[st][0]+=1; pipe[st][1]+=e['price']
+    if not any(v[0] for v in pipe.values()): pipe_html='<div class="ch-empty"><div>No estimates in this date range yet.</div></div>'
+    else:
+        tot=sum(v[1] for v in pipe.values()); cols={'sent':'#cfca72','approved':'#a49f2a','lost':'#9e9e9e'}; labs={'sent':'Sent','approved':'Approved','lost':'Lost'}
+        pipe_html='<div class="pl">'+''.join('<div style="border-color:%s"><span>%s</span><b>%d</b><small>%s</small></div>'%(cols[k],labs[k],pipe[k][0],h(money(pipe[k][1]))) for k in ('sent','approved','lost'))+'</div>'
+        if tot>0:
+            x=0; segs=''
+            for k in ('sent','approved','lost'):
+                w=pipe[k][1]/tot*356
+                if w>0: segs+='<rect x="%.1f" y="2" width="%.1f" height="22" fill="%s"><title>%s: %s</title></rect>'%(2+x,w,cols[k],labs[k],h(money(pipe[k][1]))); x+=w
+            pipe_html+='<svg viewBox="0 0 360 26" class="ch-svg" role="img" aria-label="Estimate dollars by stage"><rect x="2" y="2" width="356" height="22" rx="6" fill="#f2f1ea"/>%s</svg>'%segs
+        dec=pipe['approved'][0]+pipe['lost'][0]
+        pipe_html+='<div class="muted" style="margin-top:6px">%s</div>'%('Win rate: %d%% of decided estimates (%d of %d).'%(round(pipe['approved'][0]*100/dec),pipe['approved'][0],dec) if dec else 'No estimates approved or lost yet.')
+    rng='%s to %s'%(fr,to)
+    card=lambda t,sub,inner:'<div class="ch"><h3>%s</h3><div class="muted">%s</div>%s</div>'%(t,sub,inner)
+    return CH_CSS+'<h2 id="charts">Charts</h2><div class="ch-grid">'+card('Sales by work type','Sale amounts on jobs, %s'%rng,pie1)+card('Jobs by status','Jobs in %s'%rng,pie2)+\
+        card('Profit by sub','Sale minus labor and parts on their jobs, %s'%rng,bars)+card('Jobs done per month','Finished jobs, last 12 months',months)+\
+        card('Estimates pipeline','Sent, approved and lost, %s'%rng,pipe_html)+'</div>'
+
 @app.route('/reports')
 def reports_page():
     if not is_office(): return redirect('/')
     t=today_local(); fr=(request.args.get('from') or '%d-01-01'%t.year)[:10]; to=(request.args.get('to') or '%d-12-31'%t.year)[:10]
-    conn=get_db(); jobs=[]
+    conn=get_db(); jobs=[]; jrows=[]
     for r in conn.execute('SELECT * FROM jobs').fetchall():
         day=(r['scheduled_date'] or (r['created_at'] or '')[:10])
         if not (fr<=day<=to) or r['job_type']=='Office Task': continue
+        jrows.append(r)
         lab=job_labor(conn, r); parts=job_parts_cost(conn, r['id']); sale=r['sale_amount'] or 0
         jobs.append({'id':r['id'],'title':r['title'] or '','client':r['customer'] or '','type':r['job_type'] or 'Install','tech':nice_name(r['tech']),'date':day,'status':r['status'],
                      'sale':sale,'labor':lab['total'],'parts':parts,'profit':round(sale-lab['total']-parts,2),'hours':round(sum(l['hours'] for l in lab['lines']),2),'lines':lab['lines'],'no_sale':not r['sale_amount']})
-    conn.close()
     subs={}; types={}
     for j in jobs:
         for l in j['lines']:
@@ -3060,6 +3170,8 @@ def reports_page():
         ty=types.setdefault(j['type'],{'name':j['type'],'jobs':0,'hours':0,'sale':0,'labor':0,'parts':0,'profit':0})
         ty['jobs']+=1; ty['hours']+=j['hours']; ty['sale']+=j['sale']; ty['labor']+=j['labor']; ty['parts']+=j['parts']; ty['profit']+=j['profit']
     kind=request.args.get('csv')
+    charts='' if kind else charts_html(conn, jrows, jobs, subs, fr, to)
+    conn.close()
     if kind in ('jobs','subs','types'):
         import csv, io
         b=io.StringIO(); w=csv.writer(b)
@@ -3080,6 +3192,7 @@ def reports_page():
     body+='<div class="card"><table><tr><td>Sales</td><td class="num"><b>%s</b></td></tr><tr><td>Sub labor</td><td class="num">%s</td></tr><tr><td>Parts from stock</td><td class="num">%s</td></tr><tr><td><b>Profit</b></td><td class="num"><b>%s</b></td></tr><tr><td>Sub hours</td><td class="num">%s</td></tr></table></div>'%(money(tot('sale')),money(tot('labor')),money(tot('parts')),money(tot('profit')),'%g'%round(tot('hours'),2))
     miss=sum(1 for j in jobs if j['no_sale'])
     if miss: body+='<div class="muted">%d jobs have no sale amount yet, so they show $0 sales.</div>'%miss
+    body+=charts
     body+='<h2>By sub</h2><table><tr><th>Sub</th><th class="num">Jobs</th><th class="num">Hours</th><th class="num">Labor</th><th class="num">Profit</th></tr>'+''.join('<tr><td>%s</td><td class="num">%d</td><td class="num">%s</td><td class="num">%s</td><td class="num">%s</td></tr>'%(h(x['name']),len(x['jobs']),'%g'%round(x['hours'],2),money(x['labor']),money(x['profit'])) for x in sorted(subs.values(),key=lambda x:-x['hours']))+'</table><a class="big-btn gray" href="/reports?%s&csv=subs">Download sub CSV</a>'%q
     body+='<h2>By job type</h2><table><tr><th>Type</th><th class="num">Jobs</th><th class="num">Sales</th><th class="num">Profit</th></tr>'+''.join('<tr><td>%s</td><td class="num">%d</td><td class="num">%s</td><td class="num">%s</td></tr>'%(h(x['name']),x['jobs'],money(x['sale']),money(x['profit'])) for x in types.values())+'</table><a class="big-btn gray" href="/reports?%s&csv=types">Download job type CSV</a>'%q
     body+='<h2>By job</h2><table><tr><th>Job</th><th class="num">Sale</th><th class="num">Cost</th><th class="num">Profit</th></tr>'+''.join('<tr><td><a href="/?job=%s">%s</a><div class="muted">%s %s %s</div></td><td class="num">%s</td><td class="num">%s</td><td class="num"%s><b>%s</b></td></tr>'%(
@@ -3659,10 +3772,14 @@ def estimate_edit(job_id):
     if request.method=='POST':
         if request.form.get('action')=='clear':
             e={k:e[k] for k in ('desc','items','price','note')}; msg='Signature cleared. You can edit the estimate.'
+        elif request.form.get('action') in ('lost','reopen') and not e.get('signed_at'):
+            e={k:v for k,v in e.items() if k!='lost_at'}
+            if request.form.get('action')=='lost': e['lost_at']=now_local_str(); msg='Marked as lost. It shows as lost on the Reports charts.'
+            else: msg='Reopened. It counts as sent again.'
         elif e.get('signed_at'): msg='Already signed. Clear it first to change.'
         else:
             e={'desc':(request.form.get('desc') or '').strip()[:4000],'items':[x.strip() for x in (request.form.get('items') or '').splitlines() if x.strip()][:30],
-               'price':max(0,round(fnum(request.form.get('price')),2)),'note':(request.form.get('note') or '').strip()[:1000]}
+               'price':max(0,round(fnum(request.form.get('price')),2)),'note':(request.form.get('note') or '').strip()[:1000],**({'lost_at':e['lost_at']} if e.get('lost_at') else {})}
             msg='Saved. Send the client their portal link when ready.'
         save_estimate(conn, job_id, e); conn.commit(); e=load_estimate(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone())
     conn.close()
@@ -3675,6 +3792,9 @@ def estimate_edit(job_id):
         body+='<label>Line items, one per line (optional)</label><textarea name="items" rows="4" placeholder="6 x 4MP dome camera">%s</textarea>'%h('\n'.join(e['items']))
         body+='<label>Price $</label><input name="price" type="number" step="0.01" min="0" value="%s"><label>Note to client (optional)</label><textarea name="note" rows="3">%s</textarea><button class="big-btn">Save Estimate</button></form>'%(('%g'%e['price']) if e['price'] else '',h(e['note']))
         body+='<div class="muted">The client sees this on their portal link, signs with a finger and approves. Nothing is sent from here.</div>'
+        if e.get('ready'):
+            if e.get('lost_at'): body+='<div class="card"><b>Marked lost</b> on %s.<form method="post"><input type="hidden" name="action" value="reopen"><button class="big-btn gray">Reopen estimate</button></form></div>'%h(e['lost_at'])
+            else: body+='<form method="post" onsubmit="return confirm(&quot;Mark this estimate as lost?&quot;)"><input type="hidden" name="action" value="lost"><button class="big-btn gray">Mark as lost</button></form>'
     return ops_page('Estimate', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
 
 @app.route('/hub/<job_id>/estimate', methods=['POST'])
@@ -4163,7 +4283,7 @@ REV_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewp
 .key{display:flex;gap:14px;flex-wrap:wrap;font-weight:600;margin:6px 0}.key span:before{content:"";display:inline-block;width:14px;height:14px;border-radius:3px;margin-right:6px;vertical-align:-2px;background:var(--c)}
 textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:1rem}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;margin:0 auto 4px;display:block">
-<h2>Revenue (office only)</h2><a class="btn" href="/">Back to Jobs</a>
+<h2>Revenue (office only)</h2><a class="btn" href="/">Back to Jobs</a><a class="btn" href="/reports#charts">Charts: work type, status, profit by sub, jobs per month, estimates</a>
 <div class="big"><div>Field Ops sales {{ year }}<b>{{ money(ytd.fo) }}</b></div><div>QuickBooks invoiced {{ year }}<b>{{ money(ytd.qi) }}</b></div><div>QuickBooks paid {{ year }}<b>{{ money(ytd.qp) }}</b></div><div>Field Ops margin {{ year }}<b>{{ money(ytd.fo - ytd.lab) }}</b></div></div>
 <div class="job"><div style="font-weight:700;font-size:1.1rem">Last 12 months</div>
 <div class="key"><span style="--c:#a49f2a">Field Ops sales</span><span style="--c:#1565c0">QuickBooks invoiced</span><span style="--c:#2e7d32">QuickBooks paid</span></div>
