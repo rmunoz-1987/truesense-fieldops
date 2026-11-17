@@ -407,8 +407,6 @@ def bg_tick():
     try:
         conn=get_db(); REMIND_LAST[0]=0; make_reminders(conn); run_plans(conn); conn.close()
     except Exception as e: print('REMINDERS failed %s' % e, flush=True)
-    try: mr_webhook_retry()
-    except Exception as e: print('MATREQ_RETRY failed %s' % type(e).__name__, flush=True)
 def bg_loop():
     while True:
         bg_tick(); time.sleep(int(os.environ.get('BG_EVERY', 900)))
@@ -4701,7 +4699,10 @@ def get_invoice_draft(job_id):
     return jsonify(dict(json.loads(r['package']),draft_status=r['status'],draft_created_at=r['created_at']))
 
 # ---------- Material requests (ADI will call) ----------
-MR_SHIP_TO='ADI Northwest (Pinemont), will call'
+MR_SHIP_TO='ADI Northwest, 7425 Pinemont Dr, Houston, TX 77040 (will call)'
+MR_ACCOUNT_DEFAULT='463208'  # ADI customer account #, not a secret
+MR_MARKUP=1.25
+def mr_sell(cost): return round(cost*MR_MARKUP+1e-9,2)
 MR_STATUS=[('submitted','Submitted'),('waiting_roland','Waiting on Roland'),('ordered','Ordered'),('ready','Ready for pickup'),('picked_up','Picked up'),('backordered','Backordered'),('canceled','Canceled')]
 MR_LABEL=dict(MR_STATUS)
 MR_PENDING=('submitted','waiting_roland')
@@ -4720,7 +4721,7 @@ mr_init()
 
 def mr_account(conn):
     r=conn.execute("SELECT value FROM settings WHERE key='adi_account'").fetchone()
-    return (r['value'] if r else '') or ''
+    return ((r['value'] if r else '') or '').strip() or MR_ACCOUNT_DEFAULT
 def mr_items(s):
     try: v=json.loads(s or '[]')
     except Exception: v=[]
@@ -4740,18 +4741,22 @@ def mr_when(iso):
     except Exception: return ''
 def mr_line(d):
     s=d['status']; day=mr_day(d['status_at'] or d['created_at'])
-    t={'submitted':'Submitted %s. The office will order it.','waiting_roland':'Waiting on Roland since %s.','ordered':'Ordered %s, will call at ADI Pinemont.',
-       'ready':'Ready for pickup %s, will call at ADI Pinemont.','picked_up':'Picked up %s.','backordered':'Backordered %s. The office will update you.','canceled':'Canceled %s.'}.get(s,s+' %s')%day
+    t={'submitted':'Submitted %s. The office will order it.','waiting_roland':'Waiting on Roland since %s.','ordered':'Ordered %s, will call at ADI Northwest, 7425 Pinemont Dr.',
+       'ready':'Ready for pickup %s, will call at ADI Northwest, 7425 Pinemont Dr.','picked_up':'Picked up %s.','backordered':'Backordered %s. The office will update you.','canceled':'Canceled %s.'}.get(s,s+' %s')%day
     if s=='picked_up' and d.get('status_by'): t=t[:-1]+' by %s.'%d['status_by']
     return t
 def mr_qty(q): return '%g'%q
 def mr_dict(r, prices):
     d={k:r[k] for k in ('id','job_id','customer','account_no','sub','requested_by','ship_to','needed_by','urgency','note','photo','status','status_at','status_by','pickup_photo','created_at')}
+    d['ship_to']=MR_SHIP_TO; d['account_no']=d['account_no'] or MR_ACCOUNT_DEFAULT
     d['rid']='MR-%d'%r['id']; d['status_label']=MR_LABEL.get(r['status'],r['status']); d['status_line']=mr_line(d); d['created_local']=mr_when(r['created_at'])
     items=mr_items(r['items'])
     if prices:
-        for i in items: i['total']=round(i['unit_cost']*i['qty'],2) if i['unit_cost'] is not None else None
-        d['total']=round(sum(i['total'] or 0 for i in items),2); d['priced']=all(i['unit_cost'] is not None for i in items) and bool(items)
+        for i in items:
+            i['total']=round(i['unit_cost']*i['qty'],2) if i['unit_cost'] is not None else None
+            i['sell']=mr_sell(i['unit_cost']) if i['unit_cost'] is not None else None
+            i['sell_total']=round(i['sell']*i['qty'],2) if i['sell'] is not None else None
+        d['total']=round(sum(i['total'] or 0 for i in items),2); d['sell_total']=round(sum(i['sell_total'] or 0 for i in items),2); d['markup_pct']=round((MR_MARKUP-1)*100); d['priced']=all(i['unit_cost'] is not None for i in items) and bool(items)
         d.update({'bill':bool(r['bill']),'office_note':r['office_note'] or '','summary_text':r['summary_text'] or '','email_draft':r['email_draft'] or '','summary_at':r['summary_at'] or '',
                   'webhook':r['webhook'] or '','history':json.loads(r['history'] or '[]')})
     else:
@@ -4808,7 +4813,7 @@ def mr_job_lines(conn, job_id):
     for r in conn.execute("SELECT * FROM material_requests WHERE job_id=? AND bill=1 AND status!='canceled' ORDER BY id",(job_id,)):
         for i in mr_items(r['items']):
             if i['unit_cost'] is None or i['unit_cost']<=0: continue
-            lines.append({'description':('Materials: '+' '.join(x for x in (i['part'],i['desc']) if x)+' (MR-%d)'%r['id'])[:4000],'qty':i['qty'],'rate':i['unit_cost'],'amount':round(i['unit_cost']*i['qty'],2)})
+            lines.append({'description':('Materials: '+' '.join(x for x in (i['part'],i['desc']) if x)+' (MR-%d)'%r['id'])[:4000],'qty':i['qty'],'rate':mr_sell(i['unit_cost']),'amount':round(mr_sell(i['unit_cost'])*i['qty'],2)})
     return lines
 
 MR_FORM_CSS='''<style>.mr-line{border:2px solid #e5e5e5;border-radius:12px;padding:10px;margin:8px 0;background:#fafaf5}.mr-line .row>*{flex:1 1 120px}
@@ -4899,7 +4904,7 @@ def mr_card(d):
     urg=' <span class="flag">Urgent</span>' if d['urgency']=='Urgent' else ''
     return '<a class="card" href="/orders/%d"><b>%s</b>%s &middot; Job %s &middot; %s<div class="muted">%s &middot; Needed by %s &middot; %d item%s &middot; %s</div><div>%s</div></a>'%(
         d['id'],h(d['rid']),urg,h(d['job_id']),h(d['customer'] or ''),h(d['sub'] or ''),h(d['needed_by'] or '-'),len(d['items']),'' if len(d['items'])==1 else 's',
-        money(d['total']) if d['priced'] else ('%s so far, prices missing'%money(d['total']) if d['total'] else 'No prices yet'),
+        ('Cost %s, sell %s'%(money(d['total']),money(d['sell_total']))) if d['priced'] else ('%s cost so far, prices missing'%money(d['total']) if d['total'] else 'No prices yet'),
         h(', '.join('%s x %s'%(mr_qty(i['qty']),i['desc'] or i['part']) for i in d['items'])[:200]))
 
 @app.route('/orders', methods=['GET','POST'])
@@ -4909,7 +4914,7 @@ def mr_orders():
     if request.method=='POST':
         conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('adi_account',?)",((request.form.get('adi_account') or '').strip()[:40],)); conn.commit(); msg='ADI account # saved.'
     acct=mr_account(conn); rows=[mr_dict(r, True) for r in conn.execute('SELECT * FROM material_requests ORDER BY id DESC LIMIT 300')]; conn.close()
-    show_all=request.args.get('all')=='1'; body='<div class="card"><b>Ship to:</b> %s<form method="post" class="row" style="margin-top:6px"><div><label>ADI account #</label><input name="adi_account" value="%s" placeholder="Not set yet"></div><button class="big-btn gray" style="flex:0 0 120px;align-self:end">Save</button></form></div>'%(h(MR_SHIP_TO),h(acct))
+    show_all=request.args.get('all')=='1'; body='<div class="card"><b>Ship to:</b> %s<form method="post" class="row" style="margin-top:6px"><div><label>ADI account #</label><input name="adi_account" value="%s" placeholder="463208 (default)"></div><button class="big-btn gray" style="flex:0 0 120px;align-self:end">Save</button></form></div>'%(h(MR_SHIP_TO),h(acct))
     if not rows: body+='<div class="card muted" style="text-align:center">No material requests yet. Subs send them from the job screen with Request materials.</div>'
     for k,l in MR_STATUS:
         g=[d for d in rows if d['status']==k]
@@ -4946,10 +4951,10 @@ def mr_order(rid):
     body+='<div class="row">%s%s</div>'%(pic(d['photo'],'Sub photo'),pic(d['pickup_photo'],'Pickup ticket'))
     body+='<form method="post"><h2>Items and prices (office only)</h2>'
     for n,i in enumerate(d['items']):
-        body+='<div class="card"><b>%s</b> %s<div class="muted">%s</div><div class="row"><div><label>Qty</label><input name="qty_%d" value="%s" inputmode="decimal" onfocus="this.select()"></div><div><label>Unit cost</label><input name="cost_%d" value="%s" inputmode="decimal" placeholder="0.00" onfocus="this.select()"></div></div><div style="text-align:right">Line total: <b>%s</b></div></div>'%(
-            h(i['part']),h(i['desc']),h(i['notes']),n,mr_qty(i['qty']),n,'%.2f'%i['unit_cost'] if i['unit_cost'] is not None else '',money(i['total']) if i['total'] is not None else '-')
-    body+='<div class="card" style="text-align:right;font-size:1.15rem">Total: <b id="mr-total">%s</b></div>'%money(d['total'])
-    body+='<label style="display:flex;gap:10px;align-items:center;font-weight:600"><input type="checkbox" name="bill" value="1"%s style="width:26px;height:26px"> Add these parts to the QuickBooks invoice draft</label>'%(' checked' if d['bill'] else '')
+        body+='<div class="card"><b>%s</b> %s<div class="muted">%s</div><div class="row"><div><label>Qty</label><input name="qty_%d" value="%s" inputmode="decimal" onfocus="this.select()"></div><div><label>Unit cost</label><input name="cost_%d" value="%s" inputmode="decimal" placeholder="0.00" onfocus="this.select()"></div></div><div style="text-align:right">Cost total: <b>%s</b> &middot; Sell each: <b>%s</b> &middot; Sell total: <b>%s</b></div></div>'%(
+            h(i['part']),h(i['desc']),h(i['notes']),n,mr_qty(i['qty']),n,'%.2f'%i['unit_cost'] if i['unit_cost'] is not None else '',money(i['total']) if i['total'] is not None else '-',money(i['sell']) if i['sell'] is not None else '-',money(i['sell_total']) if i['sell_total'] is not None else '-')
+    body+='<div class="card" style="text-align:right;font-size:1.15rem">Cost: <b id="mr-total">%s</b> &middot; Sell (cost + %d%%): <b id="mr-sell">%s</b><div class="muted">Sell price goes on the QuickBooks invoice draft.</div></div>'%(money(d['total']),d['markup_pct'],money(d['sell_total']))
+    body+='<label style="display:flex;gap:10px;align-items:center;font-weight:600"><input type="checkbox" name="bill" value="1"%s style="width:26px;height:26px"> Add these parts to the QuickBooks invoice draft (at sell price)</label>'%(' checked' if d['bill'] else '')
     body+='<h2>Status</h2><select name="status">%s</select><input name="status_note" placeholder="Status note (optional, e.g. ADI order #)"><label>Office note</label><textarea name="office_note" rows="2">%s</textarea><button class="big-btn" style="font-size:1.2rem">Save</button></form>'%(
         ''.join('<option value="%s"%s>%s</option>'%(k,' selected' if k==d['status'] else '',h(l)) for k,l in MR_STATUS),h(d['office_note']))
     body+='<a class="big-btn gray" href="/print/order/%d" target="_blank">Order summary (print)</a>'%rid
@@ -4971,7 +4976,7 @@ def mr_summary(rid):
     d=mr_dict(r, True); j=conn.execute('SELECT title,address FROM jobs WHERE id=?',(r['job_id'],)).fetchone(); conn.close()
     pr=request.args.get('prices')=='1'
     rows=''.join('<tr><td>%s</td><td>%s</td><td class="num">%s</td><td>%s</td>%s</tr>'%(h(i['part'] or '-'),h(i['desc']),mr_qty(i['qty']),h(i['notes']),
-        ('<td class="num">%s</td><td class="num">%s</td>'%(money(i['unit_cost']) if i['unit_cost'] is not None else '-',money(i['total']) if i['total'] is not None else '-')) if pr else '') for i in d['items'])
+        ('<td class="num">%s</td><td class="num">%s</td><td class="num">%s</td><td class="num">%s</td>'%(money(i['unit_cost']) if i['unit_cost'] is not None else '-',money(i['total']) if i['total'] is not None else '-',money(i['sell']) if i['sell'] is not None else '-',money(i['sell_total']) if i['sell_total'] is not None else '-')) if pr else '') for i in d['items'])
     html='''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order summary %s</title>
 <style>body{font-family:-apple-system,Arial,sans-serif;max-width:800px;margin:auto;padding:16px;color:#111}h1{font-size:1.4rem;margin:4px 0}table{width:100%%;border-collapse:collapse;margin:10px 0}td,th{border:1px solid #ccc;padding:7px;text-align:left;vertical-align:top}th{background:#f4f4ec}.num{text-align:right}
 .kv div{padding:2px 0}.btns a,.btns button{display:inline-block;padding:12px 16px;margin:4px 4px 4px 0;border-radius:10px;border:0;background:#a49f2a;color:#fff;font-size:1rem;font-weight:700;text-decoration:none;cursor:pointer}.btns .g{background:#eee;color:#111}@media print{.btns{display:none}}</style></head><body>
@@ -4981,7 +4986,7 @@ def mr_summary(rid):
 <table><tr><th>Part #</th><th>Description</th><th class="num">Qty</th><th>Notes</th>%s</tr>%s%s</table>%s<div style="font-size:.85rem;color:#666">Status: %s. Printed %s.</div></body></html>'''%(
         h(d['rid']),rid,'0' if pr else '1','Hide prices' if pr else 'Show prices (office copy)',h(d['rid']),h(d['job_id']),h(j['title'] if j else ''),h(j['address'] if j else ''),h(d['customer'] or ''),
         h(d['account_no'] or 'not set'),h(d['ship_to'] or MR_SHIP_TO),h(d['needed_by'] or '-'),h(d['urgency'] or 'Normal'),h(d['sub'] or ''),h(d['created_local']),
-        '<th class="num">Unit</th><th class="num">Total</th>' if pr else '',rows,'<tr><td colspan="5"><b>Total</b></td><td class="num"><b>%s</b></td></tr>'%money(d['total']) if pr else '',
+        '<th class="num">Unit cost</th><th class="num">Cost total</th><th class="num">Sell each</th><th class="num">Sell total</th>' if pr else '',rows,'<tr><td colspan="5"><b>Totals</b></td><td class="num"><b>%s</b></td><td></td><td class="num"><b>%s</b></td></tr>'%(money(d['total']),money(d['sell_total'])) if pr else '',
         '<div><b>Notes:</b> %s</div>'%h(d['note']) if d['note'] else '',h(d['status_label']),h(now_local_str()))
     return html
 
