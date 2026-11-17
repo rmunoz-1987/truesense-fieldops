@@ -278,7 +278,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -297,25 +297,79 @@ button:disabled,input:disabled,select:disabled,textarea:disabled,[aria-disabled=
 </style>"""
 
 PWA_HEAD = """<link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#a49f2a"><link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png"><link rel="icon" href="/static/icons/icon-192.png">
-<script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script>"""
+<script>if('serviceWorker' in navigator)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script><script src="/outbox.js" defer></script>"""
 
 MANIFEST = {'name':'True Sense Field Ops','short_name':'Field Ops','start_url':'/','scope':'/','display':'standalone','background_color':'#ffffff','theme_color':'#a49f2a',
     'icons':[{'src':'/static/icons/icon-192.png','sizes':'192x192','type':'image/png'},{'src':'/static/icons/icon-512.png','sizes':'512x512','type':'image/png'},
              {'src':'/static/icons/maskable-512.png','sizes':'512x512','type':'image/png','purpose':'maskable'}]}
 
-SW_JS = r"""const V='fo-v4';const SHELL=['/offline','/static/logo.png','/static/icons/icon-192.png','/static/icons/icon-512.png'];
+SW_JS = r"""const V='fo-v5';const SHELL=['/offline','/outbox.js','/static/logo.png','/static/icons/icon-192.png','/static/icons/icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL)))});
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('message',e=>{if(e.data==='logout')e.waitUntil(caches.keys().then(ks=>Promise.all(ks.map(k=>caches.delete(k)))))});
 self.addEventListener('fetch',e=>{const r=e.request,u=new URL(r.url);if(r.method!=='GET'||u.origin!==location.origin)return;
+if(r.mode==='navigate'&&/^\/job\/[^/]+\/materials$/.test(u.pathname)){e.respondWith(fetch(r).then(res=>{if(res.ok&&!res.redirected){const c=res.clone();caches.open(V).then(x=>x.put(u.pathname,c))}return res}).catch(()=>caches.match(u.pathname).then(m=>m||caches.match('/offline'))));return}
 if(r.mode==='navigate'){if(u.pathname!=='/')return e.respondWith(fetch(r).catch(()=>caches.match('/offline')));
 e.respondWith(fetch(r).then(res=>{if(res.ok&&!res.redirected){const c=res.clone();caches.open(V).then(x=>x.put('/',c))}return res}).catch(()=>caches.match('/').then(m=>m||caches.match('/offline'))));return}
+if(u.pathname==='/outbox.js'){e.respondWith(fetch(r).then(res=>{if(res.ok){const c=res.clone();caches.open(V).then(x=>x.put('/outbox.js',c))}return res}).catch(()=>caches.match('/outbox.js')));return}
 if(u.pathname.startsWith('/static/')){e.respondWith(caches.match(r).then(m=>m||fetch(r).then(res=>{const c=res.clone();caches.open(V).then(x=>x.put(r,c));return res})));return}
 if(u.pathname.startsWith('/api/jobs')||u.pathname.startsWith('/uploads/')){e.respondWith(fetch(r).then(res=>{if(res.ok){const c=res.clone();caches.open(V).then(x=>x.put(r,c))}return res}).catch(()=>caches.match(r).then(m=>m||new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'Content-Type':'application/json'}}))))}});
 self.addEventListener('push',e=>{let d={};try{d=e.data.json()}catch(x){d={title:'Field Ops',body:e.data?e.data.text():''}}
 e.waitUntil(self.registration.showNotification(d.title||'Field Ops',{body:d.body||'',icon:'/static/icons/icon-192.png',badge:'/static/icons/icon-192.png',data:{url:d.url||'/'}}))});
 self.addEventListener('notificationclick',e=>{e.notification.close();const url=(e.notification.data&&e.notification.data.url)||'/';
 e.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{for(const w of ws){if('focus' in w){w.navigate(url);return w.focus()}}return clients.openWindow(url)}))});"""
+
+OUTBOX_JS = r'''(()=>{if(window.foSend)return;const DB='fo-outbox',ST='q';let dbp=null,busy=false;
+function db(){return dbp||(dbp=new Promise((ok,no)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(ST,{keyPath:'id',autoIncrement:true});r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)}))}
+async function tx(mode,fn){const d=await db();return new Promise((ok,no)=>{const t=d.transaction(ST,mode),s=t.objectStore(ST);let out;const r=fn(s);if(r)r.onsuccess=()=>{out=r.result};t.oncomplete=()=>ok(out);t.onerror=()=>no(t.error)})}
+const all=()=>tx('readonly',s=>s.getAll()),put=v=>tx('readwrite',s=>s.put(v)),del=id=>tx('readwrite',s=>s.delete(id));
+async function pack(body){if(body instanceof FormData){const e=[];for(const [k,v] of body.entries()){if(v instanceof Blob){if(!v.size&&!v.name)continue;e.push([k,{f:1,name:v.name||'file',type:v.type,buf:await v.arrayBuffer()}])}else e.push([k,v])}return {form:e}}return {text:body==null?null:String(body)}}
+function unpack(it){if(it.form){const fd=new FormData();it.form.forEach(([k,v])=>v&&v.f?fd.append(k,new Blob([v.buf],{type:v.type}),v.name):fd.append(k,v));return fd}return it.text}
+function queuedResp(){return {ok:false,queued:true,status:0,json:async()=>({queued:true}),text:async()=>''}}
+async function enqueue(url,opt,label,needOk){const p=await pack(opt.body);await put(Object.assign({url,method:opt.method||'POST',headers:opt.headers||{},label:label||'Item',page:location.pathname+location.search,at:Date.now(),tries:0,state:'wait',needOk:!!needOk},p));toast(label+' saved on this phone. It will upload when you have signal.');paint()}
+window.foSend=async function(url,opt,label){opt=opt||{};if(navigator.onLine===false){await enqueue(url,opt,label);return queuedResp()}
+try{return await fetch(url,opt)}catch(e){await enqueue(url,opt,label);return queuedResp()}};
+window.foQueue=enqueue;
+async function flush(){if(busy)return;busy=true;try{for(const it of await all()){if(it.state==='failed')continue;
+let r;try{r=await fetch(it.url,{method:it.method,headers:it.headers,body:unpack(it),credentials:'same-origin'})}catch(e){break}
+if(r.status===401||(r.redirected&&new URL(r.url).pathname==='/login')){it.state='login';await put(it);break}
+if(r.ok&&(!it.needOk||r.headers.get('X-FO-OK'))){await del(it.id);continue}
+if(r.status>=500){it.tries++;await put(it);break}
+it.state='failed';it.err=r.status>=400?'Server said no ('+r.status+')':'The office page needs a fix';await put(it)}}catch(e){}busy=false;paint()}
+window.foFlush=flush;
+function toast(m){let t=document.getElementById('fo-toast');if(!t){t=document.createElement('div');t.id='fo-toast';document.body.appendChild(t)}t.textContent=m;t.className='show';clearTimeout(t._h);t._h=setTimeout(()=>t.className='',4500)}
+window.foToast=toast;
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c])}
+async function paint(){let L=[];try{L=await all()}catch(e){}let p=document.getElementById('fo-pill');
+if(!L.length){if(p)p.remove();const pn=document.getElementById('fo-panel');if(pn)pn.remove();return}
+if(!p){p=document.createElement('button');p.id='fo-pill';p.type='button';p.onclick=panel;document.body.appendChild(p)}
+const f=L.filter(i=>i.state==='failed').length,lg=L.some(i=>i.state==='login');
+p.className=f?'bad':'';p.textContent=(L.length-f? (L.length-f)+' waiting to upload':'')+(f?(L.length-f?', ':'')+f+' could not upload':'')+(lg?' (sign in)':'');
+if(document.getElementById('fo-panel'))panel(true)}
+async function panel(keep){const L=await all();let pn=document.getElementById('fo-panel');if(pn&&keep!==true){pn.remove();return}
+if(!pn){pn=document.createElement('div');pn.id='fo-panel';document.body.appendChild(pn)}
+const off=navigator.onLine===false;
+pn.innerHTML='<div class="fo-h">Waiting to upload</div><div class="fo-s">'+(off?'No signal right now. These are saved on this phone and upload by themselves when signal comes back.':'Uploading when the server answers. Keep the app open.')+'</div>'+
+L.map(i=>'<div class="fo-i"><div><b>'+esc(i.label)+'</b><br><span>'+new Date(i.at).toLocaleString([], {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})+(i.state==='failed'?' &middot; '+esc(i.err||'failed'):i.state==='login'?' &middot; sign in to send':' &middot; waiting')+'</span></div>'+(i.state==='failed'?'<button type="button" data-d="'+i.id+'">Discard</button>':'')+'</div>').join('')+
+'<button type="button" class="fo-b" id="fo-retry">Try now</button>'+(L.some(i=>i.state==='login')?'<a class="fo-b" href="/login">Sign in</a>':'')+'<button type="button" class="fo-b fo-g" id="fo-close">Close</button>';
+pn.querySelectorAll('[data-d]').forEach(b=>b.onclick=async()=>{if(confirm('Discard this item? It will not upload.')){await del(+b.dataset.d);paint()}});
+pn.querySelector('#fo-retry').onclick=async()=>{for(const i of await all())if(i.state!=='failed'){i.state='wait';await put(i)}flush()};
+pn.querySelector('#fo-close').onclick=()=>pn.remove()}
+const css=document.createElement('style');css.textContent='#fo-pill{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));z-index:99999;background:#a49f2a;color:#fff;border:0;border-radius:999px;padding:12px 18px;min-height:44px;font:700 1rem system-ui,sans-serif;box-shadow:0 3px 12px rgba(0,0,0,.25);max-width:92vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#fo-pill.bad{background:#b00020}'+
+'#fo-panel{position:fixed;left:8px;right:8px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:99999;background:#fff;border:2px solid #a49f2a;border-radius:14px;padding:14px;box-shadow:0 6px 24px rgba(0,0,0,.25);max-width:520px;margin:0 auto;max-height:70vh;overflow:auto;font-family:system-ui,sans-serif}'+
+'#fo-panel .fo-h{font-weight:800;font-size:1.2rem}#fo-panel .fo-s{color:#555;margin:4px 0 8px}#fo-panel .fo-i{display:flex;gap:8px;align-items:center;justify-content:space-between;border-top:1px solid #eee;padding:8px 0}#fo-panel .fo-i span{color:#666;font-size:.9rem}'+
+'#fo-panel .fo-i button{min-height:44px;border:2px solid #b00020;color:#b00020;background:#fff;border-radius:10px;font-weight:700;padding:0 12px}#fo-panel .fo-b{display:block;width:100%;min-height:48px;margin-top:8px;border:0;border-radius:12px;background:#a49f2a;color:#fff;font-weight:800;font-size:1.05rem;text-align:center;line-height:48px;text-decoration:none;padding:0}#fo-panel .fo-g{background:#eee;color:#111}'+
+'#fo-toast{position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:99999;background:#222;color:#fff;border-radius:12px;padding:14px;font:600 1rem system-ui,sans-serif;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s;max-width:520px;margin:0 auto}#fo-toast.show{opacity:1}';
+document.head.appendChild(css);
+document.addEventListener('submit',async e=>{const f=e.target;if(!f.hasAttribute('data-outbox'))return;if(f._go)return;e.preventDefault();
+let up=navigator.onLine!==false;if(up){try{const c=new AbortController(),t=setTimeout(()=>c.abort(),5000);const r=await fetch('/healthz',{cache:'no-store',signal:c.signal});clearTimeout(t);up=r.ok}catch(x){up=false}}
+if(up){f._go=1;f.submit();return}
+await enqueue(f.action||location.href,{method:'POST',body:new FormData(f)},f.getAttribute('data-outbox'),true);
+f.querySelectorAll('[type=submit]').forEach(b=>b.disabled=false);
+const m=document.createElement('div');m.className='card';m.id='fo-saved';m.style.cssText='border:2px solid #a49f2a;text-align:center;font-weight:700;font-size:1.1rem;padding:14px;margin:10px 0';m.textContent='Saved on this phone. It will send to the office when you have signal. You can go back to the job.';f.replaceWith(m)},true);
+const go=()=>{paint();flush()};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',go);else go();
+window.addEventListener('online',flush);document.addEventListener('visibilitychange',()=>{if(!document.hidden)flush()});setInterval(()=>{all().then(L=>{if(L.some(i=>i.state!=='failed'))flush()}).catch(()=>{})},30000)})();
+'''
 
 VAPID_PUBLIC_DEFAULT = 'BOE9zipIF8cw8atKM4E0IBGRa7_SP2347axDzashhpPwtE5qt39ynGBkbi51MIDWPnxcCdbTt2JSuyYs5DgQjPs'
 def vapid_public(): return os.environ.get('VAPID_PUBLIC_KEY') or VAPID_PUBLIC_DEFAULT
@@ -370,6 +424,10 @@ def manifest():
 @app.route('/sw.js')
 def service_worker():
     r=app.response_class(SW_JS, mimetype='application/javascript'); r.headers['Cache-Control']='no-cache'; r.headers['Service-Worker-Allowed']='/'; return r
+
+@app.route('/outbox.js')
+def outbox_js():
+    r=app.response_class(OUTBOX_JS, mimetype='application/javascript'); r.headers['Cache-Control']='no-cache'; return r
 
 @app.route('/offline')
 def offline_page(): return OFFLINE_HTML
@@ -1489,8 +1547,8 @@ u.forEach(x=>{const d=document.createElement('div');d.style.cssText='padding:8px
 if(!u.length)el.innerHTML='<div style="color:#666">No notes yet</div>';
 const lg=document.getElementById('log-legacy');lg.innerHTML='';[['Notes',currentJob.notes],['Quick notes',currentJob.quick_notes]].forEach(([k,v])=>{if(!v)return;const d=document.createElement('div');d.style.cssText='padding:8px 0;border-bottom:1px solid #e5e5e5';const m=document.createElement('div');m.style.cssText='font-size:.8rem;color:#666';m.textContent='Earlier '+k.toLowerCase();const t=document.createElement('div');t.style.whiteSpace='pre-wrap';t.textContent=v;d.append(m,t);lg.appendChild(d)})}
 async function saveUpdate(){const n=document.getElementById('update-note');if(!n.value.trim())return;
-const r=await fetch('/api/jobs/'+currentJob.id+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});
-if(r.ok){n.value='';loadUpdates()}else alert('Error')}
+const r=await (window.foSend||fetch)('/api/jobs/'+currentJob.id+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})},'Note for '+currentJob.id);
+if(r.queued){n.value='';return}if(r.ok){n.value='';loadUpdates()}else alert('Error')}
 async function reassignJob(){const t=document.getElementById('r-tech').value;if(!t||!t.trim())return;
 const r=await fetch('/api/jobs/'+currentJob.id+'/reassign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tech:t.trim()})});
 if(r.ok){currentJob.tech=t.trim();alert('Reassigned to '+t.trim())}else alert('Error')}
@@ -1516,7 +1574,7 @@ function photoGroups(elId,types){const el=document.getElementById(elId);el.inner
 types.forEach(t=>{const g=ph.filter(p=>p.photo_type===t);const h=document.createElement('div');h.className='ptitle';h.textContent=PHOTO_LABELS[t]+' ('+g.length+')';el.appendChild(h);
 const w=document.createElement('div');w.className='thumbs';g.forEach(p=>{const a=document.createElement('a');a.href='/uploads/'+encodeURIComponent(p.filename);a.target='_blank';const i=document.createElement('img');i.src=a.href;a.appendChild(i);w.appendChild(a)});el.appendChild(w)})}
 async function uploadPhotos(t){const inp=document.getElementById(t);if(!inp.files.length)return;const fd=new FormData();fd.append('type',t);[...inp.files].forEach(f=>fd.append('photos',f));
-const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/photos',{method:'POST',body:fd});inp.value='';if(r.ok){currentJob.photos=(await r.json()).photos;renderPhotos()}else alert('Photo upload failed')}
+const r=await (window.foSend||fetch)('/api/jobs/'+encodeURIComponent(currentJob.id)+'/photos',{method:'POST',body:fd},inp.files.length+' photo'+(inp.files.length>1?'s':'')+' for '+currentJob.id);inp.value='';if(r.queued)return;if(r.ok){currentJob.photos=(await r.json()).photos;renderPhotos()}else alert('Photo upload failed')}
 ['before','during','after','survey'].forEach(t=>document.getElementById(t).onchange=()=>uploadPhotos(t));
 function renderMats(){const el=document.getElementById('matlist');el.innerHTML='';const m=currentJob.materials_list||[];
 m.forEach((x,i)=>{const l=document.createElement('label');l.className='mat';const c=document.createElement('input');c.type='checkbox';c.checked=x.used;c.onchange=()=>{x.used=c.checked;saveMats()};
@@ -1879,7 +1937,7 @@ document.getElementById('directions').href='https://maps.google.com/?q='+encodeU
 document.getElementById('home').classList.add('hidden');document.getElementById('detail').classList.remove('hidden');window.scrollTo(0,0);renderType();clearSig()}
 function showList(){history.replaceState(null,'',VIEW==='jobs'?'/jobs':'/');document.getElementById('detail').classList.add('hidden');document.getElementById('home').classList.remove('hidden');load()}
 async function flushNote(){const n=document.getElementById('update-note');if(!n.value.trim())return true;
-const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})});if(r.ok){n.value='';loadUpdates();return true}alert('Error saving note');return false}
+const r=await (window.foSend||fetch)('/api/jobs/'+encodeURIComponent(currentJob.id)+'/updates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note:n.value})},'Note for '+currentJob.id);if(r.queued){n.value='';return true}if(r.ok){n.value='';loadUpdates();return true}alert('Error saving note');return false}
 document.getElementById('finish').onclick=async()=>{const fd=new FormData();
 fd.append('notes',currentJob.notes||'');
 if(currentJob.job_type==='Survey'){if(!(await saveSurvey(true)))return;if(!(await flushNote()))return;const r=await fetch('/api/jobs/'+encodeURIComponent(currentJob.id)+'/complete',{method:'POST',body:fd});if(r.ok){alert('Survey complete. Kelly has been told it is ready for an estimate.');openJob(currentJob.id)}else alert('Error');return}
@@ -4986,6 +5044,9 @@ def mr_line_filled(l):
     s=MR_LINE.replace('name="part" maxlength="80"','name="part" maxlength="80" value="%s"'%h(l['part'])).replace('value="1" onfocus','value="%s" onfocus'%h(mr_qty(l['qty'])))
     s=s.replace('name="desc" maxlength="300"','name="desc" maxlength="300" value="%s"'%h(l['desc']))
     return s.replace('name="lnote" maxlength="300"','name="lnote" maxlength="300" value="%s"'%h(('Plan: '+l['floors']) if l.get('floors') else ''))
+def fo_ok(html):
+    r=app.make_response(html); r.headers['X-FO-OK']='1'; return r
+
 @app.route('/job/<job_id>/materials', methods=['GET','POST'])
 def mr_new(job_id):
     conn=get_db(); row=page_job(conn, job_id)
@@ -5012,14 +5073,14 @@ def mr_new(job_id):
             rid=cur.lastrowid
             conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'Requested materials MR-%d: %s'%(rid,', '.join('%s x %s'%(mr_qty(i['qty']),i['desc'] or i['part']) for i in items))[:1000],now_local_str()))
             conn.commit(); conn.close(); mr_webhook(rid)
-            return ops_page('Request sent', '<div class="card" style="text-align:center"><div style="font-size:3rem;color:#2e7d32">&#10003;</div><div style="font-size:1.3rem;font-weight:800">MR-%d sent to the office</div><div class="muted" style="font-size:1rem;margin-top:6px">Status: Submitted. You will see the status on the job.</div></div><a class="big-btn" href="%s" style="font-size:1.3rem;padding:20px">Back to Job</a>'%(rid,h(back)), back=False)
+            return fo_ok(ops_page('Request sent', '<div class="card" style="text-align:center"><div style="font-size:3rem;color:#2e7d32">&#10003;</div><div style="font-size:1.3rem;font-weight:800">MR-%d sent to the office</div><div class="muted" style="font-size:1rem;margin-top:6px">Status: Submitted. You will see the status on the job.</div></div><a class="big-btn" href="%s" style="font-size:1.3rem;padding:20px">Back to Job</a>'%(rid,h(back)), back=False))
     pre=[]
     if request.method=='GET' and request.args.get('from')=='bom':
         _,bl=bom_build(conn,row,False); pre=bl[:60]
     conn.close()
     auto='<div class="auto"><div><b>Job:</b> %s %s</div><div><b>Customer:</b> %s</div><div><b>ADI account #:</b> %s</div><div><b>Sub:</b> %s</div><div><b>Ship to:</b> %s</div></div>'%(
         h(job_id),h(row['title'] or ''),h(row['customer'] or ''),h(acct) if acct else '<span class="muted">Office fills this in</span>',h(sub or '-'),h(MR_SHIP_TO))
-    body=MR_FORM_CSS+auto+('<div class="flag" style="display:block;padding:10px;margin:8px 0">%s</div>'%h(err) if err else '')+'''<form method="post" enctype="multipart/form-data" onsubmit="this.querySelector('[type=submit]').disabled=true">
+    body=MR_FORM_CSS+auto+('<div class="flag" style="display:block;padding:10px;margin:8px 0">%s</div>'%h(err) if err else '')+'''<form method="post" enctype="multipart/form-data" data-outbox="Material request for '''+h(job_id)+'''" onsubmit="this.querySelector('[type=submit]').disabled=true">
 <h2>Items</h2>'''+('<div class="muted">Filled in from the floor plan. Change anything you need.</div>' if pre else '')+'''<div id="mr-lines">'''+(''.join(mr_line_filled(l) for l in pre) if pre else MR_LINE)+'''</div><button type="button" class="big-btn gray" style="font-size:1.15rem" onclick="mrAdd()">+ Add another item</button>
 <h2>When</h2><label>Needed by</label><input type="date" name="needed_by" required min="%s" value="%s">
 <label>Urgency</label><div class="seg2"><label><input type="radio" name="urgency" value="Normal" checked><span>Normal</span></label><label><input type="radio" class="urg" name="urgency" value="Urgent"><span>Urgent</span></label></div>
