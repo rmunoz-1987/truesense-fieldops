@@ -116,7 +116,8 @@ def parse_devices(raw):
                     'label': str(i.get('label') or '')[:10], 'x': round(x, 2), 'y': round(y, 2), 'note': str(i.get('note') or '').strip()[:500],
                     'height': str(i.get('height') or '').strip()[:50], 'cable': str(i.get('cable') or '').strip()[:100],
                     'installed': bool(i.get('installed')), 'mac': str(i.get('mac') or '').strip()[:60], 'ip': str(i.get('ip') or '').strip()[:45],
-                    'port': str(i.get('port') or '').strip()[:40], 'clabel': str(i.get('clabel') or '').strip()[:60], 'photo': secure_filename(str(i.get('photo') or ''))[:100]})
+                    'port': str(i.get('port') or '').strip()[:40], 'clabel': str(i.get('clabel') or '').strip()[:60], 'photo': secure_filename(str(i.get('photo') or ''))[:100],
+                    'part': str(i.get('part') or '').strip()[:80]})
         if i['type'] in ('Dome Cam', 'Bullet Cam', 'PTZ Cam'):
             for k, lo, hi in (('dir', 0, 359), ('fov', 10, 360), ('range', 2, 100)):
                 if i.get(k) not in (None, ''):
@@ -5347,13 +5348,86 @@ def design_page(row, conn, js_extra='', body_extra=''):
     return ('<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Plan Designer %s</title>%s</head><body>%s%s'
             '<script id="pd-data" type="application/json">%s</script><script>%s%s%s</script></body></html>')%(h(row['id']),DESIGN_CSS,body,body_extra,js,DESIGN_JS_CORE,js_extra,DESIGN_JS_INIT)
 def design_data_extra(conn, row): return {}
+DESIGN_CSS_EDIT = r'''<style>
+.pd-tray{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;touch-action:pan-x;scrollbar-width:thin}
+.pd-tool{flex:none;width:80px;min-height:74px;border:1.5px solid #e3e2d8;border-radius:12px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11.5px;font-weight:600;cursor:grab;padding:6px 4px;font-family:inherit;color:#111;text-align:center;line-height:1.15;touch-action:pan-x;user-select:none;-webkit-user-select:none}
+.pd-tool.on{border-color:#a49f2a;background:#f8f7ea;box-shadow:0 0 0 3px rgba(164,159,42,.28)}
+@media(min-width:900px){.pd-tray{display:grid;grid-template-columns:repeat(4,1fr);overflow:visible}.pd-tool{width:auto}}
+.pd-ghost{position:fixed;z-index:30;pointer-events:none;transform:translate(-50%,-50%);filter:drop-shadow(0 4px 8px rgba(0,0,0,.3))}
+.pd-ur{position:absolute;left:10px;top:10px;display:flex;gap:8px}.pd-ur .pd-btn{background:rgba(255,255,255,.96)}
+.pd-save{position:absolute;right:10px;top:10px;background:rgba(255,255,255,.94);border:1px solid #e3e2d8;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;color:#2e7d32;pointer-events:none}
+.pd-save.bad{color:#b00020}
+.pd-hint{top:64px}
+.pd-cam{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0 8px}.pd-cam .pd-btn{font-size:13px;padding:0 6px}
+.pd-sel{border:2px solid #a49f2a}
+@media(max-width:899px){.pd-view{height:52vh}}
+</style>'''
+DESIGN_BODY_EDIT = r'''<div id="pd-editx"></div>'''
+DESIGN_JS_EDIT = r'''
+let UNDO=[],REDO=[],saveT=null,saving=false,again=false;
+const view=$('pd-view');
+if(EDIT){view.insertAdjacentHTML('beforeend','<div class="pd-ur"><button class="pd-btn" id="pd-undo" onclick="undo()" aria-label="Undo">&#8630; Undo</button><button class="pd-btn" id="pd-redo" onclick="redo()" aria-label="Redo">Redo &#8631;</button></div><div class="pd-save hidden" id="pd-save"></div>');
+$('pd-x1').insertAdjacentHTML('beforebegin','<div class="pd-card pd-sel hidden" id="pd-sel"></div><div class="pd-card" id="pd-traycard"><h3>Devices</h3><div class="pd-muted" style="margin-bottom:8px">Tap a device, then tap the plan. Or drag it onto the plan.</div><div class="pd-tray" id="pd-tray"></div></div>')}
+else $('pd-x1').insertAdjacentHTML('beforebegin','<div class="pd-card pd-sel hidden" id="pd-sel"></div>');
+function snap(){return JSON.stringify(DEV)}
+function newId(){return 'd'+Math.random().toString(16).slice(2,12)}
+function undoBtns(){if(!EDIT)return;$('pd-undo').disabled=!UNDO.length;$('pd-redo').disabled=!REDO.length}
+function commit(before){if(before===snap())return;UNDO.push(before);if(UNDO.length>150)UNDO.shift();REDO=[];undoBtns();queueSave()}
+function fixSel(){if(sel&&!DEV.find(d=>d.id===sel))sel=null}
+function undo(){if(!UNDO.length)return;REDO.push(snap());DEV=JSON.parse(UNDO.pop());fixSel();undoBtns();queueSave();draw();side()}
+function redo(){if(!REDO.length)return;UNDO.push(snap());DEV=JSON.parse(REDO.pop());fixSel();undoBtns();queueSave();draw();side()}
+function status(t,bad){const s=$('pd-save');if(!s)return;s.textContent=t;s.classList.toggle('bad',!!bad);s.classList.toggle('hidden',!t);clearTimeout(status.t);if(t==='Saved')status.t=setTimeout(()=>s.classList.add('hidden'),1500)}
+function queueSave(){clearTimeout(saveT);status('Saving...');saveT=setTimeout(save,450)}
+async function save(){if(saving){again=true;return}saving=true;try{const r=await fetch(API+'/devices',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({devices:DEV})});
+if(r.ok){const d=await r.json(),lab={};(d.devices||[]).forEach(x=>lab[x.id]=x.label);DEV.forEach(x=>{if(lab[x.id])x.label=lab[x.id]});status('Saved')}else{const e=await r.json().catch(()=>({}));status(e.error||'Not saved',true)}}catch(e){status('No connection. Not saved yet.',true)}
+saving=false;if(again){again=false;save()}draw();side()}
+window.addEventListener('beforeunload',e=>{if(saving||saveT&&$('pd-save').textContent==='Saving...'){e.preventDefault();e.returnValue=''}});
+function trayMark(){document.querySelectorAll('.pd-tool').forEach(b=>b.classList.toggle('on',b.dataset.t===tool))}
+function trayInit(){const t=$('pd-tray');if(!t)return;t.innerHTML=TYPES.map(x=>'<button class="pd-tool" data-t="'+esc(x[0])+'">'+symHtml(x[0],34)+'<span>'+esc(x[0])+'</span></button>').join('');t.querySelectorAll('.pd-tool').forEach(b=>b.addEventListener('pointerdown',e=>trayDown(e,b)))}
+let TD=null;
+function trayDown(e,b){if(!plan())return;TD={t:b.dataset.t,x0:e.clientX,y0:e.clientY,id:e.pointerId,drag:false,ghost:null};try{b.setPointerCapture(e.pointerId)}catch(_){}}
+document.addEventListener('pointermove',e=>{if(!TD||e.pointerId!==TD.id)return;const dx=e.clientX-TD.x0,dy=e.clientY-TD.y0;
+if(!TD.drag){const phone=matchMedia('(max-width:899px)').matches;if(phone?(dy<-12&&Math.abs(dy)>Math.abs(dx)):Math.hypot(dx,dy)>8){TD.drag=true;TD.ghost=document.createElement('div');TD.ghost.className='pd-ghost';TD.ghost.innerHTML=symHtml(TD.t,46);document.body.appendChild(TD.ghost)}else return}
+TD.ghost.style.left=e.clientX+'px';TD.ghost.style.top=e.clientY+'px';e.preventDefault()},{passive:false});
+document.addEventListener('pointerup',e=>{if(!TD||e.pointerId!==TD.id)return;const T=TD;TD=null;if(T.ghost)T.ghost.remove();
+if(!T.drag){tool=tool===T.t?'':T.t;sel=null;trayMark();draw();side();return}
+const r=box();if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom){const q=toPlan(e),p=plan();place(T.t,q.x/p.w*100,q.y/p.h*100)}});
+document.addEventListener('pointercancel',e=>{if(TD&&e.pointerId===TD.id){if(TD.ghost)TD.ghost.remove();TD=null}});
+function place(t,x,y){const p=plan();if(!p||x<0||x>100||y<0||y>100)return;const before=snap(),id=newId();DEV.push({id:id,type:t,plan:p.fn,x:+x.toFixed(2),y:+y.toFixed(2),label:''});sel=id;commit(before);draw();side()}
+window.PD_TAP=function(e,id,pc,q){const p=plan();if(id){sel=id;tool='';trayMark()}else if(tool&&EDIT){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;place(tool,pc.x,pc.y);return}else sel=null;draw();side()};
+window.PD_DRAGSTART=function(g){if(!EDIT)return;g.drag=true;g.before=snap();sel=g.dev;tool='';trayMark()};
+window.PD_DRAG=function(g,e){const d=DEV.find(x=>x.id===g.dev),p=plan();if(!d)return;const q=toPlan(e);d.x=+Math.max(0,Math.min(100,q.x/p.w*100)).toFixed(2);d.y=+Math.max(0,Math.min(100,q.y/p.h*100)).toFixed(2);draw()};
+window.PD_DRAGEND=function(g){if(g.before)commit(g.before);g.before=null;g.drag=false;side()};
+window.PD_HINT=function(){if(!EDIT||!plan())return '';if(tool)return 'Tap the plan to drop a '+tool+'. Tap '+tool+' again to stop.';if(!DEV.length)return 'Pick a device, then tap the plan';return ''};
+function selDev(){return DEV.find(d=>d.id===sel)}
+function dup(){const d=selDev();if(!d)return;const before=snap(),c=Object.assign({},d,{id:newId(),label:'',x:Math.min(100,d.x+3),y:Math.min(100,d.y+3),photo:'',installed:false,mac:'',ip:'',port:'',clabel:''});DEV.push(c);sel=c.id;commit(before);draw();side()}
+function del(){const d=selDev();if(!d)return;const before=snap();DEV=DEV.filter(x=>x.id!==d.id);sel=null;commit(before);status('Deleted. Tap Undo to bring it back.');draw();side()}
+function done(){sel=null;draw();side()}
+function setField(k,v){const d=selDev();if(!d)return;v=v.trim();if((d[k]||'')===v)return;const before=snap();d[k]=v;commit(before)}
+function camCh(kk,dv){const d=selDev();if(!d||!EDIT)return;const before=snap(),v=camView(d);
+if(kk==='dir')d.dir=((v.dir+dv)%360+360)%360;else if(kk==='fov')d.fov=dv==='360'?360:Math.max(10,Math.min(360,v.fov+dv));else if(kk==='range')rangeStep(d,dv);
+d.dir=d.dir??v.dir;d.fov=d.fov||v.fov;commit(before);draw();side()}
+function rangeStep(d,dv){const v=camView(d);d.range=Math.max(2,Math.min(100,+(v.range+dv*3).toFixed(1)))}
+function rangeText(d){return 'range '+camView(d).range+'% of plan width'}
+window.PD_SIDE=function(){const c=$('pd-sel'),d=selDev();c.classList.toggle('hidden',!d);if(!d)return;const cam=!!CAM_DEF[d.type],v=camView(d);
+const cmp=['N','NE','E','SE','S','SW','W','NW'][Math.round(v.dir/45)%8];
+c.innerHTML='<div style="display:flex;align-items:center;gap:10px">'+symHtml(d.type,36)+'<h3 style="margin:0">'+esc(d.label||'New')+' &middot; '+esc(d.type)+'</h3></div>'+
+(EDIT?'<div class="pd-row" style="margin:10px 0"><button class="pd-btn" onclick="dup()">Duplicate</button><button class="pd-btn red" onclick="del()">Delete</button><button class="pd-btn gold" onclick="done()">Done</button></div>':'')+
+(cam?'<div class="pd-muted">Facing '+cmp+' ('+v.dir+'&deg;), view '+v.fov+'&deg;, '+esc(rangeText(d))+'</div>'+(EDIT?'<div class="pd-cam"><button class="pd-btn" onclick="camCh(&quot;dir&quot;,-15)">&#8634; Turn left</button><button class="pd-btn" onclick="camCh(&quot;dir&quot;,15)">Turn right &#8635;</button><button class="pd-btn" onclick="camCh(&quot;fov&quot;,&quot;360&quot;)">360&deg;</button><button class="pd-btn" onclick="camCh(&quot;fov&quot;,-10)">Narrower</button><button class="pd-btn" onclick="camCh(&quot;fov&quot;,10)">Wider</button><button class="pd-btn" onclick="camCh(&quot;range&quot;,-1)">Shorter</button><button class="pd-btn" onclick="camCh(&quot;range&quot;,1)">Longer</button></div>':''):'')+
+(EDIT?'<label class="pd-l" for="pd-part">Part # or model (optional)</label><input class="pd-in" id="pd-part" maxlength="80" placeholder="e.g. Axis P3265-LVE" onchange="setField(&quot;part&quot;,this.value)"><label class="pd-l" for="pd-note">Notes (optional)</label><input class="pd-in" id="pd-note" maxlength="500" placeholder="e.g. 10 ft mount, ceiling" onchange="setField(&quot;note&quot;,this.value)">'
+:'<div class="pd-muted" style="margin-top:6px">'+(d.part?'Part: '+esc(d.part)+'<br>':'')+(d.note?'Notes: '+esc(d.note):'')+'</div>');
+if(EDIT){$('pd-part').value=d.part||'';$('pd-note').value=d.note||''}};
+document.addEventListener('keydown',e=>{if(!EDIT||/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const m=e.ctrlKey||e.metaKey;
+if(m&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}else if(m&&e.key.toLowerCase()==='y'){e.preventDefault();redo()}else if((e.key==='Delete'||e.key==='Backspace')&&sel){e.preventDefault();del()}else if(e.key==='Escape'){tool='';sel=null;trayMark();draw();side()}});
+trayInit();undoBtns();
+'''
 
 @app.route('/design/<job_id>')
 def design(job_id):
     conn=get_db(); row=page_job(conn, job_id)
     if not row: conn.close(); return redirect('/')
     if row['job_type']=='Office Task': conn.close(); return redirect('/?job='+urllib.parse.quote(job_id))
-    html=design_page(row, conn); conn.close(); return html
+    html=design_page(row, conn, DESIGN_JS_EDIT, DESIGN_CSS_EDIT); conn.close(); return html
 
 def serve():
     port=int(os.environ.get('PORT',5000))
