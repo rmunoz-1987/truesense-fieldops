@@ -1272,7 +1272,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <input type="file" id="survey" accept="image/*" multiple capture="environment" style="display:none"><div id="survey-photos" class="thumbs"></div>
 <div class="ptitle" style="font-size:1.2rem">2. What They Want</div><textarea id="sv-want_desc" rows="3" style="font-size:1.1rem" placeholder="Short description of what the client wants (tap the mic to talk)"></textarea>
 <div class="ptitle" style="font-size:1.2rem">3. Site Conditions</div><textarea id="sv-site_conditions" rows="5" style="font-size:1.1rem" placeholder="Current system, power, network, conduit, and obstacles like lift, concrete, long runs, access (tap the mic to talk)"></textarea>
-<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
+<div id="sv-slot"><div id="markup"><div class="ptitle" style="font-size:1.2rem" id="mk-title">5. Floor Plan Devices</div><a class="big-btn" id="pd-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)">Open Plan Designer</a><a class="big-btn gray" id="pd-full-link" href="/" onclick="this.href='/design/'+encodeURIComponent(currentJob.id)+'?full=1'">&#x26F6; Full screen plan</a><div id="ab-copy"></div><div class="row" id="plan-add"><div class="big-btn" onclick="document.getElementById('plan-file').click()">Add Floor Plan or Photo</div><div class="big-btn gray" onclick="skOpen()">Draw Plan</div></div>
 <input type="file" id="plan-file" accept="image/*" multiple style="display:none" onchange="uploadPlans(this)">
 <div id="dev-palette" class="pal"></div><div id="dev-hint" style="font-weight:700;font-size:1.1rem;text-align:center;margin:6px 0"></div><button class="big-btn gray hidden" id="dev-undo" onclick="devUndoTap()">&#8630; Undo last change</button>
 <div id="plans"></div>
@@ -5228,19 +5228,40 @@ label.pd-l{display:block;font-weight:600;font-size:14px;margin-top:4px}
 .pd-page{border:2px solid #e3e2d8;border-radius:12px;padding:6px;background:#fff;cursor:pointer;text-align:center;font-weight:600;font-size:14px;font-family:inherit}
 .pd-page img{width:100%;height:120px;object-fit:contain;background:#f6f6f2;border-radius:8px;display:block;margin-bottom:4px}
 .pd-page.on{border-color:#a49f2a;box-shadow:0 0 0 3px rgba(164,159,42,.25)}
-@media(min-width:900px){.pd-main{flex-direction:row}.pd-view{flex:1;height:calc(100vh - 61px);border-bottom:0}.pd-side{width:380px;flex:none;height:calc(100vh - 61px);overflow:auto;border-left:1px solid #ecebe4}}
+@media(min-width:768px){.pd-main{flex-direction:row}.pd-view{flex:1;height:calc(100vh - 61px);height:calc(100dvh - 61px);border-bottom:0}.pd-side{width:290px;flex:none;height:calc(100vh - 61px);height:calc(100dvh - 61px);overflow:auto;border-left:1px solid #ecebe4}}
+@media(min-width:1024px){.pd-side{width:340px}}@media(min-width:1280px){.pd-side{width:380px}}
+.pd-fs{position:absolute;right:10px;top:10px;background:rgba(255,255,255,.96);font-weight:800}
+.pd-isz{font-size:13px!important}
+body.pd-full{overflow:hidden}body.pd-full .pd-top{display:none}
+body.pd-full .pd-view{position:fixed;inset:0;width:100vw;height:100vh;height:100dvh;min-height:0;z-index:15;border:0}
+body.pd-full .pd-fs{background:#a49f2a;border-color:#a49f2a;color:#fff;padding:0 20px}
+body.pd-full .pd-side{height:0;padding:0;overflow:visible;border:0;width:0}
+body.pd-full .pd-side>.pd-card{display:none}
+body.pd-full #pd-traycard,body.pd-full #pd-sel:not(.hidden),body.pd-full #pd-sc:not(.hidden){display:block;position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom));z-index:17;margin:0;box-shadow:0 6px 24px rgba(0,0,0,.22);padding:8px}
+body.pd-full #pd-sel,body.pd-full #pd-sc{max-height:46vh;overflow:auto;padding:12px}
+body.pd-full.pd-hassel #pd-traycard,body.pd-full.pd-scaling #pd-traycard{display:none}
+body.pd-full #pd-traycard h3,body.pd-full #pd-traycard .pd-muted{display:none}
+body.pd-full .pd-zoom{bottom:calc(112px + env(safe-area-inset-bottom))}
+body.pd-full.pd-hassel .pd-zoom,body.pd-full.pd-scaling .pd-zoom{display:none}
+body.pd-full .pd-scale{bottom:calc(112px + env(safe-area-inset-bottom))}
+@media(min-width:768px){body.pd-full #pd-traycard,body.pd-full #pd-sel:not(.hidden),body.pd-full #pd-sc:not(.hidden){left:auto;right:10px;top:64px;bottom:10px;width:300px;max-height:none}
+body.pd-full .pd-zoom{right:320px;bottom:10px}body.pd-full.pd-hassel .pd-zoom{display:flex}body.pd-full .pd-scale{bottom:10px}body.pd-full.pd-hassel #pd-traycard{display:none}}
+@media(orientation:landscape) and (max-height:520px){body.pd-full #pd-traycard,body.pd-full #pd-sel:not(.hidden),body.pd-full #pd-sc:not(.hidden){left:auto;right:8px;top:60px;bottom:8px;width:118px;max-height:none}
+body.pd-full #pd-sel:not(.hidden),body.pd-full #pd-sc:not(.hidden){width:300px}
+body.pd-full .pd-zoom{right:136px;bottom:8px}body.pd-full.pd-hassel .pd-zoom{display:flex;right:318px}body.pd-full .pd-scale{bottom:8px}}
+
 </style>'''
 
 DESIGN_BODY = r'''<div class="pd-top"><a class="pd-btn" href="__BACK__">&larr; Job</a><span class="pd-title">__TITLE__</span><div class="pd-tabs" id="pd-tabs"></div><span id="pd-topx"></span></div>
 <div class="pd-main"><div class="pd-view" id="pd-view"><svg id="pd-svg" xmlns="http://www.w3.org/2000/svg"><image id="pd-img" x="0" y="0" preserveAspectRatio="none"/><g id="pd-ov"></g></svg>
 <div class="pd-empty hidden" id="pd-empty"><div style="font-size:18px;font-weight:700">No floor plan yet</div><div>Add a photo, image or PDF of the floor plan.</div><button class="pd-btn gold edit-only" onclick="pickFile()">+ Add Floor Plan</button></div>
-<div class="pd-hint hidden" id="pd-hint"></div><div class="pd-scale hidden" id="pd-scale"></div>
-<div class="pd-zoom"><button class="pd-btn" aria-label="Zoom in" onclick="zoomBtn(1/1.3)">+</button><button class="pd-btn" aria-label="Zoom out" onclick="zoomBtn(1.3)">&minus;</button><button class="pd-btn" style="font-size:13px" onclick="fit();draw()">Fit</button></div></div>
+<button class="pd-btn pd-fs" id="pd-fs" onclick="fsToggle()">&#x26F6; Full screen</button><div class="pd-hint hidden" id="pd-hint"></div><div class="pd-scale hidden" id="pd-scale"></div>
+<div class="pd-zoom"><button class="pd-btn" aria-label="Zoom in" onclick="zoomBtn(1/1.3)">+</button><button class="pd-btn" aria-label="Zoom out" onclick="zoomBtn(1.3)">&minus;</button><button class="pd-btn" style="font-size:13px" onclick="fit();draw()">Fit</button><button class="pd-btn pd-isz" id="pd-iszb" aria-label="Icon size" onclick="iszCycle()">M</button></div></div>
 <div class="pd-side" id="pd-side">
 <div id="pd-x1"></div>
 <div class="pd-card hidden" id="pd-sc"><h3>Set scale</h3><div class="pd-muted">Real distance between the two points you tapped</div><label class="pd-l" for="pd-ft">Feet</label><input class="pd-in" id="pd-ft" type="number" inputmode="decimal" min="0.1" step="any" placeholder="e.g. 20"><div class="pd-row"><button class="pd-btn gold" onclick="scaleSave()">Save scale</button><button class="pd-btn" onclick="scaleCancel()">Cancel</button></div></div>
 <div class="pd-card" id="pd-plancard"><h3 id="pd-pname">Plan</h3><div class="pd-muted" id="pd-pinfo"></div><div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-meas" onclick="measToggle()">Measure</button></div><div class="pd-row edit-only" style="margin-top:8px"><button class="pd-btn" onclick="scaleStart()">Set scale</button><button class="pd-btn" onclick="renamePlan()">Rename</button><button class="pd-btn" onclick="pickFile()">+ Add plan</button><button class="pd-btn red" onclick="removePlan()">Remove</button></div>
-<div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-cov" onclick="covToggle()">Coverage: On</button><span id="pd-x2"></span></div></div>
+<div class="pd-row" style="margin-top:8px;align-items:center"><span style="font-weight:600;font-size:14px">Icon size</span><button class="pd-btn" data-isz="S" onclick="iszSet(&quot;S&quot;)">S</button><button class="pd-btn" data-isz="M" onclick="iszSet(&quot;M&quot;)">M</button><button class="pd-btn" data-isz="L" onclick="iszSet(&quot;L&quot;)">L</button></div><div class="pd-row" style="margin-top:8px"><button class="pd-btn" id="pd-cov" onclick="covToggle()">Coverage: On</button><span id="pd-x2"></span></div></div>
 <div class="pd-card" id="pd-legend"></div></div></div>
 <input type="file" id="pd-file" accept="image/*,.pdf,application/pdf" multiple style="display:none" onchange="upload(this)">
 <div class="pd-modal hidden" id="pd-pdf"><div class="pd-sheet"><h3 style="margin:0">Pick the pages to add</h3><div class="pd-muted" id="pd-pdfinfo"></div><div class="pd-pages" id="pd-pages"></div><div class="pd-row"><button class="pd-btn gold" id="pd-pdfadd" onclick="pdfAdd()">Add pages</button><button class="pd-btn" onclick="pdfClose()">Cancel</button></div></div></div>
@@ -5260,6 +5281,16 @@ function symG(t,x,y,s,solid){const c=col(t),u=s/24;return '<g transform="transla
 function symHtml(t,size){return '<svg viewBox="0 0 24 24" width="'+size+'" height="'+size+'" aria-hidden="true">'+symG(t,12,12,24)+'</svg>'}
 function covOn(){return localStorage.getItem('fo_cov')!=='0'}
 function covToggle(){localStorage.setItem('fo_cov',covOn()?'0':'1');draw();side()}
+const ISZ={S:[30,13],M:[42,15],L:[56,18]};function iszK(){const v=localStorage.getItem('fo_isz');return ISZ[v]?v:'M'}
+function iszSet(v){localStorage.setItem('fo_isz',v);iszMark();draw()}function iszCycle(){const o=['S','M','L'];iszSet(o[(o.indexOf(iszK())+1)%3])}
+function iszMark(){const v=iszK();$('pd-iszb').textContent=v;document.querySelectorAll('[data-isz]').forEach(b=>b.classList.toggle('on',b.dataset.isz===v))}
+let FS=false,FSreal=false;
+function fsToggle(on){FS=on===undefined?!FS:!!on;document.body.classList.toggle('pd-full',FS);$('pd-fs').innerHTML=FS?'Done':'&#x26F6; Full screen';
+if(FS&&on===undefined&&document.documentElement.requestFullscreen&&!document.fullscreenElement){document.documentElement.requestFullscreen().then(()=>{FSreal=true}).catch(()=>{})}
+if(!FS&&FSreal&&document.fullscreenElement){FSreal=false;document.exitFullscreen().catch(()=>{})}
+requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));setTimeout(()=>window.dispatchEvent(new Event('resize')),250)}
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement&&FSreal){FSreal=false;if(FS)fsToggle(false)}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&FS&&!sel&&!tool)fsToggle(false)});
 function pinfo(fn){return P.find(p=>p.fn===fn)}
 function camView(d){const p=pinfo(d.plan),v={dir:d.dir||0,fov:d.fov||CAM_DEF[d.type]||90,range:d.range||CAM_RANGE,ft:null};if(p&&p.ppf&&p.w){v.ft=d.rft||CAM_FT[d.type]||30;v.range=+(v.ft*p.ppf/p.w*100).toFixed(2)}return v}
 function rangePct(d){return camView(d).range}
@@ -5280,10 +5311,10 @@ function planDevs(){const p=plan();return p?DEV.filter(d=>d.plan===p.fn):[]}
 function draw(){const p=plan();$('pd-empty').classList.toggle('hidden',!!p);const img=$('pd-img'),ov=$('pd-ov');
 if(!p){img.removeAttribute('href');ov.innerHTML='';svg.removeAttribute('viewBox');$('pd-scale').classList.add('hidden');hint();return}
 const href='/uploads/'+encodeURIComponent(p.fn);if(img.getAttribute('href')!==href){img.setAttribute('href',href)}img.setAttribute('width',p.w);img.setAttribute('height',p.h);
-if(!vb)fit();svg.setAttribute('viewBox',vb.x+' '+vb.y+' '+vb.w+' '+vb.h);const K=k(),s=34*K,W=p.w,H=p.h;let h='';
+if(!vb)fit();svg.setAttribute('viewBox',vb.x+' '+vb.y+' '+vb.w+' '+vb.h);const K=k(),IZ=ISZ[iszK()],s=IZ[0]*K,fz=IZ[1]*K,W=p.w,H=p.h;let h='';
 if(covOn())planDevs().filter(d=>CAM_DEF[d.type]).forEach(d=>{const v=camView(d),c=col(d.type);h+='<path d="'+conePath(d.x*W/100,d.y*H/100,rangePct(d)*W/100,v.dir,v.fov)+'" fill="'+c+'" fill-opacity="'+(sel===d.id?.2:.11)+'" stroke="'+c+'" stroke-opacity=".55" stroke-width="1.5" vector-effect="non-scaling-stroke"'+(d.type==='PTZ Cam'?' stroke-dasharray="6 4"':'')+' pointer-events="none"/>'});
 planDevs().forEach(d=>{const x=d.x*W/100,y=d.y*H/100,lf=d.x>82;h+='<g data-id="'+esc(d.id)+'" style="cursor:pointer">'+(sel===d.id?'<circle cx="'+x+'" cy="'+y+'" r="'+(s*.78)+'" fill="#a49f2a" fill-opacity=".22" stroke="#a49f2a" stroke-width="2.5" vector-effect="non-scaling-stroke"/>':'')+
-'<circle cx="'+x+'" cy="'+y+'" r="'+(s*.75)+'" fill="transparent"/>'+symG(d.type,x,y,s)+'<text x="'+(lf?x-s*.62:x+s*.62)+'" y="'+y+'" font-size="'+(13*K)+'" font-weight="700" fill="#111" stroke="#fff" stroke-width="'+(3.5*K)+'" paint-order="stroke" dominant-baseline="middle" text-anchor="'+(lf?'end':'start')+'" pointer-events="none">'+esc(d.label||pre(d.type))+'</text></g>'});
+'<circle cx="'+x+'" cy="'+y+'" r="'+Math.max(s*.75,24*K)+'" fill="transparent"/>'+symG(d.type,x,y,s)+'<text x="'+(lf?x-s*.62:x+s*.62)+'" y="'+y+'" font-size="'+fz+'" font-weight="800" fill="#111" stroke="#fff" stroke-width="'+(4.5*K)+'" stroke-linejoin="round" paint-order="stroke" dominant-baseline="middle" text-anchor="'+(lf?'end':'start')+'" pointer-events="none">'+esc(d.label||pre(d.type))+'</text></g>'});
 scalePts.forEach((q,i)=>{const x=q.x*W/100,y=q.y*H/100;h+='<circle cx="'+x+'" cy="'+y+'" r="'+(7*K)+'" fill="#d32f2f" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
 if(scalePts.length===2)h+='<line x1="'+scalePts[0].x*W/100+'" y1="'+scalePts[0].y*H/100+'" x2="'+scalePts[1].x*W/100+'" y2="'+scalePts[1].y*H/100+'" stroke="#d32f2f" stroke-width="3" stroke-dasharray="8 5" vector-effect="non-scaling-stroke"/>';
 measPts.forEach(q=>{h+='<circle cx="'+q.x*W/100+'" cy="'+q.y*H/100+'" r="'+(7*K)+'" fill="#111" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
@@ -5301,7 +5332,7 @@ function legend(){const L=$('pd-legend'),all={},here={};DEV.forEach(d=>all[d.typ
 const p=plan();if(!DEV.length){L.innerHTML='<h3>Legend</h3><div class="pd-muted">No devices yet</div>';return}
 L.innerHTML='<h3>Legend</h3><div class="pd-muted">'+(p?esc(p.name)+': '+planDevs().length+' &middot; ':'')+'All plans: '+DEV.length+'</div>'+TYPES.filter(t=>all[t[0]]).map(t=>'<div class="pd-leg">'+symHtml(t[0],26)+'<span>'+esc(t[0])+'</span><b>'+(here[t[0]]||0)+(P.length>1?' / '+all[t[0]]:'')+'</b></div>').join('')}
 function side(){const p=plan();$('pd-plancard').classList.toggle('hidden',!p);if(p){$('pd-pname').textContent=p.name;$('pd-pinfo').textContent=(p.ppf?'Scale set: '+p.scale.ft+' ft between two points':'Not to scale yet. Tap Set scale and tap two points of a known distance.')+(p.src?' \u00b7 '+p.src:'')}
-$('pd-cov').textContent='Coverage: '+(covOn()?'On':'Off');legend();if(window.PD_SIDE)PD_SIDE()}
+$('pd-cov').textContent='Coverage: '+(covOn()?'On':'Off');legend();if(window.PD_SIDE)PD_SIDE();document.body.classList.toggle('pd-hassel',!!(sel&&DEV.find(d=>d.id===sel)));document.body.classList.toggle('pd-scaling',scaleMode===3)}
 function render(){tabs();draw();side()}
 // gestures
 const ptr=new Map();let g=null;
@@ -5321,7 +5352,7 @@ svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
 svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.15:1/1.15,e.clientX,e.clientY)},{passive:false});
 window.addEventListener('resize',()=>{if(!vb)return;const r=box(),cx=vb.x+vb.w/2,cy=vb.y+vb.h/2;vb.h=vb.w*r.height/r.width;vb.x=cx-vb.w/2;vb.y=cy-vb.h/2;draw()});
 function tap(e,id){const p=plan();if(!p)return;const q=toPlan(e),pc={x:Math.max(0,Math.min(100,q.x/p.w*100)),y:Math.max(0,Math.min(100,q.y/p.h*100))};
-if(scaleMode===1||scaleMode===2){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;scalePts.push(pc);scaleMode++;if(scaleMode===3){$('pd-sc').classList.remove('hidden');$('pd-ft').value='';setTimeout(()=>{$('pd-sc').scrollIntoView({behavior:'smooth',block:'nearest'});$('pd-ft').focus()},50)}draw();return}
+if(scaleMode===1||scaleMode===2){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;scalePts.push(pc);scaleMode++;if(scaleMode===3){$('pd-sc').classList.remove('hidden');document.body.classList.add('pd-scaling');$('pd-ft').value='';setTimeout(()=>{$('pd-sc').scrollIntoView({behavior:'smooth',block:'nearest'});$('pd-ft').focus()},50)}draw();return}
 if(measMode){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;if(measPts.length>=2)measPts=[];measPts.push(pc);draw();return}
 if(window.PD_TAP){PD_TAP(e,id,pc,q);return}}
 // plans
@@ -5345,12 +5376,13 @@ async function meta(body){const r=await fetch(API+'/plans/meta',{method:'POST',h
 async function renamePlan(){const p=plan();if(!p)return;const n=prompt('Plan name (for example Floor 1)',p.name);if(n===null||!n.trim())return;if(await meta({name:n.trim()}))render()}
 async function removePlan(){const p=plan();if(!p||!confirm('Remove '+p.name+' and the devices on it?'))return;const r=await fetch(API+'/plans/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:p.fn})});if(!r.ok){alert('Not removed');return}await reload();cur=Math.max(0,cur-1);vb=null;sel=null;render()}
 function scaleStart(){if(!plan())return;if(measMode)measToggle();sel=null;tool='';scalePts=[];scaleMode=1;if(window.PD_SIDE)PD_SIDE();draw();$('pd-view').scrollIntoView({behavior:'smooth',block:'nearest'})}
-function scaleCancel(quiet){scaleMode=0;scalePts=[];$('pd-sc').classList.add('hidden');if(!quiet)draw()}
+function scaleCancel(quiet){scaleMode=0;scalePts=[];$('pd-sc').classList.add('hidden');document.body.classList.remove('pd-scaling');if(!quiet)draw()}
 async function scaleSave(){const ft=parseFloat($('pd-ft').value);if(!(ft>0)){alert('Enter the real distance in feet');return}const [a,b]=scalePts;
 if(await meta({scale:{ax:a.x,ay:a.y,bx:b.x,by:b.y,ft:ft}})){scaleCancel(true);render()}}
 document.querySelectorAll('.edit-only').forEach(e=>e.classList.toggle('hidden',!EDIT));
 '''
 DESIGN_JS_INIT = r'''
+iszMark();if(new URLSearchParams(location.search).get('full')==='1')fsToggle(true);
 render();requestAnimationFrame(()=>{vb=null;draw()});
 '''
 def design_page(row, conn, js_extra='', body_extra=''):
@@ -5367,15 +5399,18 @@ DESIGN_CSS_EDIT = r'''<style>
 .pd-tray{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 6px;touch-action:pan-x;scrollbar-width:thin}
 .pd-tool{flex:none;width:80px;min-height:74px;border:1.5px solid #e3e2d8;border-radius:12px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:11.5px;font-weight:600;cursor:grab;padding:6px 4px;font-family:inherit;color:#111;text-align:center;line-height:1.15;touch-action:pan-x;user-select:none;-webkit-user-select:none}
 .pd-tool.on{border-color:#a49f2a;background:#f8f7ea;box-shadow:0 0 0 3px rgba(164,159,42,.28)}
-@media(min-width:900px){.pd-tray{display:grid;grid-template-columns:repeat(4,1fr);overflow:visible}.pd-tool{width:auto}}
+@media(min-width:768px){.pd-tray{display:grid;grid-template-columns:repeat(3,1fr);overflow:visible;touch-action:pan-y}.pd-tool{width:auto;touch-action:pan-y}}@media(min-width:1024px){.pd-tray{grid-template-columns:repeat(4,1fr)}}
+body.pd-full .pd-tray{display:flex;overflow-x:auto;overflow-y:hidden}body.pd-full .pd-tool{width:76px;min-height:68px}
+@media(min-width:768px){body.pd-full .pd-tray{display:grid;grid-template-columns:repeat(3,1fr);overflow:auto;max-height:100%;touch-action:pan-y}body.pd-full .pd-tool{width:auto;touch-action:pan-y}}
+@media(orientation:landscape) and (max-height:520px){body.pd-full .pd-tray{display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;height:100%;touch-action:pan-y}body.pd-full .pd-tool{width:100%;touch-action:pan-y}}
 .pd-ghost{position:fixed;z-index:30;pointer-events:none;transform:translate(-50%,-50%);filter:drop-shadow(0 4px 8px rgba(0,0,0,.3))}
 .pd-ur{position:absolute;left:10px;top:10px;display:flex;gap:8px}.pd-ur .pd-btn{background:rgba(255,255,255,.96)}
-.pd-save{position:absolute;right:10px;top:10px;background:rgba(255,255,255,.94);border:1px solid #e3e2d8;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;color:#2e7d32;pointer-events:none}
+.pd-save{position:absolute;right:10px;top:62px;background:rgba(255,255,255,.94);border:1px solid #e3e2d8;border-radius:10px;padding:6px 10px;font-size:12px;font-weight:700;color:#2e7d32;pointer-events:none}
 .pd-save.bad{color:#b00020}
 .pd-hint{top:64px}
 .pd-cam{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:6px 0 8px}.pd-cam .pd-btn{font-size:13px;padding:0 6px}
 .pd-sel{border:2px solid #a49f2a}
-@media(max-width:899px){.pd-view{height:52vh}}
+@media(max-width:767px){.pd-view{height:60vh}}
 </style>'''
 DESIGN_BODY_EDIT = r'''<div id="pd-editx"></div>'''
 DESIGN_JS_EDIT = r'''
@@ -5397,12 +5432,14 @@ async function save(){if(saving){again=true;return}saving=true;try{const r=await
 if(r.ok){const d=await r.json(),lab={};(d.devices||[]).forEach(x=>lab[x.id]=x.label);DEV.forEach(x=>{if(lab[x.id])x.label=lab[x.id]});status('Saved')}else{const e=await r.json().catch(()=>({}));status(e.error||'Not saved',true)}}catch(e){status('No connection. Not saved yet.',true)}
 saving=false;if(again){again=false;save()}draw();side()}
 window.addEventListener('beforeunload',e=>{if(saving||saveT&&$('pd-save').textContent==='Saving...'){e.preventDefault();e.returnValue=''}});
+function trayTA(){const tr=$('pd-tray');if(!tr)return;const sx=tr.scrollWidth>tr.clientWidth+2,sy=tr.scrollHeight>tr.clientHeight+2,v=sx?'pan-x':sy?'pan-y':'none';tr.style.touchAction=v;tr.querySelectorAll('.pd-tool').forEach(b=>b.style.touchAction=v)}
+window.addEventListener('resize',()=>setTimeout(trayTA,60));
 function trayMark(){document.querySelectorAll('.pd-tool').forEach(b=>b.classList.toggle('on',b.dataset.t===tool))}
 function trayInit(){const t=$('pd-tray');if(!t)return;t.innerHTML=TYPES.map(x=>'<button class="pd-tool" data-t="'+esc(x[0])+'">'+symHtml(x[0],34)+'<span>'+esc(x[0])+'</span></button>').join('');t.querySelectorAll('.pd-tool').forEach(b=>b.addEventListener('pointerdown',e=>trayDown(e,b)))}
 let TD=null;
-function trayDown(e,b){if(!plan())return;TD={t:b.dataset.t,x0:e.clientX,y0:e.clientY,id:e.pointerId,drag:false,ghost:null};try{b.setPointerCapture(e.pointerId)}catch(_){}}
+function trayDown(e,b){if(!plan())return;TD={t:b.dataset.t,x0:e.clientX,y0:e.clientY,id:e.pointerId,drag:false,ghost:null,mouse:e.pointerType==='mouse',ta:getComputedStyle(b).touchAction||''};try{b.setPointerCapture(e.pointerId)}catch(_){}}
 document.addEventListener('pointermove',e=>{if(!TD||e.pointerId!==TD.id)return;const dx=e.clientX-TD.x0,dy=e.clientY-TD.y0;
-if(!TD.drag){const phone=matchMedia('(max-width:899px)').matches;if(phone?(dy<-12&&Math.abs(dy)>Math.abs(dx)):Math.hypot(dx,dy)>8){TD.drag=true;TD.ghost=document.createElement('div');TD.ghost.className='pd-ghost';TD.ghost.innerHTML=symHtml(TD.t,46);document.body.appendChild(TD.ghost)}else return}
+if(!TD.drag){const ta=TD.ta;if(TD.mouse||ta==='none'?Math.hypot(dx,dy)>8:ta.indexOf('pan-y')>=0?(Math.abs(dx)>12&&Math.abs(dx)>Math.abs(dy)):(dy<-12&&Math.abs(dy)>Math.abs(dx))){TD.drag=true;TD.ghost=document.createElement('div');TD.ghost.className='pd-ghost';TD.ghost.innerHTML=symHtml(TD.t,46);document.body.appendChild(TD.ghost)}else return}
 TD.ghost.style.left=e.clientX+'px';TD.ghost.style.top=e.clientY+'px';e.preventDefault()},{passive:false});
 document.addEventListener('pointerup',e=>{if(!TD||e.pointerId!==TD.id)return;const T=TD;TD=null;if(T.ghost)T.ghost.remove();
 if(!T.drag){tool=tool===T.t?'':T.t;sel=null;trayMark();draw();side();return}
@@ -5434,7 +5471,7 @@ c.innerHTML='<div style="display:flex;align-items:center;gap:10px">'+symHtml(d.t
 if(EDIT){$('pd-part').value=d.part||'';$('pd-note').value=d.note||''}};
 document.addEventListener('keydown',e=>{if(!EDIT||/INPUT|TEXTAREA/.test(document.activeElement.tagName))return;const m=e.ctrlKey||e.metaKey;
 if(m&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}else if(m&&e.key.toLowerCase()==='y'){e.preventDefault();redo()}else if((e.key==='Delete'||e.key==='Backspace')&&sel){e.preventDefault();del()}else if(e.key==='Escape'){tool='';sel=null;trayMark();draw();side()}});
-trayInit();undoBtns();
+trayInit();undoBtns();setTimeout(trayTA,50);
 '''
 
 @app.route('/design/<job_id>')
