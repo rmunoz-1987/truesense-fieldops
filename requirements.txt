@@ -3,3 +3,4 @@ gunicorn
 tzdata
 pywebpush
 pymupdf
+pillow

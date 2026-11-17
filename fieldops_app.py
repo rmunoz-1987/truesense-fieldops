@@ -5481,6 +5481,7 @@ if(m&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo()}els
 trayInit();undoBtns();setTimeout(trayTA,50);
 (function(){const u=encodeURIComponent(JID);let h='';if(D.office)h+='<a class="pd-btn gold" href="/job/'+u+'/bom">Bill of materials</a>';if(EDIT)h+='<a class="pd-btn" href="/job/'+u+'/materials?from=bom">Request materials from plan</a>';
 if(h)$('pd-legend').insertAdjacentHTML('afterend','<div class="pd-card" id="pd-bomcard"><h3>Materials</h3><div class="pd-row">'+h+'</div></div>')})();
+(function(){const u=encodeURIComponent(JID);$('pd-legend').insertAdjacentHTML('afterend','<div class="pd-card" id="pd-pdfcard"><h3>Plan PDF</h3><div class="pd-muted" style="margin-bottom:8px">One page per floor with the title block, legend and bill of materials.</div><div class="pd-row"><a class="pd-btn gold" id="pd-pdf-client" target="_blank" href="/job/'+u+'/plan.pdf">Client PDF</a><a class="pd-btn" target="_blank" href="/job/'+u+'/plan.pdf?cov=0">Without coverage</a>'+(D.office?'<a class="pd-btn" target="_blank" href="/job/'+u+'/plan.pdf?copy=office">Office PDF with prices</a>':'')+'</div><div class="pd-muted" style="margin-top:6px">The client PDF never shows prices.</div></div>')})();
 '''
 
 # ---------------- Bill of materials from plan devices (office edits; subs never see prices) ----------------
@@ -5611,6 +5612,149 @@ def bom_page(job_id):
     body+='<a class="big-btn gray" href="/job/%s/estimate">Open estimate</a></form>'%h(urllib.parse.quote(job_id))
     body+='<template id="xtpl">'+XL%('','1','','','-')+'</template><script>function bomAdd(){const t=document.getElementById("xtpl").content.cloneNode(true);document.getElementById("xls").appendChild(t);const L=document.querySelectorAll("#xls .xl");L[L.length-1].querySelector("[name=x_desc]").focus()}</script>'
     return ops_page('Bill of materials', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
+
+# ---------------- Branded plan PDF (one page per floor + BOM). Client copy never has prices. ----------------
+PDF_GOLD=(0.643,0.624,0.165)
+def pdf_sym_g(t, col, cx, cy, s):
+    sym=DEV_SYM.get(t,'<circle cx="12" cy="12" r="3"/>')
+    return ('<g transform="translate(%.2f %.2f) scale(%.4f)"><circle cx="12" cy="12" r="11" fill="%s" stroke="#ffffff" stroke-width="1.6"/>'
+            '<g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g></g>')%(cx-s/2,cy-s/2,s/24,col,sym)
+def pdf_overlay_svg(fn, devs, W, H, ppf, cones):
+    colors={n:c for n,p,c in DEVICE_TYPES}; ds=[d for d in devs if d.get('plan')==fn]; s=max(W,H)*0.028; out=[]
+    if cones:
+        for d in ds:
+            if d['type'] not in CAM_DEF: continue
+            v=cam_view(d, ppf, W); col=colors[d['type']]
+            out.append('<path d="%s" fill="%s" fill-opacity="%s" stroke="%s" stroke-opacity="0.7" stroke-width="%.1f"%s/>'%(cone_path(d['x']*W/100,d['y']*H/100,v['range']*W/100,v['dir'],v['fov']),col,'0.06' if v['fov']>=360 else '0.12',col,max(W,H)*0.0014,
+                       ' stroke-dasharray="%.1f %.1f"'%(W*.008,W*.006) if d['type']=='PTZ Cam' else ''))
+    for d in ds:
+        cx,cy=d['x']*W/100,d['y']*H/100; out.append(pdf_sym_g(d['type'],colors[d['type']],cx,cy,s))
+    for d in ds:
+        cx,cy=d['x']*W/100,d['y']*H/100; lf=d['x']>82; lab=_esc(d.get('label') or '')
+        x=cx-s*.62 if lf else cx+s*.62; anc='end' if lf else 'start'
+        for paint in ('fill="#ffffff" stroke="#ffffff" stroke-width="%.1f"'%(s*.22), 'fill="#111111"'):
+            out.append('<text x="%.1f" y="%.1f" font-size="%.1f" font-weight="bold" font-family="Helvetica, Arial, sans-serif" text-anchor="%s" %s>%s</text>'%(x,cy+s*.22,s*.62,anc,paint,lab))
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">%s</svg>'%(W,H,W,H,''.join(out))
+def pdf_plan_image(pg, r, path):
+    import pymupdf
+    try:
+        pix=pymupdf.Pixmap(path); sh=0
+        while max(pix.width,pix.height)/(2**sh)>2600: sh+=1
+        if sh: pix.shrink(sh)
+        if pix.alpha: pix=pymupdf.Pixmap(pix,0)
+        pg.insert_image(r, pixmap=pix); return
+    except Exception:
+        pass
+    from PIL import Image  # WEBP / GIF plans that MuPDF cannot read
+    import io
+    im=Image.open(path); im.thumbnail((2600,2600))
+    if im.mode!='RGB':
+        im=im.convert('RGBA'); bg=Image.new('RGB',im.size,(255,255,255)); bg.paste(im,mask=im.split()[3]); im=bg
+    b=io.BytesIO(); im.save(b,'PNG'); pg.insert_image(r, stream=b.getvalue())
+def pdf_svg_doc(svg):
+    import pymupdf
+    d=pymupdf.open(stream=svg.encode('utf-8'), filetype='svg'); b=d.convert_to_pdf(); d.close(); return pymupdf.open('pdf', b)
+def pdf_nice_ft(pt_per_ft):
+    for v in (1,2,5,10,20,25,50,100,200,250,500,1000):
+        if v*pt_per_ft>=70: return v
+    return 1000
+def plan_pdf_bytes(conn, row, prices, cones, who):
+    import pymupdf
+    info=plan_info(conn,row['id']); devs=parse_devices(row['survey_devices']); colors={n:c for n,p,c in DEVICE_TYPES}
+    doc=pymupdf.open(); PW,PH=792,612; M=24
+    logo=os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')
+    date=today_local().strftime('%b %-d, %Y'); copy='Office copy (with prices)' if prices else 'Client copy'
+    icons={}
+    def icon(t):
+        if t not in icons: icons[t]=pdf_svg_doc('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">%s</svg>'%pdf_sym_g(t,colors[t],12,12,24))
+        return icons[t]
+    _,bom=bom_build(conn,row,True)
+    n_pages=len(info)+max(1,(len(bom)+21)//22)
+    def header(pg, title, no):
+        pg.draw_rect(pymupdf.Rect(0,0,PW,4), color=None, fill=PDF_GOLD)
+        if os.path.exists(logo):
+            try: pg.insert_image(pymupdf.Rect(M,12,M+110,44), filename=logo, keep_proportion=True)
+            except Exception: pass
+        pg.insert_htmlbox(pymupdf.Rect(M+120,14,PW-160,46), '<div style="font-family:sans-serif;font-size:15px;font-weight:bold;color:#111">%s</div><div style="font-family:sans-serif;font-size:9px;color:#555">%s &middot; %s</div>'%(h(title),h(row['customer'] or ''),h(row['title'] or '')))
+        pg.insert_htmlbox(pymupdf.Rect(PW-160,16,PW-M,46), '<div style="font-family:sans-serif;font-size:9px;color:#555;text-align:right">Page %d of %d<br>%s</div>'%(no,n_pages,copy))
+        pg.draw_line((M,52),(PW-M,52), color=(0.88,0.87,0.82), width=0.8)
+        pg.insert_htmlbox(pymupdf.Rect(M,PH-20,PW-M,PH-6), '<div style="font-family:sans-serif;font-size:7.5px;color:#777">True Sense Security &middot; Job %s &middot; Prepared by %s on %s &middot; Device locations and coverage are approximate.</div>'%(h(row['id']),h(who),date))
+    def title_block(pg, x0, y0, x1, p):
+        rows=[('Job ID',row['id']),('Client',row['customer'] or '-'),('Site',row['address'] or '-'),('Date',date),('Prepared by',who),('Floor',p['name'] if p else '-'),('Scale',('Set (%g ft reference)'%p['scale']['ft']) if p and p.get('ppf') else 'Not to scale')]
+        html='<table style="font-family:sans-serif;font-size:8.5px;width:100%;border-collapse:collapse">'+''.join('<tr><td style="color:#666;padding:2px 4px 2px 0;vertical-align:top;width:58px">%s</td><td style="font-weight:bold;padding:2px 0">%s</td></tr>'%(h(k),h(v)) for k,v in rows)+'</table>'
+        r=pymupdf.Rect(x0,y0,x1,y0+128); pg.draw_rect(r, color=PDF_GOLD, width=1.2)
+        pg.insert_htmlbox(pymupdf.Rect(x0+6,y0+5,x1-6,y0+126), html); return y0+128
+    no=0
+    for p in info:
+        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Floor Plan: '+p['name'],no)
+        area=pymupdf.Rect(M,60,PW-M-190,PH-26); W,H=p['w'],p['h']; k=min(area.width/W,area.height/H); rw,rh=W*k,H*k
+        r=pymupdf.Rect(area.x0,area.y0,area.x0+rw,area.y0+rh)
+        path=os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['fn']))
+        try: pdf_plan_image(pg, r, path)
+        except Exception as ex:
+            app.logger.warning('plan pdf image: %s', ex); pg.insert_htmlbox(r, '<div style="font-family:sans-serif;color:#b00020">Plan image could not be read.</div>')
+        pg.draw_rect(r, color=(0.85,0.85,0.8), width=0.6)
+        try: pg.show_pdf_page(r, pdf_svg_doc(pdf_overlay_svg(p['fn'],devs,W,H,p.get('ppf'),cones)), 0)
+        except Exception as ex: app.logger.warning('plan pdf overlay: %s', ex)
+        if p.get('ppf'):
+            ptft=p['ppf']*k; ft=pdf_nice_ft(ptft); L=ft*ptft; bx,by=r.x0+8,r.y1-16
+            pg.draw_rect(pymupdf.Rect(bx-4,by-10,bx+L+50,by+8), color=None, fill=(1,1,1), fill_opacity=0.9)
+            for i in range(4): pg.draw_rect(pymupdf.Rect(bx+i*L/4,by-3,bx+(i+1)*L/4,by+3), color=(0,0,0), fill=(0,0,0) if i%2==0 else (1,1,1), width=0.6)
+            pg.insert_text((bx+L+5,by+3), '%g ft'%ft, fontsize=8, fontname='helv')
+            pg.insert_text((bx,by-5), '0', fontsize=6, fontname='helv')
+        x0=PW-M-180; y=title_block(pg,x0,60,PW-M,p)+10
+        here={}
+        for d in devs:
+            if d['plan']==p['fn']: here[d['type']]=here.get(d['type'],0)+1
+        allc={}
+        for d in devs:
+            if any(d['plan']==q['fn'] for q in info): allc[d['type']]=allc.get(d['type'],0)+1
+        pg.insert_htmlbox(pymupdf.Rect(x0,y,PW-M,y+16), '<div style="font-family:sans-serif;font-size:10px;font-weight:bold">Legend%s</div>'%(' (this floor / all floors)' if len(info)>1 else ''))
+        y+=18
+        if not here: pg.insert_htmlbox(pymupdf.Rect(x0,y,PW-M,y+14), '<div style="font-family:sans-serif;font-size:8.5px;color:#666">No devices on this floor.</div>'); y+=16
+        for t,_,_ in DEVICE_TYPES:
+            if t not in here: continue
+            if y>PH-70: break
+            pg.show_pdf_page(pymupdf.Rect(x0,y,x0+14,y+14), icon(t), 0)
+            pg.insert_htmlbox(pymupdf.Rect(x0+20,y+1,PW-M,y+15), '<table style="font-family:sans-serif;font-size:8.5px;width:100%%;border-collapse:collapse"><tr><td>%s</td><td style="text-align:right;font-weight:bold">%d%s</td></tr></table>'%(h(t),here[t],(' / %d'%allc[t]) if len(info)>1 else ''))
+            y+=17
+        if cones and any(t in CAM_DEF for t in here):
+            pg.insert_htmlbox(pymupdf.Rect(x0,y+2,PW-M,y+30), '<div style="font-family:sans-serif;font-size:7.5px;color:#666">Shaded areas show approximate camera coverage%s.</div>'%(' in real feet' if p.get('ppf') else ''))
+    if not info:
+        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Floor Plan',no); title_block(pg,M,70,M+260,None)
+        pg.insert_htmlbox(pymupdf.Rect(M,240,PW-M,300), '<div style="font-family:sans-serif;font-size:14px;color:#666">No floor plans on this job yet.</div>')
+    chunks=[bom[i:i+22] for i in range(0,len(bom),22)] or [[]]
+    for ci,ch in enumerate(chunks):
+        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Bill of Materials'+(' (continued)' if ci else ''),no)
+        th='<th style="text-align:%s;padding:4px 6px;border-bottom:1.5px solid #a49f2a;font-size:9px">%s</th>'
+        cols=[('right','Qty'),('left','Part #'),('left','Description'),('left','Floors')]+([('right','Unit price'),('right','Line total')] if prices else [])
+        html='<table style="font-family:sans-serif;width:100%;border-collapse:collapse"><tr>'+''.join(th%c for c in cols)+'</tr>'
+        for l in ch:
+            td='<td style="padding:3px 6px;border-bottom:0.5px solid #ddd;font-size:8.5px;text-align:%s">%s</td>'
+            cells=[('right',h(mr_qty(l['qty']))),('left',h(l['part'] or '-')),('left',h(l['desc'] or l['type'])),('left',h(l['floors'] or 'Extra'))]
+            if prices: cells+=[('right',money(l['sell']) if l.get('sell') is not None else '-'),('right',money(l['sell_total']) if l.get('sell') is not None else '-')]
+            html+='<tr>'+''.join(td%c for c in cells)+'</tr>'
+        if not ch: html+='<tr><td colspan="%d" style="padding:10px 6px;font-size:10px;color:#666">No devices placed yet.</td></tr>'%len(cols)
+        if prices and ci==len(chunks)-1 and bom:
+            html+='<tr><td colspan="5" style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">Materials total</td><td style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">%s</td></tr>'%money(sum(l['sell_total'] for l in bom))
+        html+='</table>'
+        pg.insert_htmlbox(pymupdf.Rect(M,62,PW-M,PH-30), html)
+        if ci==len(chunks)-1:
+            tot=sum(l['qty'] for l in bom if l['src']=='plan')
+            pg.insert_htmlbox(pymupdf.Rect(M,PH-48,PW-M,PH-26), '<div style="font-family:sans-serif;font-size:8px;color:#666">%d devices on %d floor plan%s.%s</div>'%(tot,len(info),'' if len(info)==1 else 's',' Prices do not include labor or tax.' if prices else ''))
+    out=doc.tobytes(garbage=3, deflate=True); doc.close(); return out
+
+@app.route('/job/<job_id>/plan.pdf')
+def plan_pdf(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    from flask import Response
+    prices=is_office() and request.args.get('copy')=='office'
+    cones=request.args.get('cov','1')!='0'
+    try: data=plan_pdf_bytes(conn,row,prices,cones,nice_name(me()) or me())
+    finally: conn.close()
+    fn='%s-plan%s.pdf'%(secure_filename(row['id']) or 'job','-office' if prices else '')
+    return Response(data, mimetype='application/pdf', headers={'Content-Disposition':'inline; filename="%s"'%fn,'Cache-Control':'no-store'})
 
 @app.route('/design/<job_id>')
 def design(job_id):
