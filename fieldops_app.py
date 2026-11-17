@@ -259,7 +259,7 @@ def login_ok(name):
 CSRF_EXEMPT = ('/api/qbo/pending', '/api/qbo/result', '/api/qbo-monthly', '/api/tech-support/reply')
 @app.before_request
 def csrf_check():
-    if request.method in ('GET','HEAD','OPTIONS') or request.path in CSRF_EXEMPT: return
+    if request.method in ('GET','HEAD','OPTIONS') or request.path in CSRF_EXEMPT or request.path.startswith('/api/material-requests/'): return
     src=request.headers.get('Origin') or request.headers.get('Referer') or ''
     if not src: return  # non-browser clients (browsers always send Origin on cross-site posts)
     if urllib.parse.urlsplit(src).netloc!=request.host:
@@ -277,7 +277,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not USERS:
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -407,6 +407,8 @@ def bg_tick():
     try:
         conn=get_db(); REMIND_LAST[0]=0; make_reminders(conn); run_plans(conn); conn.close()
     except Exception as e: print('REMINDERS failed %s' % e, flush=True)
+    try: mr_webhook_retry()
+    except Exception as e: print('MATREQ_RETRY failed %s' % type(e).__name__, flush=True)
 def bg_loop():
     while True:
         bg_tick(); time.sleep(int(os.environ.get('BG_EVERY', 900)))
@@ -627,7 +629,7 @@ def money_page():
 @app.route('/more')
 def more_page():
     if not is_office(): return redirect('/')
-    return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/to-order','To Order','Parts to buy','cart'),
+    return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
         ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
         ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Week board by sub','cal'),('/calendar','Calendar','Week list','cal'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
 
@@ -717,6 +719,8 @@ def api_today():
     add(follow,'Follow-ups due','Calls to make today','bell','/jobs?f=follow','Call list')
     add(texts,'Texts to review','Drafts waiting for your OK. Nothing sends on its own.','note','/jobs?f=texts','Review')
     add(len(docs),'Sub docs due',', '.join('%s %s'%(d['sub'],'missing' if d['missing'] else ('expired' if d['expired'] else 'expires '+d['expires'])) for d in docs[:3]),'doc','/techs','Check')
+    mrn={r['status']:r['n'] for r in conn.execute("SELECT status,COUNT(*) n FROM material_requests WHERE status IN ('submitted','waiting_roland') GROUP BY status")}
+    add(sum(mrn.values()),'Materials to order',', '.join(x for x in ('%d new'%mrn['submitted'] if mrn.get('submitted') else '','%d waiting on you'%mrn['waiting_roland'] if mrn.get('waiting_roland') else '') if x),'cart','/orders','Order')
     add(len(low),'Low stock',', '.join(r['name'] for r in low[:3]),'box','/stock','Restock')
     add(qq+qerr,'QuickBooks queue','%d waiting%s'%(qq,', %d failed'%qerr if qerr else ''),'qbo','/qbo','Open','red' if qerr else '')
     # sparklines: last 8 weeks, completed jobs and sales
@@ -1247,6 +1251,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <button class="big-btn gray" style="font-size:1.3rem;margin-bottom:8px" onclick="showList()">&larr; Back</button>
 <div id="steps-box"><div class="stp-bar" id="stp-bar"></div><div class="stp-why" id="stp-why"></div><button class="big-btn" id="next-btn" onclick="nextStep()">Next Step</button><button class="big-btn gray" id="more-all" onclick="toggleGuided()">More</button></div>
 <div class="job"><div class="job-id" id="d-id"></div><div id="d-title" style="font-weight:600;font-size:1.15rem"></div><div id="d-customer" style="color:#666"></div><div id="d-address" style="color:#666"></div><div id="d-scope" style="white-space:pre-wrap;margin-top:8px"></div><div id="d-created" style="color:#666;font-size:.85rem;margin-top:6px"></div></div>
+<div id="mr-box" class="job hidden"></div>
 <div id="sec-help">{% if office %}<div id="help-banner" class="job hidden" style="border:2px solid #b00020;background:#fff5f5"><div style="color:#b00020;font-weight:700;font-size:1.1rem">&#9888; Needs Help</div>
 <div id="help-meta" class="muted" style="font-size:.85rem"></div><div id="help-text" style="white-space:pre-wrap;margin:6px 0"></div><div id="help-img"></div>
 </div>{% endif %}
@@ -1829,12 +1834,16 @@ function addPunch(){const n=document.getElementById('punch-new');const t=n.value
 async function assignMe(){const r=await post('/reassign',{tech:{{ name|tojson }}});if(r.ok){currentJob.tech={{ name|tojson }};const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech;alert('Assigned to you')}else alert('Error')}
 async function copyJob(){const id=prompt('New Job ID (leave blank to auto-number)','');if(id===null)return;const sd=prompt('Scheduled date (YYYY-MM-DD, blank = today)','');if(sd===null)return;
 const r=await post('/copy',{id:id.trim(),scheduled_date:sd.trim()});const d=await r.json().catch(()=>({}));if(r.ok){alert('Copied as '+d.id);openJob(d.id)}else alert(d.error||'Error')}
+async function renderMR(){const b=document.getElementById('mr-box'),j=currentJob;if(!b||!j)return;if(j.job_type==='Office Task'){b.classList.add('hidden');return}b.classList.remove('hidden');
+const u='/job/'+encodeURIComponent(j.id)+'/materials';b.innerHTML='<div style="font-weight:800;font-size:1.2rem">Materials from ADI</div><a class="big-btn" href="'+u+'">Request materials</a>';
+let L=[];try{const r=await fetch('/api/jobs/'+encodeURIComponent(j.id)+'/material-requests');if(r.ok)L=(await r.json()).requests||[]}catch(e){}if(currentJob!==j)return;
+b.innerHTML='<div style="font-weight:800;font-size:1.2rem">Materials from ADI</div>'+L.map(m=>'<div class="mr-st" style="border-top:1px solid var(--border);padding:8px 0"><div style="font-weight:700">'+esc(m.rid)+' &middot; '+esc(m.status_line)+'</div><div class="muted" style="font-size:.9rem">'+esc(m.items.map(i=>i.qty+' x '+(i.desc||i.part)).join(', '))+'</div>'+(m.can_pickup?'<a class="big-btn green" href="/materials/'+m.id+'/pickup">I picked it up</a>':'')+(OFFICE?'<a class="big-btn gray" href="/orders/'+m.id+'">Open order</a>':'')+'</div>').join('')+'<a class="big-btn" href="'+u+'">Request materials</a>'}
 async function openJob(id){const r=await fetch('/api/jobs/'+encodeURIComponent(id));if(!r.ok){alert('Job not found');return}currentJob=await r.json();history.replaceState(null,'','/?job='+encodeURIComponent(currentJob.id));
 guided=true;renderPhotos();renderBlueprints();renderHelp();renderClock();document.getElementById('support-note').value='';loadSupport();document.getElementById('help-form').classList.add('hidden');document.getElementById('help-note').value='';renderMats();renderTotals();fillSurvey();renderTicks('punch',currentJob.punch_list||[],savePunch,true);document.getElementById('punch-new').value='';document.getElementById('status').value=currentJob.status||'assigned';document.getElementById('hours').value='';
 const pn=document.getElementById('private-notes');if(pn)pn.value=currentJob.private_notes||'';document.getElementById('print').href='/print/job/'+encodeURIComponent(currentJob.id);
 document.getElementById('d-id').textContent=currentJob.id;document.getElementById('d-title').textContent=currentJob.title;
 document.getElementById('d-customer').textContent=currentJob.customer;document.getElementById('d-address').textContent=currentJob.address;
-document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();renderReview();document.getElementById('sec-omw').style.display=['completed','review'].includes(currentJob.status)?'none':'';const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
+document.getElementById('d-scope').textContent=currentJob.scope||'';document.getElementById('d-created').textContent=currentJob.created_by?'Created by '+currentJob.created_by:'';renderChecklist();loadUpdates();loadFollow();renderHub();renderReview();renderMR();document.getElementById('sec-omw').style.display=['completed','review'].includes(currentJob.status)?'none':'';const rt=document.getElementById('r-tech');if(rt)rt.value=currentJob.tech||'';document.getElementById('update-note').value='';
 const c=document.getElementById('call');const ph=(currentJob.phone||'').replace(/[^0-9+]/g,'');if(ph){c.href='tel:'+ph;c.textContent='Call Customer ('+currentJob.phone+')';c.style.display='block'}else{c.removeAttribute('href');c.style.display='none'}
 document.getElementById('history').href='/clients?name='+encodeURIComponent(currentJob.customer||'');
 document.getElementById('directions').href='https://maps.google.com/?q='+encodeURIComponent(currentJob.address);
@@ -2029,7 +2038,7 @@ def get_job(job_id):
     conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
     if not row: return ('',404)
     if not can_see(row): return jsonify({'error':'not your job'}),403
-    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
+    conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
     extra={}
     if is_office():
         n,c=(row['hub_nonce'],row['hub_created_at']) if row['hub_nonce'] and row['hub_created_at'] else hub_new(conn, job_id)
@@ -2121,6 +2130,8 @@ def build_invoice_draft(conn, job_id, now):
     if pl:
         pkg['service_plan']={'id':pl['id'],'title':pl['title'],'price':pl['price'] or 0,'every_months':pl['every_months']}
         pkg['line_items']=[{'description':(pl['title'] or 'Service plan visit')+' - visit '+(j['scheduled_date'] or ''),'qty':1,'rate':pl['price'] or 0,'amount':pl['price'] or 0}]
+    pkg['material_requests']=[mr_dict(r, True) for r in conn.execute("SELECT * FROM material_requests WHERE job_id=? AND status!='canceled' ORDER BY id",(job_id,))]
+    pkg['material_lines']=mr_job_lines(conn, job_id)
     conn.execute('INSERT OR REPLACE INTO invoice_drafts (job_id,package,status,created_at) VALUES (?,?,?,?)',(job_id,json.dumps(pkg),'ready_for_review',now))
     conn.commit()
     app.logger.warning('INVOICE_DRAFT_READY %s', json.dumps(pkg))
@@ -2201,7 +2212,7 @@ def upload_photos(job_id):
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
     if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
-    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]; conn.close()
+    photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
 
 def blueprints(conn, job_id):
@@ -2436,7 +2447,7 @@ def need_help(job_id):
         f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
         conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,'help',datetime.utcnow().isoformat()))
     else:
-        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
+        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','matreq','ticket') ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
         fn=last['filename'] if last else ''
     conn.execute("UPDATE jobs SET help_flag='open',help_note=?,help_at=?,help_by=?,help_photo=? WHERE id=?",(note,now_local_str(),me(),fn,job_id))
     conn.commit(); j=job_dict(conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()); conn.close()
@@ -2468,7 +2479,7 @@ def support_list(job_id):
         lastrow=conn.execute('SELECT author FROM support_replies WHERE job_id=? ORDER BY id DESC LIMIT 1',(job_id,)).fetchone()
         if not lastrow or lastrow['author']=='Resolved': conn.close(); return jsonify({'error':'No open thread. Use Need Help to start a new one.'}),409
         conn.execute('INSERT INTO support_replies (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit()
-        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type!='blueprint' ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
+        last=conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','matreq','ticket') ORDER BY id DESC LIMIT 1",(job_id,)).fetchone()
         j=dict(job_dict(row)); j['help_by']=me(); j['help_note']=note
         notify_tech_support(j, last['filename'] if last else '')
     rows=[dict(x) for x in conn.execute("SELECT IFNULL(author,'Tech Support') AS author,note,created_at,IFNULL(kind,'') AS kind FROM support_replies WHERE job_id=? ORDER BY id DESC",(job_id,)).fetchall()]; conn.close()
@@ -2504,7 +2515,7 @@ def notify_kelly(conn, job_id, event):
     j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     if not j: return
     sv=clean_survey(j['survey_form']); base=(os.environ.get('RENDER_EXTERNAL_URL') or request.host_url).rstrip('/')
-    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(job_id,)).fetchall()]
+    fns=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(job_id,)).fetchall()]
     mats=[m['text'] for m in parse_materials(j['materials_list'])]
     body={'event':event,'job_id':j['id'],'title':j['title'] or '','customer':j['customer'] or '','address':j['address'] or '',
           'phone':j['phone'] or '','scope':j['scope'] or '','sent_by':me(),
@@ -3040,6 +3051,8 @@ def reports_page():
     return ops_page('Reports', body)
 
 def qbo_lines(conn, row):
+    return qbo_base_lines(conn, row)+mr_job_lines(conn, row['id'])
+def qbo_base_lines(conn, row):
     try: pkg=json.loads((conn.execute('SELECT package FROM invoice_drafts WHERE job_id=?',(row['id'],)).fetchone() or {'package':'{}'})['package'] or '{}')
     except Exception: pkg={}
     if pkg.get('line_items'): return [{'description':str(l.get('description'))[:4000],'qty':fnum(l.get('qty'),1),'rate':round(fnum(l.get('rate')),2),'amount':round(fnum(l.get('amount')),2)} for l in pkg['line_items']]
@@ -3271,7 +3284,7 @@ def client_jobs(conn, name):
 def job_full(conn, r):
     d=job_dict(r)
     d['updates']=[dict(u) for u in conn.execute('SELECT author,note,created_at FROM job_updates WHERE job_id=? ORDER BY id DESC',(r['id'],)).fetchall()]
-    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily') ORDER BY id",(r['id'],)).fetchall()]
+    d['photos']=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(r['id'],)).fetchall()]
     d['blueprints']=blueprints(conn, r['id']); d['plans']=plan_files(conn, r['id'])
     return d
 
@@ -4626,7 +4639,7 @@ def delete_client():
         for ph in conn.execute('SELECT filename FROM photos WHERE job_id=?',(row['id'],)).fetchall():
             try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(ph['filename'])))
             except OSError: pass
-        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
+        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours','material_requests'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
     conn.execute('DELETE FROM jobs WHERE LOWER(TRIM(customer))=?',(k,))
     conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,)); conn.commit(); conn.close()
     return redirect('/clients')
@@ -4661,7 +4674,7 @@ def delete_job(job_id):
     for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
         try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
         except OSError: pass
-    for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
+    for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours','material_requests'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(job_id,))
     n=conn.execute('DELETE FROM jobs WHERE id=?',(job_id,)).rowcount; conn.commit(); conn.close()
     return (jsonify({'ok':True}) if n else ('',404))
 
@@ -4686,6 +4699,332 @@ def get_invoice_draft(job_id):
     conn=get_db(); r=conn.execute('SELECT * FROM invoice_drafts WHERE job_id=?',(job_id,)).fetchone(); conn.close()
     if not r: return ('',404)
     return jsonify(dict(json.loads(r['package']),draft_status=r['status'],draft_created_at=r['created_at']))
+
+# ---------- Material requests (ADI will call) ----------
+MR_SHIP_TO='ADI Northwest (Pinemont), will call'
+MR_STATUS=[('submitted','Submitted'),('waiting_roland','Waiting on Roland'),('ordered','Ordered'),('ready','Ready for pickup'),('picked_up','Picked up'),('backordered','Backordered'),('canceled','Canceled')]
+MR_LABEL=dict(MR_STATUS)
+MR_PENDING=('submitted','waiting_roland')
+MR_PICKUP_OK=('ordered','ready')
+
+def mr_init():
+    conn=get_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS material_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT, customer TEXT, account_no TEXT, sub TEXT, requested_by TEXT,
+        ship_to TEXT, needed_by TEXT, urgency TEXT, note TEXT, photo TEXT, items TEXT, status TEXT DEFAULT 'submitted', status_at TEXT, status_by TEXT, history TEXT,
+        bill INTEGER DEFAULT 1, office_note TEXT, pickup_photo TEXT, summary_text TEXT, email_draft TEXT, summary_at TEXT, webhook TEXT, webhook_tries INTEGER DEFAULT 0,
+        created_at TEXT, updated_at TEXT)''')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_material_requests_job ON material_requests(job_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS ix_material_requests_status ON material_requests(status)')
+    conn.commit(); conn.close()
+mr_init()
+
+def mr_account(conn):
+    r=conn.execute("SELECT value FROM settings WHERE key='adi_account'").fetchone()
+    return (r['value'] if r else '') or ''
+def mr_items(s):
+    try: v=json.loads(s or '[]')
+    except Exception: v=[]
+    out=[]
+    for x in (v if isinstance(v,list) else []):
+        if not isinstance(x,dict): continue
+        uc=x.get('unit_cost')
+        out.append({'part':str(x.get('part') or '')[:80],'desc':str(x.get('desc') or '')[:300],'qty':fnum(x.get('qty'),1),'notes':str(x.get('notes') or '')[:300],
+                    'unit_cost':(round(fnum(uc),2) if uc not in (None,'') else None)})
+    return out
+def mr_day(iso):
+    d=utc_day(iso)
+    try: return datetime.strptime(d,'%Y-%m-%d').strftime('%b %-d')
+    except Exception: return ''
+def mr_when(iso):
+    try: return datetime.fromisoformat(str(iso)[:19]).replace(tzinfo=ZoneInfo('UTC')).astimezone(ZoneInfo('America/Chicago')).strftime('%b %-d, %-I:%M %p CT')
+    except Exception: return ''
+def mr_line(d):
+    s=d['status']; day=mr_day(d['status_at'] or d['created_at'])
+    t={'submitted':'Submitted %s. The office will order it.','waiting_roland':'Waiting on Roland since %s.','ordered':'Ordered %s, will call at ADI Pinemont.',
+       'ready':'Ready for pickup %s, will call at ADI Pinemont.','picked_up':'Picked up %s.','backordered':'Backordered %s. The office will update you.','canceled':'Canceled %s.'}.get(s,s+' %s')%day
+    if s=='picked_up' and d.get('status_by'): t=t[:-1]+' by %s.'%d['status_by']
+    return t
+def mr_qty(q): return '%g'%q
+def mr_dict(r, prices):
+    d={k:r[k] for k in ('id','job_id','customer','account_no','sub','requested_by','ship_to','needed_by','urgency','note','photo','status','status_at','status_by','pickup_photo','created_at')}
+    d['rid']='MR-%d'%r['id']; d['status_label']=MR_LABEL.get(r['status'],r['status']); d['status_line']=mr_line(d); d['created_local']=mr_when(r['created_at'])
+    items=mr_items(r['items'])
+    if prices:
+        for i in items: i['total']=round(i['unit_cost']*i['qty'],2) if i['unit_cost'] is not None else None
+        d['total']=round(sum(i['total'] or 0 for i in items),2); d['priced']=all(i['unit_cost'] is not None for i in items) and bool(items)
+        d.update({'bill':bool(r['bill']),'office_note':r['office_note'] or '','summary_text':r['summary_text'] or '','email_draft':r['email_draft'] or '','summary_at':r['summary_at'] or '',
+                  'webhook':r['webhook'] or '','history':json.loads(r['history'] or '[]')})
+    else:
+        for i in items: i.pop('unit_cost',None)
+    d['items']=items; d['can_pickup']=r['status'] in MR_PICKUP_OK
+    return d
+def mr_set(conn, rid, st, by, note=''):
+    r=conn.execute('SELECT history FROM material_requests WHERE id=?',(rid,)).fetchone()
+    hist=json.loads((r['history'] if r else '') or '[]'); now=datetime.utcnow().isoformat(timespec='seconds')
+    hist.append({'status':st,'label':MR_LABEL[st],'at':now_local_str(),'by':by,'note':(note or '')[:500]})
+    conn.execute('UPDATE material_requests SET status=?,status_at=?,status_by=?,history=?,updated_at=? WHERE id=?',(st,now,by,json.dumps(hist),now,rid))
+def mr_status_key(v):
+    v=(v or '').strip().lower()
+    for k,l in MR_STATUS:
+        if v in (k,l.lower()): return k
+    return None
+def mr_save_photo(conn, job_id, f, ptype):
+    if not (f and f.filename): return ''
+    fn=secure_filename(f"{job_id}_{ptype}_{uuid.uuid4().hex[:8]}.jpg"); f.save(os.path.join(app.config['UPLOAD_FOLDER'],fn))
+    conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at) VALUES (?,?,?,?)',(job_id,fn,ptype,datetime.utcnow().isoformat()))
+    return fn
+
+def mr_payload(conn, rid):
+    r=conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone()
+    if not r: return None
+    d=mr_dict(r, False); j=conn.execute('SELECT title,address FROM jobs WHERE id=?',(r['job_id'],)).fetchone()
+    base=(os.environ.get('RENDER_EXTERNAL_URL') or '').rstrip('/')
+    d.update({'event':'material_request.submitted','job_title':j['title'] if j else '','site_address':j['address'] if j else '',
+              'office_url':base+'/orders/%d'%rid if base else '','pending_api':base+'/api/material-requests/pending' if base else '','has_photo':bool(r['photo']),'photo':''})
+    return d
+def mr_webhook_send(rid):
+    url=os.environ.get('MATREQ_WEBHOOK_URL') or ''; auth=os.environ.get('MATREQ_WEBHOOK_AUTH') or ''
+    if not (url and auth): return
+    ok=False
+    try:
+        c=get_db(); p=mr_payload(c, rid); c.close()
+        if p is None: return
+        req=urllib.request.Request(url, data=json.dumps(p).encode(), method='POST', headers={'Content-Type':'application/json','Authorization':auth,'User-Agent':'TrueSenseFieldOps/1'})
+        with urllib.request.urlopen(req, timeout=10) as resp: ok=200<=resp.status<300
+    except Exception as e: print('MATREQ_WEBHOOK failed MR-%s %s' % (rid, type(e).__name__), flush=True)
+    try:
+        c=get_db(); c.execute('UPDATE material_requests SET webhook=?,webhook_tries=COALESCE(webhook_tries,0)+1 WHERE id=?',('sent' if ok else 'failed',rid)); c.commit(); c.close()
+    except Exception: pass
+def mr_webhook(rid):
+    if os.environ.get('MATREQ_WEBHOOK_URL') and os.environ.get('MATREQ_WEBHOOK_AUTH'):
+        threading.Thread(target=mr_webhook_send, args=(rid,), daemon=True).start()
+def mr_webhook_retry():
+    if not (os.environ.get('MATREQ_WEBHOOK_URL') and os.environ.get('MATREQ_WEBHOOK_AUTH')): return
+    c=get_db(); ids=[r['id'] for r in c.execute("SELECT id FROM material_requests WHERE webhook='failed' AND COALESCE(webhook_tries,0)<4 AND status IN ('submitted','waiting_roland')")]; c.close()
+    for i in ids: mr_webhook_send(i)
+
+def mr_job_lines(conn, job_id):
+    lines=[]
+    for r in conn.execute("SELECT * FROM material_requests WHERE job_id=? AND bill=1 AND status!='canceled' ORDER BY id",(job_id,)):
+        for i in mr_items(r['items']):
+            if i['unit_cost'] is None or i['unit_cost']<=0: continue
+            lines.append({'description':('Materials: '+' '.join(x for x in (i['part'],i['desc']) if x)+' (MR-%d)'%r['id'])[:4000],'qty':i['qty'],'rate':i['unit_cost'],'amount':round(i['unit_cost']*i['qty'],2)})
+    return lines
+
+MR_FORM_CSS='''<style>.mr-line{border:2px solid #e5e5e5;border-radius:12px;padding:10px;margin:8px 0;background:#fafaf5}.mr-line .row>*{flex:1 1 120px}
+.seg2{display:flex;gap:8px}.seg2 label{flex:1;margin:0}.seg2 input{display:none}.seg2 span{display:block;text-align:center;padding:16px;border:2px solid #ccc;border-radius:10px;font-weight:700;font-size:1.1rem;cursor:pointer}
+.seg2 input:checked+span{border-color:#a49f2a;background:#a49f2a;color:#fff}.seg2 input.urg:checked+span{border-color:#c62828;background:#c62828}
+.auto{background:#f6f6f0;border-radius:12px;padding:10px 12px;margin:8px 0}.auto div{padding:2px 0}button,.big-btn{cursor:pointer}</style>'''
+MR_LINE='''<div class="mr-line"><div class="row"><div><label>Part #</label><input name="part" maxlength="80" placeholder="Part # (if you know it)"></div><div><label>Qty</label><input name="qty" type="number" min="1" step="any" inputmode="decimal" value="1" onfocus="this.select()"></div></div>
+<label>Description</label><input name="desc" maxlength="300" placeholder="What is it? e.g. Cat6 cable, 1000 ft box, blue">
+<label>Notes</label><input name="lnote" maxlength="300" placeholder="Color, size, brand OK to swap? (optional)"><button type="button" class="big-btn gray" onclick="mrDel(this)">Remove this line</button></div>'''
+
+@app.route('/job/<job_id>/materials', methods=['GET','POST'])
+def mr_new(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    acct=mr_account(conn); back='/?job='+urllib.parse.quote(job_id); err=''
+    sub=nice_name(row['tech']) if is_office() else me()
+    if request.method=='POST':
+        f=request.form; items=[]
+        for p,d,q,n in zip(f.getlist('part'),f.getlist('desc'),f.getlist('qty'),f.getlist('lnote')):
+            p,d,n=p.strip()[:80],d.strip()[:300],n.strip()[:300]
+            if not (p or d): continue
+            qv=fnum(q,0)
+            if qv<=0: err='Each line needs a quantity of 1 or more.'; break
+            items.append({'part':p,'desc':d,'qty':qv,'notes':n,'unit_cost':None})
+        nb=(f.get('needed_by') or '').strip()
+        if not err and not items: err='Add at least one item (part # or description).'
+        if not err and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', nb): err='Pick the date you need it by.'
+        if not err:
+            now=datetime.utcnow().isoformat(timespec='seconds'); urg='Urgent' if f.get('urgency')=='Urgent' else 'Normal'
+            photo=mr_save_photo(conn, job_id, request.files.get('photo'), 'matreq')
+            cur=conn.execute('INSERT INTO material_requests (job_id,customer,account_no,sub,requested_by,ship_to,needed_by,urgency,note,photo,items,status,status_at,status_by,history,bill,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (job_id,row['customer'] or '',acct,sub,me(),MR_SHIP_TO,nb,urg,(f.get('note') or '').strip()[:2000],photo,json.dumps(items),'submitted',now,me(),
+                 json.dumps([{'status':'submitted','label':'Submitted','at':now_local_str(),'by':me(),'note':''}]),1,now,now))
+            rid=cur.lastrowid
+            conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'Requested materials MR-%d: %s'%(rid,', '.join('%s x %s'%(mr_qty(i['qty']),i['desc'] or i['part']) for i in items))[:1000],now_local_str()))
+            conn.commit(); conn.close(); mr_webhook(rid)
+            return ops_page('Request sent', '<div class="card" style="text-align:center"><div style="font-size:3rem;color:#2e7d32">&#10003;</div><div style="font-size:1.3rem;font-weight:800">MR-%d sent to the office</div><div class="muted" style="font-size:1rem;margin-top:6px">Status: Submitted. You will see the status on the job.</div></div><a class="big-btn" href="%s" style="font-size:1.3rem;padding:20px">Back to Job</a>'%(rid,h(back)), back=False)
+    conn.close()
+    auto='<div class="auto"><div><b>Job:</b> %s %s</div><div><b>Customer:</b> %s</div><div><b>ADI account #:</b> %s</div><div><b>Sub:</b> %s</div><div><b>Ship to:</b> %s</div></div>'%(
+        h(job_id),h(row['title'] or ''),h(row['customer'] or ''),h(acct) if acct else '<span class="muted">Office fills this in</span>',h(sub or '-'),h(MR_SHIP_TO))
+    body=MR_FORM_CSS+auto+('<div class="flag" style="display:block;padding:10px;margin:8px 0">%s</div>'%h(err) if err else '')+'''<form method="post" enctype="multipart/form-data" onsubmit="this.querySelector('[type=submit]').disabled=true">
+<h2>Items</h2><div id="mr-lines">'''+MR_LINE+'''</div><button type="button" class="big-btn gray" style="font-size:1.15rem" onclick="mrAdd()">+ Add another item</button>
+<h2>When</h2><label>Needed by</label><input type="date" name="needed_by" required min="%s" value="%s">
+<label>Urgency</label><div class="seg2"><label><input type="radio" name="urgency" value="Normal" checked><span>Normal</span></label><label><input type="radio" class="urg" name="urgency" value="Urgent"><span>Urgent</span></label></div>
+<h2>Note and photo</h2><textarea name="note" rows="3" maxlength="2000" placeholder="Anything else the office should know (optional)"></textarea>
+<label>Photo (optional)</label><input type="file" name="photo" accept="image/*">
+<button type="submit" class="big-btn" style="font-size:1.35rem;padding:22px;margin-top:14px">Send Request</button>
+<div class="muted" style="text-align:center">Goes to the office. Nothing is ordered until the office OKs it.</div></form>
+<template id="mr-tpl">'''%(today_local().isoformat(),h(request.form.get('needed_by') or ''))+MR_LINE+'''</template>
+<script>function mrAdd(){const t=document.getElementById('mr-tpl').content.cloneNode(true);document.getElementById('mr-lines').appendChild(t);const L=document.querySelectorAll('#mr-lines .mr-line');L[L.length-1].querySelector('[name=desc]').focus()}
+function mrDel(b){const L=document.querySelectorAll('#mr-lines .mr-line');if(L.length<2){b.closest('.mr-line').querySelectorAll('input').forEach(i=>i.value=i.name==='qty'?'1':'');return}b.closest('.mr-line').remove()}</script>'''
+    return ops_page('Request materials', body, back=back)
+
+@app.route('/api/jobs/<job_id>/material-requests')
+def mr_for_job(job_id):
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    rows=conn.execute('SELECT * FROM material_requests WHERE job_id=? ORDER BY id DESC LIMIT 10',(job_id,)).fetchall(); off=is_office()
+    out=[mr_dict(r, off) for r in rows]; conn.close()
+    return jsonify({'requests':out,'ship_to':MR_SHIP_TO})
+
+@app.route('/materials/<int:rid>/pickup', methods=['GET','POST'])
+def mr_pickup(rid):
+    conn=get_db(); r=conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone()
+    row=page_job(conn, r['job_id']) if r else None
+    if not row: conn.close(); return redirect('/')
+    back='/?job='+urllib.parse.quote(r['job_id']); err=''
+    if r['status'] not in MR_PICKUP_OK:
+        conn.close(); return ops_page('I picked it up','<div class="card">MR-%d is %s. Pickup can be marked once it is Ordered or Ready for pickup.</div><a class="big-btn" href="%s">Back to Job</a>'%(rid,h(MR_LABEL.get(r['status'],r['status'])),h(back)), back=back)
+    if request.method=='POST':
+        f=request.files.get('ticket')
+        if not (f and f.filename): err='Take a photo of the pickup ticket first.'
+        else:
+            fn=mr_save_photo(conn, r['job_id'], f, 'ticket')
+            conn.execute('UPDATE material_requests SET pickup_photo=? WHERE id=?',(fn,rid)); mr_set(conn, rid, 'picked_up', me(), 'Ticket photo added')
+            conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(r['job_id'],me(),'Picked up materials MR-%d (ticket photo added)'%rid,now_local_str()))
+            conn.commit(); conn.close()
+            return ops_page('Picked up', '<div class="card" style="text-align:center"><div style="font-size:3rem;color:#2e7d32">&#10003;</div><div style="font-size:1.3rem;font-weight:800">MR-%d marked Picked up</div></div><a class="big-btn" href="%s" style="font-size:1.3rem;padding:20px">Back to Job</a>'%(rid,h(back)), back=False)
+    d=mr_dict(r, False); conn.close()
+    body=('<div class="flag" style="display:block;padding:10px;margin:8px 0">%s</div>'%h(err) if err else '')+'<div class="card"><b>%s</b> &middot; %s<div class="muted">%s</div><ul>%s</ul></div>'%(
+        h(d['rid']),h(d['status_label']),h(MR_SHIP_TO),''.join('<li>%s x %s</li>'%(mr_qty(i['qty']),h(' '.join(x for x in (i['part'],i['desc']) if x))) for i in d['items']))
+    body+='''<form method="post" enctype="multipart/form-data" onsubmit="if(!this.ticket.value){alert('Take a photo of the ticket first');return false}this.querySelector('[type=submit]').disabled=true">
+<label style="font-size:1.15rem">Photo of the pickup ticket</label><input type="file" name="ticket" accept="image/*" capture="environment" required>
+<button type="submit" class="big-btn" style="font-size:1.35rem;padding:22px;margin-top:12px">I picked it up</button></form>'''
+    return ops_page('I picked it up', body, back=back)
+
+def mr_card(d):
+    urg=' <span class="flag">Urgent</span>' if d['urgency']=='Urgent' else ''
+    return '<a class="card" href="/orders/%d"><b>%s</b>%s &middot; Job %s &middot; %s<div class="muted">%s &middot; Needed by %s &middot; %d item%s &middot; %s</div><div>%s</div></a>'%(
+        d['id'],h(d['rid']),urg,h(d['job_id']),h(d['customer'] or ''),h(d['sub'] or ''),h(d['needed_by'] or '-'),len(d['items']),'' if len(d['items'])==1 else 's',
+        money(d['total']) if d['priced'] else ('%s so far, prices missing'%money(d['total']) if d['total'] else 'No prices yet'),
+        h(', '.join('%s x %s'%(mr_qty(i['qty']),i['desc'] or i['part']) for i in d['items'])[:200]))
+
+@app.route('/orders', methods=['GET','POST'])
+def mr_orders():
+    if not is_office(): return redirect('/')
+    conn=get_db(); msg=''
+    if request.method=='POST':
+        conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('adi_account',?)",((request.form.get('adi_account') or '').strip()[:40],)); conn.commit(); msg='ADI account # saved.'
+    acct=mr_account(conn); rows=[mr_dict(r, True) for r in conn.execute('SELECT * FROM material_requests ORDER BY id DESC LIMIT 300')]; conn.close()
+    show_all=request.args.get('all')=='1'; body='<div class="card"><b>Ship to:</b> %s<form method="post" class="row" style="margin-top:6px"><div><label>ADI account #</label><input name="adi_account" value="%s" placeholder="Not set yet"></div><button class="big-btn gray" style="flex:0 0 120px;align-self:end">Save</button></form></div>'%(h(MR_SHIP_TO),h(acct))
+    if not rows: body+='<div class="card muted" style="text-align:center">No material requests yet. Subs send them from the job screen with Request materials.</div>'
+    for k,l in MR_STATUS:
+        g=[d for d in rows if d['status']==k]
+        if not g: continue
+        if k in ('picked_up','canceled') and not show_all: g=g[:5]
+        body+='<h2>%s (%d)</h2>'%(h(l),len([d for d in rows if d['status']==k]))+''.join(mr_card(d) for d in g)
+    if any(d['status'] in ('picked_up','canceled') for d in rows) and not show_all: body+='<a class="big-btn gray" href="/orders?all=1">Show all done and canceled</a>'
+    return ops_page('Orders', body, back='/more', msg=msg)
+
+@app.route('/orders/<int:rid>', methods=['GET','POST'])
+def mr_order(rid):
+    if not is_office(): return redirect('/')
+    conn=get_db(); r=conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone()
+    if not r: conn.close(); return redirect('/orders')
+    msg=''
+    if request.method=='POST':
+        f=request.form; items=mr_items(r['items'])
+        for n,i in enumerate(items):
+            v=(f.get('cost_%d'%n) or '').replace('$','').replace(',','').strip()
+            i['unit_cost']=round(fnum(v),2) if v and fnum(v,-1)>=0 else None
+            q=fnum(f.get('qty_%d'%n),0)
+            if q>0: i['qty']=q
+        now=datetime.utcnow().isoformat(timespec='seconds')
+        conn.execute('UPDATE material_requests SET items=?,bill=?,office_note=?,updated_at=? WHERE id=?',(json.dumps(items),1 if f.get('bill') else 0,(f.get('office_note') or '').strip()[:2000],now,rid))
+        st=mr_status_key(f.get('status'))
+        if st and st!=r['status']: mr_set(conn, rid, st, me(), (f.get('status_note') or '').strip())
+        conn.commit(); msg='Saved.'; r=conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone()
+    d=mr_dict(r, True); j=conn.execute('SELECT title,address FROM jobs WHERE id=?',(r['job_id'],)).fetchone(); conn.close()
+    pic=lambda fn,lbl: '<div><b>%s</b><br><a href="/uploads/%s" target="_blank"><img src="/uploads/%s" style="width:140px;height:140px;object-fit:cover;border-radius:8px"></a></div>'%(lbl,urllib.parse.quote(fn),urllib.parse.quote(fn)) if fn else ''
+    body='<div class="card"><b>%s</b> &middot; <span class="okf">%s</span>%s<div>Job <a href="/?job=%s">%s</a> %s</div><div class="muted">%s</div><div><b>Customer:</b> %s &middot; <b>ADI account #:</b> %s</div><div><b>Sub:</b> %s &middot; <b>Sent:</b> %s</div><div><b>Ship to:</b> %s</div><div><b>Needed by:</b> %s &middot; <b>Urgency:</b> %s</div>%s</div>'%(
+        h(d['rid']),h(d['status_label']),' <span class="flag">Urgent</span>' if d['urgency']=='Urgent' else '',urllib.parse.quote(d['job_id']),h(d['job_id']),h(j['title'] if j else ''),h(j['address'] if j else ''),
+        h(d['customer'] or ''),h(d['account_no'] or 'not set'),h(d['sub'] or ''),h(d['created_local']),h(d['ship_to'] or MR_SHIP_TO),h(d['needed_by'] or '-'),h(d['urgency'] or 'Normal'),
+        '<div><b>Note:</b> %s</div>'%h(d['note']) if d['note'] else '')
+    body+='<div class="row">%s%s</div>'%(pic(d['photo'],'Sub photo'),pic(d['pickup_photo'],'Pickup ticket'))
+    body+='<form method="post"><h2>Items and prices (office only)</h2>'
+    for n,i in enumerate(d['items']):
+        body+='<div class="card"><b>%s</b> %s<div class="muted">%s</div><div class="row"><div><label>Qty</label><input name="qty_%d" value="%s" inputmode="decimal" onfocus="this.select()"></div><div><label>Unit cost</label><input name="cost_%d" value="%s" inputmode="decimal" placeholder="0.00" onfocus="this.select()"></div></div><div style="text-align:right">Line total: <b>%s</b></div></div>'%(
+            h(i['part']),h(i['desc']),h(i['notes']),n,mr_qty(i['qty']),n,'%.2f'%i['unit_cost'] if i['unit_cost'] is not None else '',money(i['total']) if i['total'] is not None else '-')
+    body+='<div class="card" style="text-align:right;font-size:1.15rem">Total: <b id="mr-total">%s</b></div>'%money(d['total'])
+    body+='<label style="display:flex;gap:10px;align-items:center;font-weight:600"><input type="checkbox" name="bill" value="1"%s style="width:26px;height:26px"> Add these parts to the QuickBooks invoice draft</label>'%(' checked' if d['bill'] else '')
+    body+='<h2>Status</h2><select name="status">%s</select><input name="status_note" placeholder="Status note (optional, e.g. ADI order #)"><label>Office note</label><textarea name="office_note" rows="2">%s</textarea><button class="big-btn" style="font-size:1.2rem">Save</button></form>'%(
+        ''.join('<option value="%s"%s>%s</option>'%(k,' selected' if k==d['status'] else '',h(l)) for k,l in MR_STATUS),h(d['office_note']))
+    body+='<a class="big-btn gray" href="/print/order/%d" target="_blank">Order summary (print)</a>'%rid
+    if d['summary_text'] or d['email_draft']:
+        body+='<h2>From the bot</h2><div class="muted">Saved %s. Draft only. Nothing is sent by the app.</div>'%h(mr_when(d['summary_at']))
+        if d['summary_text']: body+='<label>Order summary</label><textarea rows="8" readonly>%s</textarea>'%h(d['summary_text'])
+        if d['email_draft']: body+='<label>Email draft to ADI</label><textarea rows="12" readonly>%s</textarea>'%h(d['email_draft'])
+    body+='<h2>History</h2><table>%s</table>'%''.join('<tr><td>%s</td><td>%s</td><td class="muted">%s%s</td></tr>'%(h(x.get('label','')),h(x.get('by','')),h(x.get('at','')),(' &middot; '+h(x['note'])) if x.get('note') else '') for x in d['history'])
+    return ops_page('Order '+d['rid'], body, back='/orders', msg=msg)
+
+@app.route('/orders/<int:rid>/summary')
+def mr_summary_old(rid): return redirect('/print/order/%d'%rid)
+
+@app.route('/print/order/<int:rid>')
+def mr_summary(rid):
+    if not is_office(): return redirect('/')
+    conn=get_db(); r=conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone()
+    if not r: conn.close(); return redirect('/orders')
+    d=mr_dict(r, True); j=conn.execute('SELECT title,address FROM jobs WHERE id=?',(r['job_id'],)).fetchone(); conn.close()
+    pr=request.args.get('prices')=='1'
+    rows=''.join('<tr><td>%s</td><td>%s</td><td class="num">%s</td><td>%s</td>%s</tr>'%(h(i['part'] or '-'),h(i['desc']),mr_qty(i['qty']),h(i['notes']),
+        ('<td class="num">%s</td><td class="num">%s</td>'%(money(i['unit_cost']) if i['unit_cost'] is not None else '-',money(i['total']) if i['total'] is not None else '-')) if pr else '') for i in d['items'])
+    html='''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order summary %s</title>
+<style>body{font-family:-apple-system,Arial,sans-serif;max-width:800px;margin:auto;padding:16px;color:#111}h1{font-size:1.4rem;margin:4px 0}table{width:100%%;border-collapse:collapse;margin:10px 0}td,th{border:1px solid #ccc;padding:7px;text-align:left;vertical-align:top}th{background:#f4f4ec}.num{text-align:right}
+.kv div{padding:2px 0}.btns a,.btns button{display:inline-block;padding:12px 16px;margin:4px 4px 4px 0;border-radius:10px;border:0;background:#a49f2a;color:#fff;font-size:1rem;font-weight:700;text-decoration:none;cursor:pointer}.btns .g{background:#eee;color:#111}@media print{.btns{display:none}}</style></head><body>
+<div class="btns"><button onclick="print()">Print</button><a class="g" href="/orders/%d">Back</a><a class="g" href="?prices=%s">%s</a></div>
+<img src="/static/logo.png" alt="True Sense Security" style="height:44px"><h1>Order Request %s</h1>
+<div class="kv"><div><b>Job:</b> %s %s</div><div><b>Site:</b> %s</div><div><b>Customer:</b> %s</div><div><b>ADI account #:</b> %s</div><div><b>Ship to:</b> %s</div><div><b>Needed by:</b> %s &middot; <b>Urgency:</b> %s</div><div><b>Requested by:</b> %s, %s</div></div>
+<table><tr><th>Part #</th><th>Description</th><th class="num">Qty</th><th>Notes</th>%s</tr>%s%s</table>%s<div style="font-size:.85rem;color:#666">Status: %s. Printed %s.</div></body></html>'''%(
+        h(d['rid']),rid,'0' if pr else '1','Hide prices' if pr else 'Show prices (office copy)',h(d['rid']),h(d['job_id']),h(j['title'] if j else ''),h(j['address'] if j else ''),h(d['customer'] or ''),
+        h(d['account_no'] or 'not set'),h(d['ship_to'] or MR_SHIP_TO),h(d['needed_by'] or '-'),h(d['urgency'] or 'Normal'),h(d['sub'] or ''),h(d['created_local']),
+        '<th class="num">Unit</th><th class="num">Total</th>' if pr else '',rows,'<tr><td colspan="5"><b>Total</b></td><td class="num"><b>%s</b></td></tr>'%money(d['total']) if pr else '',
+        '<div><b>Notes:</b> %s</div>'%h(d['note']) if d['note'] else '',h(d['status_label']),h(now_local_str()))
+    return html
+
+@app.route('/api/material-requests/pending')
+def mr_api_pending():
+    bad=sync_key_ok()
+    if bad: return bad
+    want=[mr_status_key(s) for s in (request.args.get('status') or ','.join(MR_PENDING)).split(',')]
+    want=[s for s in want if s] or list(MR_PENDING)
+    conn=get_db(); rows=conn.execute('SELECT m.*,j.title AS job_title,j.address AS site_address FROM material_requests m LEFT JOIN jobs j ON j.id=m.job_id WHERE m.status IN (%s) ORDER BY m.id'%','.join('?'*len(want)),want).fetchall()
+    out=[]
+    for r in rows:
+        d=mr_dict(r, True); d['job_title']=r['job_title'] or ''; d['site_address']=r['site_address'] or ''; out.append(d)
+    acct=mr_account(conn); conn.close()
+    return jsonify({'requests':out,'ship_to':MR_SHIP_TO,'account_no':acct,'statuses':[{'key':k,'label':l} for k,l in MR_STATUS]})
+
+@app.route('/api/material-requests/<int:rid>/status', methods=['POST'])
+def mr_api_status(rid):
+    bad=sync_key_ok()
+    if bad: return bad
+    d=request.get_json(silent=True) or {}; st=mr_status_key(d.get('status'))
+    if not st: return jsonify({'error':'status must be one of: '+', '.join(l for k,l in MR_STATUS)}),400
+    conn=get_db()
+    if not conn.execute('SELECT 1 FROM material_requests WHERE id=?',(rid,)).fetchone(): conn.close(); return ('',404)
+    mr_set(conn, rid, st, (str(d.get('by') or 'Bot'))[:40], str(d.get('note') or '')); conn.commit()
+    out=mr_dict(conn.execute('SELECT * FROM material_requests WHERE id=?',(rid,)).fetchone(), True); conn.close()
+    return jsonify({'ok':True,'request':out})
+
+@app.route('/api/material-requests/<int:rid>/summary', methods=['POST'])
+def mr_api_summary(rid):
+    bad=sync_key_ok()
+    if bad: return bad
+    d=request.get_json(silent=True) or {}
+    s=str(d.get('summary') or d.get('summary_text') or '')[:20000]; e=str(d.get('email_draft') or '')[:20000]
+    if not (s or e): return jsonify({'error':'send summary and/or email_draft'}),400
+    conn=get_db()
+    if not conn.execute('SELECT 1 FROM material_requests WHERE id=?',(rid,)).fetchone(): conn.close(); return ('',404)
+    now=datetime.utcnow().isoformat(timespec='seconds')
+    if s: conn.execute('UPDATE material_requests SET summary_text=? WHERE id=?',(s,rid))
+    if e: conn.execute('UPDATE material_requests SET email_draft=? WHERE id=?',(e,rid))
+    conn.execute('UPDATE material_requests SET summary_at=?,updated_at=? WHERE id=?',(now,now,rid)); conn.commit(); conn.close()
+    return jsonify({'ok':True,'id':rid,'saved':[k for k,v in (('summary',s),('email_draft',e)) if v],'note':'Saved as draft text. The app never sends email.'})
+
 
 def serve():
     port=int(os.environ.get('PORT',5000))
