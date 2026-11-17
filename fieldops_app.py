@@ -1020,7 +1020,7 @@ def init_db():
         status TEXT DEFAULT 'assigned', tech TEXT, notes TEXT, completed_at TEXT,
         created_at TEXT, total_minutes INTEGER DEFAULT 0, total_miles REAL DEFAULT 0,
         signature TEXT, materials TEXT, phone TEXT)''')
-    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT', 'pay_link TEXT', 'paid_at TEXT', 'bom_json TEXT']:
+    for col in ['signature TEXT', 'materials TEXT', 'phone TEXT', 'checklist TEXT', 'scheduled_date TEXT', 'created_by TEXT', 'materials_list TEXT', 'private_notes TEXT', 'job_type TEXT', 'survey_list TEXT', 'quick_notes TEXT', 'punch_list TEXT', 'survey_form TEXT', 'survey_office TEXT', 'help_flag TEXT', 'help_note TEXT', 'help_at TEXT', 'help_by TEXT', 'help_photo TEXT', 'kelly_at TEXT', 'kelly_by TEXT', 'survey_devices TEXT', 'map_data TEXT', 'hub_approved_at TEXT', 'hub_approved_name TEXT', 'hub_created_at TEXT', 'hub_nonce TEXT', 'review_by TEXT', 'review_at TEXT', 'labor_rates TEXT', 'sale_amount REAL', 'plan_id INTEGER', 'estimate_json TEXT', 'pay_link TEXT', 'paid_at TEXT', 'bom_json TEXT', 'asbuilt_json TEXT']:
         try: conn.execute(f'ALTER TABLE jobs ADD COLUMN {col}')
         except: pass
     conn.execute('''CREATE TABLE IF NOT EXISTS photos (
@@ -1324,7 +1324,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div id="sec-check"><div class="job"><div style="font-weight:600;margin-bottom:6px">Checklist</div><div id="checklist"></div>
 <div id="punch-wrap"><div style="font-weight:600;margin:12px 0 4px">Punch items</div><div class="muted" style="font-size:.85rem">Office and assigned sub only. Not on client printouts.</div><div id="punch"></div>
 <div class="row" style="align-items:center"><input type="text" id="punch-new" placeholder="Add punch item" onkeydown="if(event.key==='Enter')addPunch()"><button class="big-btn" style="flex:0 0 70px" onclick="addPunch()">Add</button></div></div></div></div>
-<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
+<div id="sec-ab"><div class="job" id="ab-card"><div style="font-weight:800;font-size:1.4rem">As-Built</div><div id="ab-slot"></div><a id="asb-link" class="big-btn" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/asbuilt'">As-built PDF and client sign-off</a><a id="eq-link" class="big-btn gray" href="/" onclick="this.href='/job/'+encodeURIComponent(currentJob.id)+'/equipment'">Equipment at this site</a>
 <div class="ptitle" style="font-size:1.1rem;margin-top:14px">Blueprints</div><div id="bp-list"></div>
 <div class="big-btn gray" onclick="document.getElementById('bp-file').click()">Upload Blueprint (PDF or image)</div>
 <input type="file" id="bp-file" accept=".pdf,.png,.jpg,.jpeg,.webp,.heic,application/pdf,image/*" multiple style="display:none"></div></div>
@@ -5733,13 +5733,14 @@ def bom_page(job_id):
     body+='<template id="xtpl">'+XL%('','1','','','-')+'</template><script>function bomAdd(){const t=document.getElementById("xtpl").content.cloneNode(true);document.getElementById("xls").appendChild(t);const L=document.querySelectorAll("#xls .xl");L[L.length-1].querySelector("[name=x_desc]").focus()}</script>'
     return ops_page('Bill of materials', body, back='/?job='+urllib.parse.quote(job_id), msg=msg)
 
-# ---------------- Branded plan PDF (one page per floor + BOM). Client copy never has prices. ----------------
+# ---------------- Branded plan PDF and as-built PDF. Client copies never have prices. ----------------
 PDF_GOLD=(0.643,0.624,0.165)
-def pdf_sym_g(t, col, cx, cy, s):
-    sym=DEV_SYM.get(t,'<circle cx="12" cy="12" r="3"/>')
-    return ('<g transform="translate(%.2f %.2f) scale(%.4f)"><circle cx="12" cy="12" r="11" fill="%s" stroke="#ffffff" stroke-width="1.6"/>'
-            '<g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g></g>')%(cx-s/2,cy-s/2,s/24,col,sym)
-def pdf_overlay_svg(fn, devs, W, H, ppf, cones):
+def pdf_sym_g(t, col, cx, cy, s, solid=True):
+    sym=DEV_SYM.get(t,'<circle cx="12" cy="12" r="3"/>'); bg,fg=(col,'#ffffff') if solid else ('#ffffff',col)
+    return ('<g transform="translate(%.2f %.2f) scale(%.4f)"><circle cx="12" cy="12" r="11" fill="%s" stroke="%s" stroke-width="1.6"%s/>'
+            '<g transform="translate(12 12) scale(.66) translate(-12 -12)" fill="none" stroke="%s" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">%s</g></g>')%(
+            cx-s/2,cy-s/2,s/24,bg,'#ffffff' if solid else col,'' if solid else ' stroke-dasharray="3 2"',fg,sym)
+def pdf_overlay_svg(fn, devs, W, H, ppf, cones, ab=False):
     colors={n:c for n,p,c in DEVICE_TYPES}; ds=[d for d in devs if d.get('plan')==fn]; s=max(W,H)*0.028; out=[]
     if cones:
         for d in ds:
@@ -5748,29 +5749,29 @@ def pdf_overlay_svg(fn, devs, W, H, ppf, cones):
             out.append('<path d="%s" fill="%s" fill-opacity="%s" stroke="%s" stroke-opacity="0.7" stroke-width="%.1f"%s/>'%(cone_path(d['x']*W/100,d['y']*H/100,v['range']*W/100,v['dir'],v['fov']),col,'0.06' if v['fov']>=360 else '0.12',col,max(W,H)*0.0014,
                        ' stroke-dasharray="%.1f %.1f"'%(W*.008,W*.006) if d['type']=='PTZ Cam' else ''))
     for d in ds:
-        cx,cy=d['x']*W/100,d['y']*H/100; out.append(pdf_sym_g(d['type'],colors[d['type']],cx,cy,s))
+        out.append(pdf_sym_g(d['type'],colors[d['type']],d['x']*W/100,d['y']*H/100,s,(not ab) or d.get('installed')))
     for d in ds:
         cx,cy=d['x']*W/100,d['y']*H/100; lf=d['x']>82; lab=_esc(d.get('label') or '')
         x=cx-s*.62 if lf else cx+s*.62; anc='end' if lf else 'start'
         for paint in ('fill="#ffffff" stroke="#ffffff" stroke-width="%.1f"'%(s*.22), 'fill="#111111"'):
             out.append('<text x="%.1f" y="%.1f" font-size="%.1f" font-weight="bold" font-family="Helvetica, Arial, sans-serif" text-anchor="%s" %s>%s</text>'%(x,cy+s*.22,s*.62,anc,paint,lab))
     return '<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" viewBox="0 0 %d %d">%s</svg>'%(W,H,W,H,''.join(out))
-def pdf_plan_image(pg, r, path):
+def pdf_plan_image(pg, r, path, keep=False):
     import pymupdf
     try:
         pix=pymupdf.Pixmap(path); sh=0
         while max(pix.width,pix.height)/(2**sh)>2600: sh+=1
         if sh: pix.shrink(sh)
         if pix.alpha: pix=pymupdf.Pixmap(pix,0)
-        pg.insert_image(r, pixmap=pix); return
+        pg.insert_image(r, pixmap=pix, keep_proportion=keep); return
     except Exception:
         pass
-    from PIL import Image  # WEBP / GIF plans that MuPDF cannot read
+    from PIL import Image  # WEBP / GIF images that MuPDF cannot read
     import io
     im=Image.open(path); im.thumbnail((2600,2600))
     if im.mode!='RGB':
         im=im.convert('RGBA'); bg=Image.new('RGB',im.size,(255,255,255)); bg.paste(im,mask=im.split()[3]); im=bg
-    b=io.BytesIO(); im.save(b,'PNG'); pg.insert_image(r, stream=b.getvalue())
+    b=io.BytesIO(); im.save(b,'PNG'); pg.insert_image(r, stream=b.getvalue(), keep_proportion=keep)
 def pdf_svg_doc(svg):
     import pymupdf
     d=pymupdf.open(stream=svg.encode('utf-8'), filetype='svg'); b=d.convert_to_pdf(); d.close(); return pymupdf.open('pdf', b)
@@ -5778,103 +5779,250 @@ def pdf_nice_ft(pt_per_ft):
     for v in (1,2,5,10,20,25,50,100,200,250,500,1000):
         if v*pt_per_ft>=70: return v
     return 1000
+def ab_load(row):
+    try: a=json.loads(row['asbuilt_json'] or '{}')
+    except Exception: a={}
+    return a if isinstance(a,dict) else {}
+def job_photos(conn, job_id):
+    return [dict(p) for p in conn.execute("SELECT filename,photo_type,uploaded_at FROM photos WHERE job_id=? AND photo_type IN ('before','during','after','survey') ORDER BY id",(job_id,)).fetchall()]
+
+class FoPdf:
+    PW,PH,M=792,612,24
+    def __init__(self, conn, row, prices, who):
+        import pymupdf
+        self.pm=pymupdf; self.conn=conn; self.row=row; self.prices=prices; self.who=who
+        self.doc=pymupdf.open(); self.titles=[]; self.icons={}
+        self.info=plan_info(conn,row['id']); self.devs=parse_devices(row['survey_devices']); self.colors={n:c for n,p,c in DEVICE_TYPES}
+        self.date=today_local().strftime('%b %-d, %Y'); self.copy='Office copy (with prices)' if prices else 'Client copy'
+        self.logo=os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')
+    def page(self, title):
+        pg=self.doc.new_page(width=self.PW,height=self.PH); self.titles.append(title); return pg
+    def html(self, pg, rect, s): pg.insert_htmlbox(self.pm.Rect(*rect), s)
+    def icon(self, t, solid=True):
+        k=(t,solid)
+        if k not in self.icons: self.icons[k]=pdf_svg_doc('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">%s</svg>'%pdf_sym_g(t,self.colors[t],12,12,24,solid))
+        return self.icons[k]
+    def finish(self, footnote):
+        pm=self.pm; row=self.row; n=len(self.doc); PW,PH,M=self.PW,self.PH,self.M
+        for i,pg in enumerate(self.doc):
+            pg.draw_rect(pm.Rect(0,0,PW,4), color=None, fill=PDF_GOLD)
+            if os.path.exists(self.logo):
+                try: pg.insert_image(pm.Rect(M,12,M+110,44), filename=self.logo, keep_proportion=True)
+                except Exception: pass
+            self.html(pg,(M+120,14,PW-160,46),'<div style="font-family:sans-serif;font-size:15px;font-weight:bold;color:#111">%s</div><div style="font-family:sans-serif;font-size:9px;color:#555">%s &middot; %s</div>'%(h(self.titles[i]),h(row['customer'] or ''),h(row['title'] or '')))
+            self.html(pg,(PW-160,16,PW-M,46),'<div style="font-family:sans-serif;font-size:9px;color:#555;text-align:right">Page %d of %d<br>%s</div>'%(i+1,n,self.copy))
+            pg.draw_line((M,52),(PW-M,52), color=(0.88,0.87,0.82), width=0.8)
+            self.html(pg,(M,PH-20,PW-M,PH-6),'<div style="font-family:sans-serif;font-size:7.5px;color:#777">True Sense Security &middot; Job %s &middot; Prepared by %s on %s &middot; %s</div>'%(h(row['id']),h(self.who),self.date,h(footnote)))
+        out=self.doc.tobytes(garbage=3, deflate=True); self.doc.close(); return out
+    def title_block(self, pg, x0, y0, x1, rows):
+        html='<table style="font-family:sans-serif;font-size:8.5px;width:100%;border-collapse:collapse">'+''.join('<tr><td style="color:#666;padding:2px 4px 2px 0;vertical-align:top;width:62px">%s</td><td style="font-weight:bold;padding:2px 0">%s</td></tr>'%(h(k),h(v)) for k,v in rows)+'</table>'
+        hgt=16.5*len(rows)+12; pg.draw_rect(self.pm.Rect(x0,y0,x1,y0+hgt), color=PDF_GOLD, width=1.2)
+        self.html(pg,(x0+6,y0+5,x1-6,y0+hgt-2),html); return y0+hgt
+    def base_rows(self, p, extra=()):
+        r=self.row
+        return [('Job ID',r['id']),('Client',r['customer'] or '-'),('Site',r['address'] or '-'),('Date',self.date),('Prepared by',self.who)]+list(extra)+([('Floor',p['name']),('Scale',('Set (%g ft reference)'%p['scale']['ft']) if p.get('ppf') else 'Not to scale')] if p else [])
+    def plan_pages(self, cones, ab=False, prefix='Floor Plan'):
+        pm=self.pm; PW,PH,M=self.PW,self.PH,self.M; devs=self.devs; info=self.info
+        for p in info:
+            pg=self.page('%s: %s'%(prefix,p['name']))
+            area=pm.Rect(M,60,PW-M-190,PH-26); W,H=p['w'],p['h']; k=min(area.width/W,area.height/H)
+            r=pm.Rect(area.x0,area.y0,area.x0+W*k,area.y0+H*k)
+            try: pdf_plan_image(pg, r, os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['fn'])))
+            except Exception as ex:
+                app.logger.warning('pdf plan image: %s', ex); self.html(pg,tuple(r),'<div style="font-family:sans-serif;color:#b00020">Plan image could not be read.</div>')
+            pg.draw_rect(r, color=(0.85,0.85,0.8), width=0.6)
+            try: pg.show_pdf_page(r, pdf_svg_doc(pdf_overlay_svg(p['fn'],devs,W,H,p.get('ppf'),cones,ab)), 0)
+            except Exception as ex: app.logger.warning('pdf overlay: %s', ex)
+            if p.get('ppf'):
+                ptft=p['ppf']*k; ft=pdf_nice_ft(ptft); L=ft*ptft; bx,by=r.x0+8,r.y1-16
+                pg.draw_rect(pm.Rect(bx-4,by-10,bx+L+50,by+8), color=None, fill=(1,1,1), fill_opacity=0.9)
+                for i in range(4): pg.draw_rect(pm.Rect(bx+i*L/4,by-3,bx+(i+1)*L/4,by+3), color=(0,0,0), fill=(0,0,0) if i%2==0 else (1,1,1), width=0.6)
+                pg.insert_text((bx+L+5,by+3), '%g ft'%ft, fontsize=8, fontname='helv'); pg.insert_text((bx,by-5), '0', fontsize=6, fontname='helv')
+            x0=PW-M-180; mine=[d for d in devs if d['plan']==p['fn']]
+            extra=[('Installed','%d of %d devices'%(sum(1 for d in mine if d.get('installed')),len(mine)))] if ab else []
+            y=self.title_block(pg,x0,60,PW-M,self.base_rows(p,extra))+10
+            here={}; allc={}
+            for d in mine: here[d['type']]=here.get(d['type'],0)+1
+            for d in devs:
+                if any(d['plan']==q['fn'] for q in info): allc[d['type']]=allc.get(d['type'],0)+1
+            self.html(pg,(x0,y,PW-M,y+16),'<div style="font-family:sans-serif;font-size:10px;font-weight:bold">Legend%s</div>'%(' (this floor / all floors)' if len(info)>1 else '')); y+=18
+            if not here: self.html(pg,(x0,y,PW-M,y+14),'<div style="font-family:sans-serif;font-size:8.5px;color:#666">No devices on this floor.</div>'); y+=16
+            for t,_,_ in DEVICE_TYPES:
+                if t not in here or y>PH-80: continue
+                pg.show_pdf_page(pm.Rect(x0,y,x0+14,y+14), self.icon(t), 0)
+                self.html(pg,(x0+20,y+1,PW-M,y+15),'<table style="font-family:sans-serif;font-size:8.5px;width:100%%;border-collapse:collapse"><tr><td>%s</td><td style="text-align:right;font-weight:bold">%d%s</td></tr></table>'%(h(t),here[t],(' / %d'%allc[t]) if len(info)>1 else '')); y+=17
+            if ab and mine and any(not d.get('installed') for d in mine) and y<PH-60:
+                pg.show_pdf_page(pm.Rect(x0,y+2,x0+14,y+16), self.icon('Dome Cam',False), 0)
+                self.html(pg,(x0+20,y+3,PW-M,y+30),'<div style="font-family:sans-serif;font-size:7.5px;color:#666">Outlined icons are planned but not marked installed.</div>'); y+=26
+            if cones and any(t in CAM_DEF for t in here) and y<PH-50:
+                self.html(pg,(x0,y+2,PW-M,y+30),'<div style="font-family:sans-serif;font-size:7.5px;color:#666">Shaded areas show approximate camera coverage%s.</div>'%(' in real feet' if p.get('ppf') else ''))
+        if not info:
+            pg=self.page(prefix); self.title_block(pg,self.M,70,self.M+260,self.base_rows(None))
+            self.html(pg,(self.M,260,self.PW-self.M,300),'<div style="font-family:sans-serif;font-size:14px;color:#666">No floor plans on this job yet.</div>')
+    def table_pages(self, title, cols, rows, per=22, empty='Nothing to show.', tail=''):
+        chunks=[rows[i:i+per] for i in range(0,len(rows),per)] or [[]]
+        for ci,ch in enumerate(chunks):
+            pg=self.page(title+(' (continued)' if ci else ''))
+            html='<table style="font-family:sans-serif;width:100%;border-collapse:collapse"><tr>'+''.join('<th style="text-align:%s;padding:4px 6px;border-bottom:1.5px solid #a49f2a;font-size:9px">%s</th>'%c for c in cols)+'</tr>'
+            for rw in ch: html+='<tr>'+''.join('<td style="padding:3px 6px;border-bottom:0.5px solid #ddd;font-size:8.5px;text-align:%s">%s</td>'%(cols[i][0],v) for i,v in enumerate(rw))+'</tr>'
+            if not ch: html+='<tr><td colspan="%d" style="padding:10px 6px;font-size:10px;color:#666">%s</td></tr>'%(len(cols),h(empty))
+            if ci==len(chunks)-1 and tail: html+=tail
+            self.html(pg,(self.M,62,self.PW-self.M,self.PH-30),html+'</table>')
+        return pg
+    def bom_pages(self):
+        _,bom=bom_build(self.conn,self.row,True); pr=self.prices
+        cols=[('right','Qty'),('left','Part #'),('left','Description'),('left','Floors')]+([('right','Unit price'),('right','Line total')] if pr else [])
+        rows=[]
+        for l in bom:
+            rw=[h(mr_qty(l['qty'])),h(l['part'] or '-'),h(l['desc'] or l['type']),h(l['floors'] or 'Extra')]
+            if pr: rw+=[money(l['sell']) if l.get('sell') is not None else '-',money(l['sell_total']) if l.get('sell') is not None else '-']
+            rows.append(rw)
+        tail='<tr><td colspan="5" style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">Materials total</td><td style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">%s</td></tr>'%money(sum(l['sell_total'] for l in bom)) if pr and bom else ''
+        pg=self.table_pages('Bill of Materials',cols,rows,22,'No devices placed yet.',tail)
+        tot=sum(l['qty'] for l in bom if l['src']=='plan')
+        self.html(pg,(self.M,self.PH-48,self.PW-self.M,self.PH-26),'<div style="font-family:sans-serif;font-size:8px;color:#666">%d devices on %d floor plan%s.%s</div>'%(tot,len(self.info),'' if len(self.info)==1 else 's',' Prices do not include labor or tax.' if pr else ''))
+
 def plan_pdf_bytes(conn, row, prices, cones, who):
-    import pymupdf
-    info=plan_info(conn,row['id']); devs=parse_devices(row['survey_devices']); colors={n:c for n,p,c in DEVICE_TYPES}
-    doc=pymupdf.open(); PW,PH=792,612; M=24
-    logo=os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')
-    date=today_local().strftime('%b %-d, %Y'); copy='Office copy (with prices)' if prices else 'Client copy'
-    icons={}
-    def icon(t):
-        if t not in icons: icons[t]=pdf_svg_doc('<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">%s</svg>'%pdf_sym_g(t,colors[t],12,12,24))
-        return icons[t]
-    _,bom=bom_build(conn,row,True)
-    n_pages=len(info)+max(1,(len(bom)+21)//22)
-    def header(pg, title, no):
-        pg.draw_rect(pymupdf.Rect(0,0,PW,4), color=None, fill=PDF_GOLD)
-        if os.path.exists(logo):
-            try: pg.insert_image(pymupdf.Rect(M,12,M+110,44), filename=logo, keep_proportion=True)
-            except Exception: pass
-        pg.insert_htmlbox(pymupdf.Rect(M+120,14,PW-160,46), '<div style="font-family:sans-serif;font-size:15px;font-weight:bold;color:#111">%s</div><div style="font-family:sans-serif;font-size:9px;color:#555">%s &middot; %s</div>'%(h(title),h(row['customer'] or ''),h(row['title'] or '')))
-        pg.insert_htmlbox(pymupdf.Rect(PW-160,16,PW-M,46), '<div style="font-family:sans-serif;font-size:9px;color:#555;text-align:right">Page %d of %d<br>%s</div>'%(no,n_pages,copy))
-        pg.draw_line((M,52),(PW-M,52), color=(0.88,0.87,0.82), width=0.8)
-        pg.insert_htmlbox(pymupdf.Rect(M,PH-20,PW-M,PH-6), '<div style="font-family:sans-serif;font-size:7.5px;color:#777">True Sense Security &middot; Job %s &middot; Prepared by %s on %s &middot; Device locations and coverage are approximate.</div>'%(h(row['id']),h(who),date))
-    def title_block(pg, x0, y0, x1, p):
-        rows=[('Job ID',row['id']),('Client',row['customer'] or '-'),('Site',row['address'] or '-'),('Date',date),('Prepared by',who),('Floor',p['name'] if p else '-'),('Scale',('Set (%g ft reference)'%p['scale']['ft']) if p and p.get('ppf') else 'Not to scale')]
-        html='<table style="font-family:sans-serif;font-size:8.5px;width:100%;border-collapse:collapse">'+''.join('<tr><td style="color:#666;padding:2px 4px 2px 0;vertical-align:top;width:58px">%s</td><td style="font-weight:bold;padding:2px 0">%s</td></tr>'%(h(k),h(v)) for k,v in rows)+'</table>'
-        r=pymupdf.Rect(x0,y0,x1,y0+128); pg.draw_rect(r, color=PDF_GOLD, width=1.2)
-        pg.insert_htmlbox(pymupdf.Rect(x0+6,y0+5,x1-6,y0+126), html); return y0+128
-    no=0
-    for p in info:
-        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Floor Plan: '+p['name'],no)
-        area=pymupdf.Rect(M,60,PW-M-190,PH-26); W,H=p['w'],p['h']; k=min(area.width/W,area.height/H); rw,rh=W*k,H*k
-        r=pymupdf.Rect(area.x0,area.y0,area.x0+rw,area.y0+rh)
-        path=os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['fn']))
-        try: pdf_plan_image(pg, r, path)
-        except Exception as ex:
-            app.logger.warning('plan pdf image: %s', ex); pg.insert_htmlbox(r, '<div style="font-family:sans-serif;color:#b00020">Plan image could not be read.</div>')
-        pg.draw_rect(r, color=(0.85,0.85,0.8), width=0.6)
-        try: pg.show_pdf_page(r, pdf_svg_doc(pdf_overlay_svg(p['fn'],devs,W,H,p.get('ppf'),cones)), 0)
-        except Exception as ex: app.logger.warning('plan pdf overlay: %s', ex)
-        if p.get('ppf'):
-            ptft=p['ppf']*k; ft=pdf_nice_ft(ptft); L=ft*ptft; bx,by=r.x0+8,r.y1-16
-            pg.draw_rect(pymupdf.Rect(bx-4,by-10,bx+L+50,by+8), color=None, fill=(1,1,1), fill_opacity=0.9)
-            for i in range(4): pg.draw_rect(pymupdf.Rect(bx+i*L/4,by-3,bx+(i+1)*L/4,by+3), color=(0,0,0), fill=(0,0,0) if i%2==0 else (1,1,1), width=0.6)
-            pg.insert_text((bx+L+5,by+3), '%g ft'%ft, fontsize=8, fontname='helv')
-            pg.insert_text((bx,by-5), '0', fontsize=6, fontname='helv')
-        x0=PW-M-180; y=title_block(pg,x0,60,PW-M,p)+10
-        here={}
-        for d in devs:
-            if d['plan']==p['fn']: here[d['type']]=here.get(d['type'],0)+1
-        allc={}
-        for d in devs:
-            if any(d['plan']==q['fn'] for q in info): allc[d['type']]=allc.get(d['type'],0)+1
-        pg.insert_htmlbox(pymupdf.Rect(x0,y,PW-M,y+16), '<div style="font-family:sans-serif;font-size:10px;font-weight:bold">Legend%s</div>'%(' (this floor / all floors)' if len(info)>1 else ''))
-        y+=18
-        if not here: pg.insert_htmlbox(pymupdf.Rect(x0,y,PW-M,y+14), '<div style="font-family:sans-serif;font-size:8.5px;color:#666">No devices on this floor.</div>'); y+=16
-        for t,_,_ in DEVICE_TYPES:
-            if t not in here: continue
-            if y>PH-70: break
-            pg.show_pdf_page(pymupdf.Rect(x0,y,x0+14,y+14), icon(t), 0)
-            pg.insert_htmlbox(pymupdf.Rect(x0+20,y+1,PW-M,y+15), '<table style="font-family:sans-serif;font-size:8.5px;width:100%%;border-collapse:collapse"><tr><td>%s</td><td style="text-align:right;font-weight:bold">%d%s</td></tr></table>'%(h(t),here[t],(' / %d'%allc[t]) if len(info)>1 else ''))
-            y+=17
-        if cones and any(t in CAM_DEF for t in here):
-            pg.insert_htmlbox(pymupdf.Rect(x0,y+2,PW-M,y+30), '<div style="font-family:sans-serif;font-size:7.5px;color:#666">Shaded areas show approximate camera coverage%s.</div>'%(' in real feet' if p.get('ppf') else ''))
-    if not info:
-        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Floor Plan',no); title_block(pg,M,70,M+260,None)
-        pg.insert_htmlbox(pymupdf.Rect(M,240,PW-M,300), '<div style="font-family:sans-serif;font-size:14px;color:#666">No floor plans on this job yet.</div>')
-    chunks=[bom[i:i+22] for i in range(0,len(bom),22)] or [[]]
-    for ci,ch in enumerate(chunks):
-        no+=1; pg=doc.new_page(width=PW,height=PH); header(pg,'Bill of Materials'+(' (continued)' if ci else ''),no)
-        th='<th style="text-align:%s;padding:4px 6px;border-bottom:1.5px solid #a49f2a;font-size:9px">%s</th>'
-        cols=[('right','Qty'),('left','Part #'),('left','Description'),('left','Floors')]+([('right','Unit price'),('right','Line total')] if prices else [])
-        html='<table style="font-family:sans-serif;width:100%;border-collapse:collapse"><tr>'+''.join(th%c for c in cols)+'</tr>'
-        for l in ch:
-            td='<td style="padding:3px 6px;border-bottom:0.5px solid #ddd;font-size:8.5px;text-align:%s">%s</td>'
-            cells=[('right',h(mr_qty(l['qty']))),('left',h(l['part'] or '-')),('left',h(l['desc'] or l['type'])),('left',h(l['floors'] or 'Extra'))]
-            if prices: cells+=[('right',money(l['sell']) if l.get('sell') is not None else '-'),('right',money(l['sell_total']) if l.get('sell') is not None else '-')]
-            html+='<tr>'+''.join(td%c for c in cells)+'</tr>'
-        if not ch: html+='<tr><td colspan="%d" style="padding:10px 6px;font-size:10px;color:#666">No devices placed yet.</td></tr>'%len(cols)
-        if prices and ci==len(chunks)-1 and bom:
-            html+='<tr><td colspan="5" style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">Materials total</td><td style="padding:6px;text-align:right;font-size:9.5px;font-weight:bold">%s</td></tr>'%money(sum(l['sell_total'] for l in bom))
-        html+='</table>'
-        pg.insert_htmlbox(pymupdf.Rect(M,62,PW-M,PH-30), html)
-        if ci==len(chunks)-1:
-            tot=sum(l['qty'] for l in bom if l['src']=='plan')
-            pg.insert_htmlbox(pymupdf.Rect(M,PH-48,PW-M,PH-26), '<div style="font-family:sans-serif;font-size:8px;color:#666">%d devices on %d floor plan%s.%s</div>'%(tot,len(info),'' if len(info)==1 else 's',' Prices do not include labor or tax.' if prices else ''))
-    out=doc.tobytes(garbage=3, deflate=True); doc.close(); return out
+    b=FoPdf(conn,row,prices,who); b.plan_pages(cones); b.bom_pages()
+    return b.finish('Device locations and coverage are approximate.')
+
+def asbuilt_pdf_bytes(conn, row, prices, who, cones=True):
+    b=FoPdf(conn,row,prices,who); pm=b.pm; M,PW,PH=b.M,b.PW,b.PH; a=ab_load(row); devs=b.devs; names={p['fn']:p['name'] for p in b.info}
+    mine=[d for d in devs if d['plan'] in names]; inst=sum(1 for d in mine if d.get('installed'))
+    done=utc_day(row['completed_at'])
+    pg=b.page('As-Built Record')
+    y=b.title_block(pg,M,64,M+300,[('Job ID',row['id']),('Client',row['customer'] or '-'),('Site',row['address'] or '-'),('Job type',row['job_type'] or '-'),('Tech',nice_name(row['tech']) or '-'),('Finished',done or 'Not finished yet'),('Prepared',b.date+' by '+who)])
+    summ='<div style="font-family:sans-serif;font-size:10px"><b>Devices:</b> %d placed, %d marked installed<br><b>Floor plans:</b> %d<br><b>Photos:</b> %d</div>'%(len(mine),inst,len(b.info),len(job_photos(conn,row['id'])))
+    b.html(pg,(M+320,64,PW-M,140),summ)
+    scope=(row['scope'] or '').strip(); notes=notes_log(conn,row).strip()
+    punch=parse_ticks(row['punch_list'])
+    html='<div style="font-family:sans-serif;font-size:9px;color:#111">'
+    if scope: html+='<div style="font-size:10.5px;font-weight:bold;margin:2px 0">Scope of work</div><div style="white-space:pre-wrap">%s</div>'%h(scope[:1500])
+    html+='<div style="font-size:10.5px;font-weight:bold;margin:8px 0 2px">Tech notes</div><div style="white-space:pre-wrap">%s</div>'%(h(notes[:3500]) if notes else '<span style="color:#777">No notes.</span>')
+    if punch: html+='<div style="font-size:10.5px;font-weight:bold;margin:8px 0 2px">Punch list</div>'+''.join('<div>%s %s</div>'%('[x]' if t['done'] else '[ ]',h(t['text'])) for t in punch[:30])
+    b.html(pg,(M,max(y,140)+12,PW-M,PH-30),html+'</div>')
+    b.plan_pages(cones, ab=True, prefix='As-Built')
+    cols=[('left','Label'),('left','Type'),('left','Floor'),('left','Part #'),('left','Cable label'),('left','Notes')]+([('left','IP'),('left','MAC')] if prices else [])+[('center','Installed')]
+    rows=[]
+    order=[t for t,_,_ in DEVICE_TYPES]
+    for d in sorted(mine,key=lambda d:(order.index(d['type']),d.get('label') or '')):
+        rw=[h(d.get('label') or '-'),h(d['type']),h(names.get(d['plan'],'')),h(d.get('part') or '-'),h(d.get('clabel') or '-'),h((d.get('note') or '')[:80] or '-')]
+        if prices: rw+=[h(d.get('ip') or '-'),h(d.get('mac') or '-')]
+        rows.append(rw+['Yes' if d.get('installed') else 'No'])
+    b.table_pages('Device Schedule',cols,rows,24,'No devices on the plans.')
+    ph=job_photos(conn,row['id']); lab={'before':'Before','during':'During','after':'After','survey':'Survey'}
+    for i in range(0,len(ph),6):
+        pg=b.page('Photos'+(' (continued)' if i else ''))
+        for j,p in enumerate(ph[i:i+6]):
+            cx=M+(j%3)*((PW-2*M)/3); cy=62+(j//3)*262; r=pm.Rect(cx+4,cy,cx+(PW-2*M)/3-4,cy+232)
+            pg.draw_rect(r, color=(0.9,0.9,0.86), width=0.5)
+            try: pdf_plan_image(pg, pm.Rect(r.x0+3,r.y0+3,r.x1-3,r.y1-3), os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])), keep=True)
+            except Exception: b.html(pg,(r.x0+8,r.y0+100,r.x1-8,r.y0+130),'<div style="font-family:sans-serif;font-size:9px;color:#777;text-align:center">Photo could not be shown</div>')
+            b.html(pg,(r.x0,r.y1+3,r.x1,r.y1+18),'<div style="font-family:sans-serif;font-size:8.5px;color:#444">%s photo %s</div>'%(lab.get(p['photo_type'],p['photo_type']),h(mr_day(p['uploaded_at']))))
+    b.bom_pages()
+    pg=b.page('Client Sign-Off')
+    sig=a.get('sig') or ''; src='asbuilt'
+    if not sig and str(row['signature'] or '').startswith('data:image/png;base64,'): sig=row['signature']; src='completion'
+    txt='<div style="font-family:sans-serif;font-size:10.5px;line-height:1.5">By signing, the client confirms the work and devices shown in this as-built record were reviewed.</div>'
+    b.html(pg,(M,66,PW-M,110),txt)
+    box=pm.Rect(M,120,M+360,260); pg.draw_rect(box, color=PDF_GOLD, width=1.2)
+    if sig.startswith('data:image/png;base64,'):
+        import base64
+        try: pg.insert_image(pm.Rect(box.x0+8,box.y0+8,box.x1-8,box.y1-8), stream=base64.b64decode(sig.split(',',1)[1]), keep_proportion=True)
+        except Exception: pass
+        who_s=a.get('name') if src=='asbuilt' else (row['customer'] or '')
+        when=a.get('signed_at') if src=='asbuilt' else utc_day(row['completed_at'])
+        b.html(pg,(M,268,PW-M,330),'<div style="font-family:sans-serif;font-size:10px"><b>Signed by:</b> %s<br><b>Date:</b> %s%s</div>'%(h(who_s or '-'),h(when or '-'),'<br><span style="color:#666">Signature captured at job completion.</span>' if src=='completion' else ''))
+    else:
+        b.html(pg,(box.x0+10,box.y0+60,box.x1-10,box.y0+90),'<div style="font-family:sans-serif;font-size:11px;color:#888;text-align:center">Not signed yet</div>')
+        b.html(pg,(M,268,PW-M,320),'<div style="font-family:sans-serif;font-size:10px">Name: ______________________________ &nbsp;&nbsp; Date: ______________</div>')
+    return b.finish('As-built record. Device locations are approximate.')
+
+def asbuilt_archive(conn, row, who):
+    data=asbuilt_pdf_bytes(conn,row,False,who)
+    fn=secure_filename('%s_blueprint_asbuilt_%s.pdf'%(row['id'],uuid.uuid4().hex[:8]))
+    with open(os.path.join(app.config['UPLOAD_FOLDER'],fn),'wb') as f: f.write(data)
+    name='As-built %s %s.pdf'%(row['id'],today_local().isoformat())
+    conn.execute('INSERT INTO photos (job_id,filename,photo_type,uploaded_at,orig_name) VALUES (?,?,?,?,?)',(row['id'],fn,'blueprint',datetime.utcnow().isoformat(),name))
+    conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(row['id'],me(),'Saved the as-built PDF to the job files (%s)'%name,now_local_str()))
+    conn.commit(); return fn, name
+
+def pdf_response(data, fn):
+    from flask import Response
+    return Response(data, mimetype='application/pdf', headers={'Content-Disposition':'inline; filename="%s"'%fn,'Cache-Control':'no-store'})
 
 @app.route('/job/<job_id>/plan.pdf')
 def plan_pdf(job_id):
     conn=get_db(); row=page_job(conn, job_id)
     if not row: conn.close(); return redirect('/')
-    from flask import Response
     prices=is_office() and request.args.get('copy')=='office'
-    cones=request.args.get('cov','1')!='0'
-    try: data=plan_pdf_bytes(conn,row,prices,cones,nice_name(me()) or me())
+    try: data=plan_pdf_bytes(conn,row,prices,request.args.get('cov','1')!='0',nice_name(me()) or me())
     finally: conn.close()
-    fn='%s-plan%s.pdf'%(secure_filename(row['id']) or 'job','-office' if prices else '')
-    return Response(data, mimetype='application/pdf', headers={'Content-Disposition':'inline; filename="%s"'%fn,'Cache-Control':'no-store'})
+    return pdf_response(data,'%s-plan%s.pdf'%(secure_filename(row['id']) or 'job','-office' if prices else ''))
+
+@app.route('/job/<job_id>/asbuilt.pdf')
+def asbuilt_pdf(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    prices=is_office() and request.args.get('copy')=='office'
+    try: data=asbuilt_pdf_bytes(conn,row,prices,nice_name(me()) or me(),request.args.get('cov','1')!='0')
+    finally: conn.close()
+    return pdf_response(data,'%s-asbuilt%s.pdf'%(secure_filename(row['id']) or 'job','-office' if prices else ''))
+
+AB_CSS='''<style>.sigbox{border:2px dashed #a49f2a;border-radius:12px;background:#fff;touch-action:none;width:100%;height:200px;display:block}.abst{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.abst div{border:2px solid #e5e5e5;border-radius:12px;padding:10px 4px;text-align:center;font-weight:600;font-size:.9rem}.abst b{display:block;font-size:1.4rem}.sigimg{max-width:100%;border:1px solid #ddd;border-radius:10px;background:#fff}</style>'''
+@app.route('/job/<job_id>/asbuilt', methods=['GET','POST'])
+def asbuilt_page(job_id):
+    conn=get_db(); row=page_job(conn, job_id)
+    if not row: conn.close(); return redirect('/')
+    if row['job_type']=='Office Task': conn.close(); return redirect('/?job='+urllib.parse.quote(job_id))
+    msg=''; a=ab_load(row); q=urllib.parse.quote(job_id)
+    if request.method=='POST':
+        act=request.form.get('action')
+        if act=='sign':
+            sig=request.form.get('sig') or ''; name=(request.form.get('name') or '').strip()[:100]
+            if not sig.startswith('data:image/png;base64,') or len(sig)>400000: msg='Please have the client sign in the box first.'
+            elif not name: msg='Type the client name first.'
+            else:
+                a={'sig':sig,'name':name,'signed_at':now_local_str(),'by':me()}
+                conn.execute('UPDATE jobs SET asbuilt_json=? WHERE id=?',(json.dumps(a),job_id))
+                conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),'%s signed the as-built'%name,now_local_str())); conn.commit()
+                row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+                fn,nm=asbuilt_archive(conn,row,nice_name(me()) or me()); msg='Signed and saved to the job files: %s'%nm
+        elif act=='clear' and a.get('sig'):
+            conn.execute('UPDATE jobs SET asbuilt_json=? WHERE id=?',(json.dumps({}),job_id)); conn.commit(); a={}; msg='Signature removed. You can sign again.'
+            row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        elif act=='archive':
+            fn,nm=asbuilt_archive(conn,row,nice_name(me()) or me()); msg='Saved to the job files: %s'%nm
+    devs=[d for d in parse_devices(row['survey_devices']) if d['plan'] in set(plan_files(conn,job_id))]
+    files=[b for b in blueprints(conn,job_id) if b['name'].startswith('As-built')]
+    nph=len(job_photos(conn,job_id)); conn.close()
+    body=AB_CSS+'<div class="muted">%s &middot; %s</div>'%(h(row['customer']),h(row['title']))
+    body+='<div class="abst"><div>Devices<b>%d</b></div><div>Installed<b>%d</b></div><div>Photos<b>%d</b></div></div>'%(len(devs),sum(1 for d in devs if d.get('installed')),nph)
+    body+='<a class="big-btn" target="_blank" href="/job/%s/asbuilt.pdf">Preview as-built PDF</a>'%h(q)
+    if is_office(): body+='<a class="big-btn gray" target="_blank" href="/job/%s/asbuilt.pdf?copy=office">Office copy (prices, IP and MAC)</a>'%h(q)
+    body+='<h2>Client sign-off</h2>'
+    if a.get('sig'):
+        body+='<div class="card"><img class="sigimg" src="%s" alt="client signature"><div><b>%s</b> signed on %s</div></div>'%(h(a['sig']),h(a.get('name')),h(a.get('signed_at')))
+        body+='<form method="post" onsubmit="return confirm(&quot;Remove this signature?&quot;)"><input type="hidden" name="action" value="clear"><button class="big-btn gray">Sign again</button></form>'
+    else:
+        body+='''<form method="post" id="sigf" onsubmit="return sigSubmit()"><input type="hidden" name="action" value="sign"><input type="hidden" name="sig" id="sig">
+<label>Client name</label><input name="name" maxlength="100" autocomplete="off" placeholder="Name of the person signing">
+<label>Client signature</label><canvas class="sigbox" id="sigc" aria-label="Signature pad"></canvas>
+<button type="button" class="big-btn gray" onclick="sigClear()">Clear</button><button class="big-btn">Sign and save as-built</button>
+<div class="muted">Saves a PDF copy (no prices) to the job files. Nothing is sent to the client.</div></form>
+<script>const C=document.getElementById('sigc'),X=C.getContext('2d');let drawn=false,down=false;
+function sz(){const r=C.getBoundingClientRect(),d=window.devicePixelRatio||1;C.width=r.width*d;C.height=r.height*d;X.setTransform(d,0,0,d,0,0);X.lineWidth=2.6;X.lineCap='round';X.lineJoin='round';X.strokeStyle='#111';drawn=false}
+sz();window.addEventListener('resize',()=>{if(!drawn)sz()});
+function pt(e){const r=C.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
+C.addEventListener('pointerdown',e=>{e.preventDefault();down=true;C.setPointerCapture(e.pointerId);const [x,y]=pt(e);X.beginPath();X.moveTo(x,y);X.lineTo(x+0.1,y+0.1);X.stroke();drawn=true});
+C.addEventListener('pointermove',e=>{if(!down)return;e.preventDefault();const [x,y]=pt(e);X.lineTo(x,y);X.stroke()});
+['pointerup','pointercancel'].forEach(n=>C.addEventListener(n,()=>{down=false}));
+function sigClear(){X.clearRect(0,0,C.width,C.height);drawn=false}
+function sigSubmit(){if(!drawn){alert('Please have the client sign in the box.');return false}const o=document.createElement('canvas');o.width=C.width;o.height=C.height;const ox=o.getContext('2d');ox.fillStyle='#fff';ox.fillRect(0,0,o.width,o.height);ox.drawImage(C,0,0);document.getElementById('sig').value=o.toDataURL('image/png');return true}</script>'''
+    body+='<form method="post"><input type="hidden" name="action" value="archive"><button class="big-btn gray">Save as-built to job files now</button></form>'
+    if files: body+='<h2>Saved as-builts</h2>'+''.join('<a class="big-btn gray" target="_blank" href="/uploads/%s">%s</a>'%(h(urllib.parse.quote(f['filename'])),h(f['name'])) for f in reversed(files))
+    return ops_page('As-built', body, back='/?job='+q, msg=msg)
 
 @app.route('/design/<job_id>')
 def design(job_id):
