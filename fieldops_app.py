@@ -5503,6 +5503,7 @@ if(!vb)fit();svg.setAttribute('viewBox',vb.x+' '+vb.y+' '+vb.w+' '+vb.h);const K
 if(covOn())planDevs().filter(d=>CAM_DEF[d.type]).forEach(d=>{const v=camView(d),c=col(d.type);h+='<path d="'+conePath(d.x*W/100,d.y*H/100,rangePct(d)*W/100,v.dir,v.fov)+'" fill="'+c+'" fill-opacity="'+(sel===d.id?.2:.11)+'" stroke="'+c+'" stroke-opacity=".55" stroke-width="1.5" vector-effect="non-scaling-stroke"'+(d.type==='PTZ Cam'?' stroke-dasharray="6 4"':'')+' pointer-events="none"/>'});
 planDevs().forEach(d=>{const x=d.x*W/100,y=d.y*H/100,lf=d.x>82;h+='<g data-id="'+esc(d.id)+'" style="cursor:pointer">'+(sel===d.id?'<circle cx="'+x+'" cy="'+y+'" r="'+(s*.78)+'" fill="#a49f2a" fill-opacity=".22" stroke="#a49f2a" stroke-width="2.5" vector-effect="non-scaling-stroke"/>':'')+
 '<circle cx="'+x+'" cy="'+y+'" r="'+Math.max(s*.75,24*K)+'" fill="transparent"/>'+symG(d.type,x,y,s)+'<text x="'+(lf?x-s*.62:x+s*.62)+'" y="'+y+'" font-size="'+fz+'" font-weight="800" fill="#111" stroke="#fff" stroke-width="'+(4.5*K)+'" stroke-linejoin="round" paint-order="stroke" dominant-baseline="middle" text-anchor="'+(lf?'end':'start')+'" pointer-events="none">'+esc(d.label||pre(d.type))+'</text></g>'});
+if(window.PD_HANDLES)h+=PD_HANDLES(W,H,K);
 scalePts.forEach((q,i)=>{const x=q.x*W/100,y=q.y*H/100;h+='<circle cx="'+x+'" cy="'+y+'" r="'+(7*K)+'" fill="#d32f2f" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
 if(scalePts.length===2)h+='<line x1="'+scalePts[0].x*W/100+'" y1="'+scalePts[0].y*H/100+'" x2="'+scalePts[1].x*W/100+'" y2="'+scalePts[1].y*H/100+'" stroke="#d32f2f" stroke-width="3" stroke-dasharray="8 5" vector-effect="non-scaling-stroke"/>';
 measPts.forEach(q=>{h+='<circle cx="'+q.x*W/100+'" cy="'+q.y*H/100+'" r="'+(7*K)+'" fill="#111" stroke="#fff" stroke-width="'+(2*K)+'"/>'});
@@ -5527,14 +5528,14 @@ const ptr=new Map();let g=null;
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}function mid(a,b){return {x:(a.x+b.x)/2,y:(a.y+b.y)/2}}
 svg.addEventListener('pointerdown',e=>{if(!plan())return;svg.setPointerCapture(e.pointerId);ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});
 if(ptr.size===2){const [a,b]=[...ptr.values()];if(g&&g.dev&&g.moved&&window.PD_DRAGEND)PD_DRAGEND(g);g={pinch:true,d0:dist(a,b)||1,m0:mid(a,b),vb0:Object.assign({},vb)};return}
-if(ptr.size>2)return;const t=e.target.closest&&e.target.closest('[data-id]');g={x0:e.clientX,y0:e.clientY,vb0:Object.assign({},vb),dev:t?t.getAttribute('data-id'):null,moved:false}});
+if(ptr.size>2)return;const t=e.target.closest&&e.target.closest('[data-id]'),th=e.target.closest&&e.target.closest('[data-h]');g={x0:e.clientX,y0:e.clientY,vb0:Object.assign({},vb),dev:t?t.getAttribute('data-id'):null,hd:th?th.getAttribute('data-h'):null,moved:false}});
 svg.addEventListener('pointermove',e=>{if(!ptr.has(e.pointerId))return;ptr.set(e.pointerId,{x:e.clientX,y:e.clientY});if(!g)return;const r=box();
 if(g.pinch){if(ptr.size<2)return;const [a,b]=[...ptr.values()],m=mid(a,b),f=g.d0/(dist(a,b)||1),px=g.vb0.x+(g.m0.x-r.left)/r.width*g.vb0.w,py=g.vb0.y+(g.m0.y-r.top)/r.height*g.vb0.h;
 vb.w=g.vb0.w*f;vb.h=g.vb0.h*f;clampZoom();vb.x=px-(m.x-r.left)/r.width*vb.w;vb.y=py-(m.y-r.top)/r.height*vb.h;draw();return}
-const dx=e.clientX-g.x0,dy=e.clientY-g.y0;if(!g.moved&&Math.hypot(dx,dy)>6){g.moved=true;if(g.dev&&window.PD_DRAGSTART&&!scaleMode&&!measMode)PD_DRAGSTART(g)}
-if(!g.moved)return;if(g.drag&&window.PD_DRAG){PD_DRAG(g,e);return}vb.x=g.vb0.x-dx/r.width*vb.w;vb.y=g.vb0.y-dy/r.height*vb.h;draw()});
+const dx=e.clientX-g.x0,dy=e.clientY-g.y0;if(!g.moved&&Math.hypot(dx,dy)>(g.hd?2:6)){g.moved=true;if(g.dev&&window.PD_DRAGSTART&&!scaleMode&&!measMode)PD_DRAGSTART(g)}
+if(!g.moved)return;if(g.hd&&window.PD_CONE){PD_CONE(g,e);return}if(g.drag&&window.PD_DRAG){PD_DRAG(g,e);return}vb.x=g.vb0.x-dx/r.width*vb.w;vb.y=g.vb0.y-dy/r.height*vb.h;draw()});
 function up(e){if(!ptr.has(e.pointerId))return;ptr.delete(e.pointerId);if(!g)return;
-if(!g.pinch){if(!g.moved&&e.type==='pointerup')tap(e,g.dev);else if(g.drag&&window.PD_DRAGEND)PD_DRAGEND(g)}
+if(g.hd&&!g.pinch){if(g.moved&&window.PD_CONEEND)PD_CONEEND(g)}else if(!g.pinch){if(!g.moved&&e.type==='pointerup')tap(e,g.dev);else if(g.drag&&window.PD_DRAGEND)PD_DRAGEND(g)}
 if(ptr.size===0)g=null;else if(g.pinch&&ptr.size===1){const [a]=[...ptr.values()];g={x0:a.x,y0:a.y,vb0:Object.assign({},vb),dev:null,moved:true}}}
 svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
 svg.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.deltaY>0?1.15:1/1.15,e.clientX,e.clientY)},{passive:false});
@@ -5637,6 +5638,15 @@ function place(t,x,y){const p=plan();if(!p||x<0||x>100||y<0||y>100)return;const 
 window.PD_TAP=function(e,id,pc,q){if(measMode)return;const p=plan();if(id){sel=id;tool='';trayMark()}else if(tool&&EDIT){if(q.x<0||q.y<0||q.x>p.w||q.y>p.h)return;place(tool,pc.x,pc.y);return}else sel=null;draw();side()};
 window.PD_DRAGSTART=function(g){if(!EDIT)return;g.drag=true;g.before=snap();sel=g.dev;tool='';trayMark()};
 window.PD_DRAG=function(g,e){const d=DEV.find(x=>x.id===g.dev),p=plan();if(!d)return;const q=toPlan(e);d.x=+Math.max(0,Math.min(100,q.x/p.w*100)).toFixed(2);d.y=+Math.max(0,Math.min(100,q.y/p.h*100)).toFixed(2);draw()};
+window.PD_HANDLES=function(W,H,K){const d=selDev(),p=plan();if(!EDIT||!d||!p||d.plan!==p.fn||!CAM_DEF[d.type]||!covOn()||scaleMode||measMode)return '';
+const v=camView(d),c=col(d.type),cx=d.x*W/100,cy=d.y*H/100,R=v.range*W/100,out=[];
+[['tip',v.dir,R,c,'#fff'],['edge',v.fov>=360?v.dir+90:v.dir+v.fov/2,R*.72,'#fff',c]].forEach(([k,a,rad,f,s])=>{const q=a*Math.PI/180,x=cx+rad*Math.sin(q),y=cy-rad*Math.cos(q);
+out.push('<g data-h="'+k+'" class="pd-hd" style="cursor:grab"><circle cx="'+x+'" cy="'+y+'" r="'+(24*K)+'" fill="#fff" fill-opacity=".01"/><circle cx="'+x+'" cy="'+y+'" r="'+(11*K)+'" fill="'+f+'" stroke="'+s+'" stroke-width="'+(3.5*K)+'"/>'+(k==='edge'?'<circle cx="'+x+'" cy="'+y+'" r="'+(4*K)+'" fill="'+c+'"/>':'')+'</g>')});return out.join('')};
+window.PD_CONE=function(g,e){const d=selDev(),p=plan();if(!d||!p||!EDIT)return;if(!g.before){g.before=snap();const v=camView(d);d.dir=v.dir;d.fov=v.fov}
+const q=toPlan(e),dx=q.x-d.x*p.w/100,dy=q.y-d.y*p.h/100,a=((Math.atan2(dx,-dy)*180/Math.PI)+360)%360,dist=Math.hypot(dx,dy);
+if(g.hd==='tip'){d.dir=Math.round(a);if(p.ppf){d.rft=Math.max(1,Math.min(2000,Math.round(dist/p.ppf)))}else d.range=Math.max(2,Math.min(100,+(dist/p.w*100).toFixed(1)))}
+else{const df=Math.abs(((a-d.dir)%360+540)%360-180);d.fov=Math.max(10,Math.min(359,Math.round(df*2)))}draw()};
+window.PD_CONEEND=function(g){if(g.before)commit(g.before);g.before=null;side()};
 window.PD_DRAGEND=function(g){if(g.before)commit(g.before);g.before=null;g.drag=false;side()};
 window.PD_HINT=function(){if(!EDIT||!plan())return '';if(tool)return 'Tap the plan to drop a '+tool+'. Tap '+tool+' again to stop.';if(!DEV.length)return 'Pick a device, then tap the plan';return ''};
 function selDev(){return DEV.find(d=>d.id===sel)}
