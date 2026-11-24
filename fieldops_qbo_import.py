@@ -481,11 +481,17 @@ def extract_header(est, lines):
     }
 
 
-def existing_quote(conn, qbo_id):
+def existing_quote(conn, qbo_id, org_id=None):
     if not qbo_id:
         return None
-    return conn.execute(
-        'SELECT * FROM quotes WHERE qbo_estimate_id=?', (qbo_id,)).fetchone()
+    try:
+        import fieldops_orgs as _orgs
+        oid = int(org_id or _orgs.request_org_id())
+        return conn.execute(
+            'SELECT * FROM quotes WHERE qbo_estimate_id=? AND org_id=?', (qbo_id, oid)).fetchone()
+    except Exception:
+        return conn.execute(
+            'SELECT * FROM quotes WHERE qbo_estimate_id=?', (qbo_id,)).fetchone()
 
 
 def snapshot_hash(title, notes, clarifications, lines, total, memo='', bill='', ship='',
@@ -871,6 +877,18 @@ def register(fo):
             mode = payload['mode']
         elif request.args.get('mode') in ('update', 'create'):
             mode = request.args.get('mode')
+        try:
+            import fieldops_orgs as _orgs
+            from flask import g
+            oid = _orgs.request_org_id()
+            if not _orgs.qbo_sync_enabled(oid):
+                return jsonify({'error': 'QuickBooks sync is off for this company', 'org_id': oid}), 403
+            try:
+                g.org_id = oid
+            except Exception:
+                pass
+        except Exception:
+            pass
         conn = fo.get_db()
         result = import_estimates(conn, payload, mode=mode)
         conn.commit()

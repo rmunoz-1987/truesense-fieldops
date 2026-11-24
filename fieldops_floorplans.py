@@ -106,7 +106,7 @@ def jobs_with_plans(conn, fo, q=''):
 
 def next_job_id(conn, fo):
     y = fo.today_local().year
-    pre = 'TS-%d-' % y
+    pre = '%s-%d-' % (__import__('fieldops_orgs').job_prefix(), y)
     top = 0
     for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?', (pre + '%',)):
         try:
@@ -131,10 +131,10 @@ def create_plan_job(conn, fo, title, customer, address, job_id='', tech=''):
     now = datetime.utcnow().isoformat()
     sd = fo.today_local().isoformat()
     conn.execute(
-        '''INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,scheduled_date,created_by,job_type)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
+        '''INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,scheduled_date,created_by,job_type,org_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
         (jid, title, (customer or '').strip(), (address or '').strip(), '',
-         'assigned', tech, now, sd, fo.me(), 'Survey'))
+         'assigned', tech, now, sd, fo.me(), 'Survey', __import__('fieldops_orgs').current_org_id()))
     try:
         import fieldops_platform as plat
         plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?', (jid,)).fetchone())

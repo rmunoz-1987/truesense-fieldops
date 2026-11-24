@@ -219,7 +219,7 @@ def convert_to_job(fo, conn, ticket_id, who=''):
         jid = fo._next_job_id(conn)
     if not jid:
         y = datetime.utcnow().year
-        pre = 'TS-%d-' % y
+        pre = '%s-%d-' % (__import__('fieldops_orgs').job_prefix(), y)
         top = 0
         for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?', (pre + '%',)):
             try:
@@ -233,11 +233,11 @@ def convert_to_job(fo, conn, ticket_id, who=''):
     tech = row['assigned_sub'] or ''
     sd = row['scheduled_date']
     conn.execute(
-        '''INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,scheduled_date,created_by,job_type,company_id,site_id,contact_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        '''INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,scheduled_date,created_by,job_type,company_id,site_id,contact_id,org_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (jid, title, row['customer'] or '', row['address'] or '', row['issue'] or '',
          'assigned', tech, now_iso(), row['phone'] or '', sd, who or 'Ticket', 'Service',
-         row['company_id'], row['site_id'], None))
+         row['company_id'], row['site_id'], None, (row['org_id'] if 'org_id' in row.keys() and row['org_id'] else __import__('fieldops_orgs').current_org_id())))
     # company_id/site_id columns may exist from platform migrate
     try:
         conn.execute('UPDATE jobs SET company_id=?, site_id=? WHERE id=?', (row['company_id'], row['site_id'], jid))

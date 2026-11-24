@@ -258,6 +258,12 @@ def is_estimator():
 def may_estimate():
     return is_office() or is_estimator()
 def can_see(job):
+    if not job: return False
+    try:
+        import fieldops_orgs as _orgs
+        if not _orgs.belongs(job): return False
+    except Exception:
+        pass
     if is_office() or is_estimator(): return True
     mek=(me() or '').lower()
     if ' '.join((job['tech'] or '').split()).lower()==mek: return True
@@ -280,6 +286,13 @@ def sub_logins():
             k = u['name_key']
             if k not in seen and k not in office:
                 names.append(u['name']); seen.add(k)
+    except Exception:
+        pass
+    try:
+        import fieldops_orgs as _orgs
+        conn=get_db(); oid=_orgs.current_org_id()
+        names=[n for n in names if _orgs.user_can_org(conn, n, oid)]
+        conn.close()
     except Exception:
         pass
     return names
@@ -310,6 +323,13 @@ def office_assignees():
                 real.append((label, shown))
         except Exception:
             pass
+    try:
+        import fieldops_orgs as _orgs
+        conn=get_db(); oid=_orgs.current_org_id()
+        real=[(label, shown) for label, shown in real if _orgs.user_can_org(conn, label, oid)]
+        conn.close()
+    except Exception:
+        pass
     return real
 def default_sub(): return (sub_logins() or [''])[0]
 def has_any_login():
@@ -630,6 +650,10 @@ display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"logo switc
 .fo-logo{grid-area:logo;display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--ink);min-height:44px}
 .fo-logo img{height:24px;width:auto;display:block}
 .fo-word{display:none;font-family:var(--display);font-size:1.15rem;letter-spacing:.01em}
+.fo-brand{grid-area:logo;display:flex;align-items:center;gap:8px;min-width:0}
+.fo-org-switch{display:inline-flex;align-items:center;gap:4px;flex-shrink:0}
+.fo-org-btn{appearance:none;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:5px 10px;font-weight:700;font-size:.78rem;cursor:pointer;line-height:1.2}
+.fo-org-btn.on{background:#6b6a16;color:#fff;border-color:#6b6a16}
 .fo-switch{grid-area:switch;display:inline-flex;background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;justify-self:start;flex-shrink:0;white-space:nowrap}
 .fo-switch a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 9px;border-radius:999px;text-decoration:none;color:var(--muted);font-weight:700;font-size:.8rem;white-space:nowrap}
 .fo-switch a.on{background:var(--brand);color:#fff}
@@ -1031,6 +1055,30 @@ def shell_links(path, office, estimator=False):
     html+='</div></details>'
     return html
 
+def current_org_id(default=1):
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.current_org_id(default)
+    except Exception:
+        return int(default or 1)
+
+def job_prefix(org_id=None):
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.job_prefix(org_id)
+    except Exception:
+        return 'TS'
+
+def _shell_brand():
+    try:
+        import fieldops_orgs as _orgs
+        b=_orgs.current_branding()
+        fn=globals().get('org_switcher_html')
+        switcher=fn() if callable(fn) else ''
+        return {'logo_url':b['logo_url'],'alt':b['name'],'switcher':switcher,'name':b['name']}
+    except Exception:
+        return {'logo_url':'/static/logo.png','alt':'True Sense Security','switcher':'','name':'True Sense Security'}
+
 def shell_html(path, office, q='', estimator=False):
     who=me() or ''
     search_btn=('<button class="fo-icon-btn ghost fo-search-btn" type="button" aria-label="Search" onclick="foSearch()">%s</button>'%ICONS['search'])
@@ -1043,18 +1091,21 @@ def shell_html(path, office, q='', estimator=False):
     tabs=phone_tab_items(path, office, estimator=estimator)
     back=more_back_html(path, office, estimator=estimator)
     if not office and not estimator:
-        top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
+        brand=_shell_brand()
+        top=('<header class="fo-top fo-sh"><div class="fo-brand"><a class="fo-logo" href="/" aria-label="Home"><img src="%s" alt="%s"><span class="fo-word">Field Ops</span></a>%s</div>'
+             %(brand['logo_url'], brand['alt'], brand['switcher'])
              +search_btn+search_form+'<div class="fo-tools">'+user_menu+'</div></header>')
         return top, tabs
     area=plat_area(path)
     switch=''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if area==k else '',lab) for k,u,lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')))
     links=shell_links(path, office, estimator=estimator)
-    top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
+    brand=_shell_brand()
+    top=('<header class="fo-top fo-sh"><div class="fo-brand"><a class="fo-logo" href="/" aria-label="Home"><img src="%s" alt="%s"><span class="fo-word">Field Ops</span></a>%s</div>'
          '<nav class="fo-switch" aria-label="Area">%s</nav>'
          '<nav class="fo-links" aria-label="Main">%s</nav>'
          '%s%s'
          '<div class="fo-tools"><button class="fo-icon-btn fo-fab-btn" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>%s</div></header>')%(
-             switch, links, search_btn, search_form, ICONS['plus'], user_menu)
+             brand['logo_url'], brand['alt'], brand['switcher'], switch, links, search_btn, search_form, ICONS['plus'], user_menu)
     seg=''
     if office and path in ('/jobs','/schedule','/calendar'):
         seg='<div class="fo-seg fo-sh fo-desk-only">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
@@ -1125,8 +1176,8 @@ def money_page():
     if not is_office(): return redirect('/')
     conn=get_db(); t=today_local(); mo=t.strftime('%Y-%m')
     sales=sum((r['sale_amount'] or 0) for r in conn.execute("SELECT sale_amount,completed_at FROM jobs WHERE status='completed'") if utc_day(r['completed_at'])[:7]==mo)
-    qp=conn.execute('SELECT paid FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
-    queued=conn.execute("SELECT COUNT(*) FROM qbo_queue WHERE status='queued'").fetchone()[0]; conn.close()
+    qp=conn.execute('SELECT paid FROM qbo_monthly WHERE month=? AND org_id=?',(mo,current_org_id())).fetchone()
+    queued=conn.execute("SELECT COUNT(*) FROM qbo_queue WHERE status='queued' AND org_id=?",(current_org_id(),)).fetchone()[0]; conn.close()
     body='<div class="fo-cards" style="margin-bottom:14px"><div class="fo-card">%s<small>Field Ops sales, %s</small><b style="font-size:1.6rem">%s</b></div><div class="fo-card">%s<small>QuickBooks paid, %s</small><b style="font-size:1.6rem">%s</b></div></div>'%(
         ICONS['chart'],t.strftime('%B'),money(sales),ICONS['qbo'],t.strftime('%B'),money(qp['paid']) if qp and qp['paid'] is not None else 'Not synced')
     body+=card_grid([('/revenue','Revenue','Sales vs QuickBooks, 12 months','chart'),('/reports','Reports','Profit by job, sub and type','money'),
@@ -1345,7 +1396,7 @@ def api_today():
         live.append({'sub':nice_name(p['sub']),'job':p['job_id'],'customer':p['customer'] or '','title':p['title'] or '','address':p['address'] or '','lat':p['in_lat'],'lng':p['in_lng'],'since':p['in_at'],'flag':p['in_flag'] or ''})
     feed=[{'job':r['job_id'],'author':r['author'] or '','note':(r['note'] or '')[:140],'at':r['created_at'] or '','customer':r['customer'] or ''} for r in
           conn.execute('SELECT u.*,j.customer FROM job_updates u LEFT JOIN jobs j ON j.id=u.job_id ORDER BY u.id DESC LIMIT 8')]
-    qm=conn.execute('SELECT invoiced FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
+    qm=conn.execute('SELECT invoiced FROM qbo_monthly WHERE month=? AND org_id=?',(mo,current_org_id())).fetchone()
     msrc='Field Ops sales'
     if qm and qm['invoiced'] is not None and fnum(qm['invoiced'])>=month: month=fnum(qm['invoiced']); msrc='QuickBooks invoiced'
     extra_fn=globals().get('crm_today_actions')
@@ -1816,6 +1867,12 @@ def init_db():
         _leads.init_schema(conn)
     except Exception:
         app.logger.exception('platform migrate failed')
+        raise
+    try:
+        import fieldops_orgs as _orgs
+        _orgs.migrate(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
+    except Exception:
+        app.logger.exception('org migrate failed')
         raise
     conn.commit(); conn.close()
 
@@ -2658,7 +2715,7 @@ def new_job_page():
 @app.route('/history')
 def job_history():
     if not is_office(): return redirect('/')
-    conn=get_db(); rows=conn.execute("SELECT id,title,customer,job_type,tech,completed_at FROM jobs WHERE status='completed' ORDER BY completed_at DESC LIMIT 500").fetchall(); conn.close()
+    conn=get_db(); rows=conn.execute("SELECT id,title,customer,job_type,tech,completed_at FROM jobs WHERE org_id=? AND status='completed' ORDER BY completed_at DESC LIMIT 500",(current_org_id(),)).fetchall(); conn.close()
     q=(request.args.get('q') or '').strip().lower()
     if q: rows=[r for r in rows if q in ' '.join(str(r[k] or '') for k in ('id','title','customer','tech','job_type')).lower()]
     body='<form class="row"><input name="q" value="%s" placeholder="Search history"><button class="big-btn gray" style="flex:0 0 100px">Search</button></form>'%h(request.args.get('q') or '')
@@ -2677,10 +2734,19 @@ def job_history():
 def list_jobs():
     status=request.args.get('status','assigned'); q=(request.args.get('q') or '').strip().lower()
     conn=get_db()
-    if q:
-        rows=conn.execute("SELECT * FROM jobs WHERE INSTR(LOWER(IFNULL(customer,'')),?)>0 OR INSTR(LOWER(IFNULL(address,'')),?)>0 OR INSTR(LOWER(id),?)>0 ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(q,q,q)).fetchall()
-    elif status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
-    else: rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY created_at DESC").fetchall()
+    try:
+        import fieldops_orgs as _orgs
+        if q:
+            rows=_orgs.list_jobs(conn, where="INSTR(LOWER(IFNULL(customer,'')),?)>0 OR INSTR(LOWER(IFNULL(address,'')),?)>0 OR INSTR(LOWER(id),?)>0", args=(q,q,q), order="ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC")
+        elif status=='completed':
+            rows=_orgs.list_jobs(conn, where="status='completed'", order='ORDER BY completed_at DESC')
+        else:
+            rows=_orgs.list_jobs(conn, where="status!='completed'", order='ORDER BY created_at DESC')
+    except Exception:
+        if q:
+            rows=conn.execute("SELECT * FROM jobs WHERE INSTR(LOWER(IFNULL(customer,'')),?)>0 OR INSTR(LOWER(IFNULL(address,'')),?)>0 OR INSTR(LOWER(id),?)>0 ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",(q,q,q)).fetchall()
+        elif status=='completed': rows=conn.execute("SELECT * FROM jobs WHERE status='completed' ORDER BY completed_at DESC").fetchall()
+        else: rows=conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY created_at DESC").fetchall()
     co=sub_companies(conn) if is_office() else {}; conn.close()
     out=[job_dict(r) for r in rows if can_see(r)]
     for j in out:
@@ -2713,6 +2779,12 @@ def create_job():
     chk = json.dumps([{'text': x, 'done': False} for x in (lines or (DEFAULT_CHECKLIST if jt not in NO_CLOSING_STEPS else []))])
     tech = nice_name(d.get('tech')) or (me() if is_estimator() else default_sub())
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
+    try:
+        import fieldops_orgs as _orgs
+        if not _orgs.user_can_org(conn, tech, _orgs.current_org_id()):
+            conn.close(); return jsonify({'error':'That person is not on this company'}),400
+    except Exception:
+        pass
     customer=(d.get('customer') or '').strip()
     company_id=None
     raw_cid=d.get('company_id')
@@ -2722,7 +2794,11 @@ def create_job():
     try:
         import fieldops_platform as _plat
         if company_id:
-            co=conn.execute('SELECT * FROM companies WHERE id=?',(company_id,)).fetchone()
+            try:
+                import fieldops_orgs as _orgs
+                co=_orgs.get_company(conn, company_id)
+            except Exception:
+                co=conn.execute('SELECT * FROM companies WHERE id=?',(company_id,)).fetchone()
             if not co: conn.close(); return jsonify({'error':'Customer not found'}),400
             customer=co['name']
         elif customer:
@@ -2732,8 +2808,8 @@ def create_job():
                 customer=co['name']
     except Exception as e:
         app.logger.warning('resolve company failed: %s', e)
-    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type,company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                 (jid,title,customer,(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt,company_id))
+    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type,company_id,org_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (jid,title,customer,(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt,company_id,current_org_id()))
     try:
         import fieldops_platform as _plat
         _plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone(), company_id=company_id)
@@ -2746,13 +2822,13 @@ def create_job():
 @app.route('/api/quick')
 def quick_info():
     if not may_estimate(): return jsonify({'error':'office only'}),403
-    conn=get_db(); y=today_local().year; pre='TS-%d-'%y; top=0
-    for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?',(pre+'%',)):
+    conn=get_db(); y=today_local().year; pre='%s-%d-'%(job_prefix(),y); top=0
+    for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ? AND org_id=?',(pre+'%',current_org_id())):
         try: top=max(top,int(r['id'][len(pre):]))
         except ValueError: pass
     cl=[]
     try:
-        for r in conn.execute("SELECT id,name,billing_address,phone FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name"):
+        for r in conn.execute("SELECT id,name,billing_address,phone FROM companies WHERE IFNULL(archived,0)=0 AND org_id=? ORDER BY name",(current_org_id(),)):
             cl.append({'id':r['id'],'name':r['name'],'address':r['billing_address'] or '','phone':r['phone'] or ''})
     except Exception:
         cl=[{'id':None,'name':r['name'],'address':r['address'] or '','phone':r['phone'] or ''} for r in conn.execute('SELECT name,address,phone FROM clients ORDER BY name')]
@@ -2815,8 +2891,8 @@ def save_quick_notes(job_id):
 def copy_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
     d=request.get_json(silent=True) or {}
-    conn=get_db(); src=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not src: conn.close(); return ('',404)
+    conn=get_db(); src,err=own_job(conn, job_id)
+    if err: conn.close(); return err
     nid=(d.get('id') or '').strip()
     if nid:
         if conn.execute('SELECT 1 FROM jobs WHERE id=?',(nid,)).fetchone(): conn.close(); return jsonify({'error':'That Job ID already exists'}),409
@@ -2838,9 +2914,16 @@ def copy_job(job_id):
 
 @app.route('/api/jobs/<job_id>')
 def get_job(job_id):
-    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone(); conn.close()
-    if not row: return ('',404)
-    if not can_see(row): return jsonify({'error':'not your job'}),403
+    conn=get_db()
+    try:
+        import fieldops_orgs as _orgs
+        row=_orgs.get_job(conn, job_id)
+        if not row:
+            conn.close(); return _orgs.not_found(as_json=True)
+    except Exception:
+        row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not row: conn.close(); return ('',404)
+    if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
     conn=get_db(); photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(job_id,)).fetchall()]; bps=blueprints(conn, job_id); plans=plan_files(conn, job_id); srcs=survey_plan_sources(conn, row)
     extra={}
     if is_office():
@@ -2853,9 +2936,8 @@ def get_job(job_id):
 
 @app.route('/api/jobs/<job_id>/updates', methods=['GET','POST'])
 def job_updates(job_id):
-    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not row: conn.close(); return ('',404)
-    if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
     if request.method=='POST':
         if row['job_type']=='Survey' and row['status']=='completed' and not may_estimate(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
         note=((request.get_json(silent=True) or {}).get('note') or '').strip()[:2000]
@@ -2866,9 +2948,8 @@ def job_updates(job_id):
 
 @app.route('/api/jobs/<job_id>/checklist', methods=['POST'])
 def save_checklist(job_id):
-    conn=get_db(); row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not row: conn.close(); return ('',404)
-    if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
     items=(request.get_json(silent=True) or {}).get('checklist') or []
     clean=[{'text':str(i.get('text',''))[:200],'done':bool(i.get('done'))} for i in items if isinstance(i,dict) and i.get('text')]
     conn.execute('UPDATE jobs SET checklist=? WHERE id=?',(json.dumps(clean),job_id)); conn.commit(); conn.close()
@@ -2970,8 +3051,13 @@ def lock_rates(conn, job_id):
     conn.execute('UPDATE jobs SET labor_rates=? WHERE id=?',(json.dumps({k:rates.get(k,{'h':None,'f':None}) for k in keys}),job_id))
 
 def own_job(conn, job_id):
-    row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not row: return None, ('',404)
+    try:
+        import fieldops_orgs as _orgs
+        row=_orgs.get_job(conn, job_id)
+        if not row: return None, _orgs.not_found(as_json=True)
+    except Exception:
+        row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+        if not row: return None, ('',404)
     if not can_see(row): return None, (jsonify({'error':'not your job'}),403)
     return row, None
 
@@ -3215,8 +3301,8 @@ def followup_done(fid):
 @app.route('/api/jobs/<job_id>/to-job', methods=['POST'])
 def survey_to_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
-    conn=get_db(); src=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not src: conn.close(); return ('',404)
+    conn=get_db(); src,err=own_job(conn, job_id)
+    if err: conn.close(); return err
     if src['job_type']!='Survey' or src['status']!='completed': conn.close(); return jsonify({'error':'only a completed survey'}),400
     nid=str((request.get_json(silent=True) or {}).get('id') or '').strip()[:40]
     if nid:
@@ -3610,7 +3696,11 @@ def search_page():
     form='<form action="/search"><input type="search" name="q" value="%s" placeholder="Client, address, job, note, serial" autofocus><button class="big-btn">Search</button></form>'%h(q)
     if len(q)<2: return ops_page('Search', form+'<div class="muted">Type 2 or more letters.</div>')
     like='%'+q.lower()+'%'; conn=get_db(); out=[]
-    jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs').fetchall() if can_see(r)}
+    try:
+        import fieldops_orgs as _orgs
+        jobs={r['id']:r for r in _orgs.list_jobs(conn) if can_see(r)}
+    except Exception:
+        jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs').fetchall() if can_see(r)}
     hits={}
     def hit(jid, why):
         if jid in jobs and why not in hits.setdefault(jid,[]): hits[jid].append(why)
@@ -3655,8 +3745,8 @@ def eq_card(r, office, link=True):
 def equipment_page():
     if not is_office(): return redirect('/')
     site=(request.args.get('site') or '').strip(); job=(request.args.get('job') or '').strip()
-    conn=get_db(); rows=conn.execute('SELECT * FROM equipment ORDER BY LOWER(client),LOWER(site),device').fetchall()
-    jrow=conn.execute('SELECT * FROM jobs WHERE id=?',(job,)).fetchone() if job else None; conn.close()
+    conn=get_db(); rows=conn.execute('SELECT * FROM equipment WHERE org_id=? ORDER BY LOWER(client),LOWER(site),device',(current_org_id(),)).fetchall()
+    jrow=conn.execute('SELECT * FROM jobs WHERE id=? AND org_id=?',(job,current_org_id())).fetchone() if job else None; conn.close()
     if site: rows=[r for r in rows if ckey(r['site'])==ckey(site)]
     body=''
     if jrow: body+='<form method="post" action="/equipment/import/%s"><button class="big-btn">Add devices from this job as-built</button></form>'%h(jrow['id'])
@@ -3672,8 +3762,16 @@ def equipment_page():
 @app.route('/equipment/<eid>', methods=['GET','POST'])
 def equipment_edit(eid):
     if not is_office(): return redirect('/')
-    conn=get_db(); r=conn.execute('SELECT * FROM equipment WHERE id=?',(eid,)).fetchone() if eid!='new' else None
-    if eid!='new' and not r: conn.close(); return redirect('/equipment')
+    conn=get_db()
+    if eid!='new':
+        try:
+            import fieldops_orgs as _orgs
+            r=_orgs.get_equipment(conn, eid)
+        except Exception:
+            r=conn.execute('SELECT * FROM equipment WHERE id=?',(eid,)).fetchone()
+    else:
+        r=None
+    if eid!='new' and not r: conn.close(); return ('',404)
     if request.method=='POST':
         f=request.form
         if f.get('delete')=='1' and r:
@@ -3689,7 +3787,7 @@ def equipment_edit(eid):
             elif not pw: pw=r['password'] or ''
             conn.execute('UPDATE equipment SET %s,password=?,updated_at=? WHERE id=?'%','.join(k+'=?' for k,_ in EQ_FIELDS),tuple(vals.values())+(pw,now_local_str(),eid))
         else:
-            conn.execute('INSERT INTO equipment (%s,password,created_at,updated_at) VALUES (%s)'%(','.join(k for k,_ in EQ_FIELDS),','.join('?'*(len(EQ_FIELDS)+3))),tuple(vals.values())+(pw,now_local_str(),now_local_str()))
+            conn.execute('INSERT INTO equipment (%s,password,created_at,updated_at,org_id) VALUES (%s)'%(','.join(k for k,_ in EQ_FIELDS),','.join('?'*(len(EQ_FIELDS)+4))),tuple(vals.values())+(pw,now_local_str(),now_local_str(),current_org_id()))
         conn.commit(); conn.close(); return redirect('/equipment?'+urllib.parse.urlencode({'site':vals['site'],'msg':'Saved'}))
     conn.close(); src=r or request.args
     body='<form method="post">'
@@ -3709,14 +3807,14 @@ def equipment_edit(eid):
 @app.route('/equipment/import/<job_id>', methods=['POST'])
 def equipment_import(job_id):
     if not is_office(): return redirect('/')
-    conn=get_db(); j=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    if not j: conn.close(); return redirect('/equipment')
-    have={r['asbuilt_label'] for r in conn.execute('SELECT asbuilt_label FROM equipment WHERE job_id=?',(job_id,)).fetchall()}
+    conn=get_db(); j=conn.execute('SELECT * FROM jobs WHERE id=? AND org_id=?',(job_id,current_org_id())).fetchone()
+    if not j: conn.close(); return ('',404)
+    have={r['asbuilt_label'] for r in conn.execute('SELECT asbuilt_label FROM equipment WHERE job_id=? AND org_id=?',(job_id,current_org_id())).fetchall()}
     day=(j['completed_at'] or '')[:10] or today_local().isoformat(); n=0
     for d in parse_devices(j['survey_devices']):
         if d['label'] in have: continue
-        conn.execute('INSERT INTO equipment (client,site,job_id,device,mac,ip,install_date,asbuilt_label,notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                     (j['customer'] or '',j['address'] or '',job_id,d['type'],d['mac'],d['ip'],day,d['label'],' '.join(x for x in [d['port'] and 'Port '+d['port'], d['clabel'] and 'Cable '+d['clabel'], d['note']] if x),now_local_str(),now_local_str()))
+        conn.execute('INSERT INTO equipment (client,site,job_id,device,mac,ip,install_date,asbuilt_label,notes,created_at,updated_at,org_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (j['customer'] or '',j['address'] or '',job_id,d['type'],d['mac'],d['ip'],day,d['label'],' '.join(x for x in [d['port'] and 'Port '+d['port'], d['clabel'] and 'Cable '+d['clabel'], d['note']] if x),now_local_str(),now_local_str(),current_org_id()))
         n+=1
     conn.commit(); conn.close()
     return redirect('/equipment?'+urllib.parse.urlencode({'site':j['address'] or '','job':job_id,'msg':'Added %d devices from the as-built'%n}))
@@ -3726,12 +3824,12 @@ def job_equipment(job_id):
     conn=get_db(); j=page_job(conn, job_id)
     if not j: conn.close(); return redirect('/')
     if is_office(): conn.close(); return redirect('/equipment?'+urllib.parse.urlencode({'site':j['address'] or '','job':job_id}))
-    rows=[r for r in conn.execute('SELECT * FROM equipment ORDER BY device').fetchall() if j['address'] and ckey(r['site'])==ckey(j['address'])]; conn.close()
+    rows=[r for r in conn.execute('SELECT * FROM equipment WHERE org_id=? ORDER BY device',(current_org_id(),)).fetchall() if j['address'] and ckey(r['site'])==ckey(j['address'])]; conn.close()
     body=''.join(eq_card(r,False) for r in rows) or '<div class="card">No equipment saved for this site yet.</div>'
     return ops_page('Equipment at this site', '<div class="muted">%s</div>'%h(j['address'] or '')+body, back='/?job='+urllib.parse.quote(job_id))
 
 def eq_search(conn, like, hit, out, office):
-    rows=conn.execute("SELECT * FROM equipment WHERE LOWER(IFNULL(device,'')||' '||IFNULL(model,'')||' '||IFNULL(serial,'')||' '||IFNULL(mac,'')||' '||IFNULL(ip,'')||' '||IFNULL(asbuilt_label,'')) LIKE ? LIMIT 40",(like,)).fetchall()
+    rows=conn.execute("SELECT * FROM equipment WHERE org_id=? AND LOWER(IFNULL(device,'')||' '||IFNULL(model,'')||' '||IFNULL(serial,'')||' '||IFNULL(mac,'')||' '||IFNULL(ip,'')||' '||IFNULL(asbuilt_label,'')) LIKE ? LIMIT 40",(current_org_id(),like)).fetchall()
     if office:
         if rows: out.append('<h2>Equipment</h2>'+''.join(eq_card(r,True) for r in rows))
     else:
@@ -4022,16 +4120,24 @@ def sync_key_ok():
 def qbo_page():
     if not is_office(): return redirect('/')
     conn=get_db(); msg=''
-    if request.method=='POST':
+    sync_on=True
+    try:
+        import fieldops_orgs as _orgs
+        sync_on=bool(_orgs.qbo_sync_enabled())
+    except Exception:
+        sync_on=True
+    if request.method=='POST' and not sync_on:
+        msg='QuickBooks sync is off for this company until a second connection is set up.'
+    elif request.method=='POST':
         f=request.form; a=f.get('action')
         if a=='export':
             n=0
             for jid in f.getlist('job'):
-                r=conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
+                r=conn.execute('SELECT * FROM jobs WHERE id=? AND org_id=?',(jid,current_org_id())).fetchone()
                 if not r or conn.execute("SELECT 1 FROM qbo_queue WHERE job_id=? AND status IN ('queued','created','paid')",(jid,)).fetchone(): continue
                 p=qbo_payload(conn, r)
                 if not p['line_items'] or not p['customer']['name']: continue
-                conn.execute('INSERT OR REPLACE INTO qbo_queue (job_id,status,payload,queued_at,queued_by,updated_at) VALUES (?,?,?,?,?,?)',(jid,'queued',json.dumps(p),now_local_str(),me(),now_local_str())); n+=1
+                conn.execute('INSERT OR REPLACE INTO qbo_queue (job_id,status,payload,queued_at,queued_by,updated_at,org_id) VALUES (?,?,?,?,?,?,?)',(jid,'queued',json.dumps(p),now_local_str(),me(),now_local_str(),current_org_id())); n+=1
             msg='Queued %d for QuickBooks. Ask your bot to create the QuickBooks drafts. It checks each one with you first.'%n
         elif a=='unqueue':
             conn.execute("DELETE FROM qbo_queue WHERE job_id=? AND status IN ('queued','error')",(f.get('job'),)); msg='Removed from the queue'
@@ -4046,9 +4152,9 @@ def qbo_page():
                 except Exception:
                     app.logger.exception('ops qbo draft failed'); msg='Could not save that draft.'
         conn.commit()
-    drafts=conn.execute('SELECT d.job_id,d.created_at FROM invoice_drafts d ORDER BY d.created_at DESC').fetchall()
-    q={r['job_id']:r for r in conn.execute('SELECT * FROM qbo_queue').fetchall()}
-    jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs').fetchall()}
+    drafts=conn.execute('SELECT d.job_id,d.created_at FROM invoice_drafts d WHERE d.org_id=? ORDER BY d.created_at DESC',(current_org_id(),)).fetchall()
+    q={r['job_id']:r for r in conn.execute('SELECT * FROM qbo_queue WHERE org_id=?',(current_org_id(),)).fetchall()}
+    jobs={r['id']:r for r in conn.execute('SELECT * FROM jobs WHERE org_id=?',(current_org_id(),)).fetchall()}
     ready=[]
     for d in drafts:
         r=jobs.get(d['job_id'])
@@ -4056,6 +4162,8 @@ def qbo_page():
         ready.append((r,qbo_payload(conn, r)))
     conn.close()
     body='<div class="muted">Export puts approved invoice drafts in a queue. Your bot (it has QuickBooks) creates each one as a QuickBooks draft invoice only after you OK it. Nothing is sent to clients.</div>'
+    if not sync_on:
+        body='<div class="card">QuickBooks sync is off for this company. The current connection belongs to True Sense. Datacom books stay separate until a second connection is set up.</div>'+body
     body+='<h2>Ready to export</h2>'
     if ready:
         body+='<form method="post"><input type="hidden" name="action" value="export">'
@@ -4100,8 +4208,15 @@ def qbo_pending():
     if bad: return bad
     st=request.args.get('status','queued')
     if st not in ('queued','created'): return jsonify({'error':'status must be queued or created'}),400
-    conn=get_db(); rows=conn.execute('SELECT * FROM qbo_queue WHERE status=? ORDER BY queued_at',(st,)).fetchall(); conn.close()
-    existing=[dict(json.loads(r['payload'] or '{}'),status=r['status'],qbo_invoice_id=r['qbo_invoice_id'],queued_at=r['queued_at']) for r in rows]
+    try:
+        import fieldops_orgs as _orgs
+        oid=_orgs.request_org_id()
+        if not _orgs.qbo_sync_enabled(oid):
+            return jsonify([])
+        conn=get_db(); rows=conn.execute('SELECT * FROM qbo_queue WHERE status=? AND org_id=? ORDER BY queued_at',(st,oid)).fetchall(); conn.close()
+    except Exception:
+        conn=get_db(); rows=conn.execute('SELECT * FROM qbo_queue WHERE status=? ORDER BY queued_at',(st,)).fetchall(); conn.close()
+    existing=[dict(json.loads(r['payload'] or '{}'),job_id=r['job_id'],status=r['status'],qbo_invoice_id=r['qbo_invoice_id'],queued_at=r['queued_at'],org_id=r['org_id'] if 'org_id' in r.keys() else 1) for r in rows]
     fn=globals().get('ops_qbo_pending')
     if callable(fn):
         try: existing=fn(request.args.get('kind') or 'final', st, existing)
@@ -4121,7 +4236,14 @@ def qbo_result():
         if res=='draft not found': return jsonify({'error':res}),404
         return jsonify({'error':res or 'bad request'}),400
     if st not in ('created','paid','error'): return jsonify({'error':'status must be created, paid or error'}),400
-    conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=?',(jid,)).fetchone()
+    try:
+        import fieldops_orgs as _orgs
+        oid=_orgs.request_org_id()
+        if not _orgs.qbo_sync_enabled(oid):
+            return jsonify({'error':'QuickBooks sync is off for this company'}),403
+        conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=? AND org_id=?',(jid,oid)).fetchone()
+    except Exception:
+        conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=?',(jid,)).fetchone()
     if not x: conn.close(); return jsonify({'error':'job not in queue'}),404
     pick=globals().get('pick_pay_link')
     link=pick(d) if callable(pick) else str(d.get('pay_link') or d.get('invoiceLink') or '').strip()[:500]
@@ -4776,12 +4898,24 @@ def agr_parse(body):
     if pos<len(body or ''): segs.append({'t':'text','v':body[pos:]})
     return segs
 
-def current_agreement(conn): return conn.execute('SELECT * FROM agreements ORDER BY id DESC LIMIT 1').fetchone()
+def current_agreement(conn):
+    try:
+        import fieldops_orgs as _orgs
+        oid=_orgs.current_org_id()
+        if 'org_id' in {r[1] for r in conn.execute('PRAGMA table_info(agreements)')}:
+            row=conn.execute('SELECT * FROM agreements WHERE org_id=? ORDER BY id DESC LIMIT 1',(oid,)).fetchone()
+            if row: return row
+            return None
+    except Exception:
+        pass
+    return conn.execute('SELECT * FROM agreements ORDER BY id DESC LIMIT 1').fetchone()
 def agreement_required(conn):
     r=conn.execute("SELECT value FROM settings WHERE key='require_agreement'").fetchone(); return bool(r and r['value']=='1')
 def last_sign(conn, name): return conn.execute('SELECT * FROM agreement_signs WHERE sub=? ORDER BY id DESC LIMIT 1',(ckey(name),)).fetchone()
 def signed_current(conn, name):
-    a=current_agreement(conn); return bool(conn.execute('SELECT 1 FROM agreement_signs WHERE sub=? AND agreement_id=?',(ckey(name),a['id'])).fetchone())
+    a=current_agreement(conn)
+    if not a: return False
+    return bool(conn.execute('SELECT 1 FROM agreement_signs WHERE sub=? AND agreement_id=?',(ckey(name),a['id'])).fetchone())
 def bump_version(v):
     p=(v or '').split('.')
     try: p[-1]=str(int(p[-1])+1); return '.'.join(p)
@@ -5105,11 +5239,13 @@ def parse_qbo_rows(rows):
         out.append((mo,vals[0],vals[1]))
     return out
 
-def save_qbo_rows(rows, source):
+def save_qbo_rows(rows, source, org_id=None):
+    if org_id is None:
+        org_id=current_org_id()
     conn=get_db(); now=now_local_str()
     for mo,inv,paid in rows:
-        if inv is None and paid is None: conn.execute('DELETE FROM qbo_monthly WHERE month=?',(mo,)); continue  # both blank clears the month
-        conn.execute('INSERT OR REPLACE INTO qbo_monthly (month,invoiced,paid,synced_at,source) VALUES (?,?,?,?,?)',(mo,inv,paid,now,source))
+        if inv is None and paid is None: conn.execute('DELETE FROM qbo_monthly WHERE month=? AND org_id=?',(mo,org_id)); continue  # both blank clears the month
+        conn.execute('INSERT OR REPLACE INTO qbo_monthly (org_id,month,invoiced,paid,synced_at,source) VALUES (?,?,?,?,?,?)',(org_id,mo,inv,paid,now,source))
     conn.commit(); conn.close(); return now
 
 @app.route('/api/qbo-monthly', methods=['POST'])
@@ -5121,7 +5257,14 @@ def qbo_monthly_api():
     try: rows=parse_qbo_rows(d.get('months') or [])
     except (ValueError, TypeError) as e: return jsonify({'error':str(e)[:100]}),400
     if not rows: return jsonify({'error':'months required'}),400
-    return jsonify({'ok':True,'saved':len(rows),'synced_at':save_qbo_rows(rows,'api')})
+    try:
+        import fieldops_orgs as _orgs
+        oid=_orgs.request_org_id()
+        if not _orgs.qbo_sync_enabled(oid):
+            return jsonify({'error':'QuickBooks sync is off for this company'}),403
+    except Exception:
+        oid=1
+    return jsonify({'ok':True,'saved':len(rows),'synced_at':save_qbo_rows(rows,'api', org_id=oid),'org_id':oid})
 
 REV_HTML = """<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Revenue</title>
 <style>*{box-sizing:border-box}body{font-family:-apple-system,Arial,sans-serif;background:#fff;color:#111;max-width:900px;margin:auto;padding:12px}h2{color:#a49f2a;margin:8px 0;text-align:center}
@@ -5153,13 +5296,13 @@ textarea{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-s
 def revenue_data():
     keys=month_keys(12); year=today_local().year; conn=get_db()
     rows={k:{'month':k,'fo':0.0,'lab':0.0,'n':0,'missing':0,'qi':None,'qp':None} for k in keys}
-    for j in conn.execute("SELECT * FROM jobs WHERE status='completed' AND COALESCE(job_type,'') NOT IN ('Survey','Office Task') AND completed_at IS NOT NULL").fetchall():
+    for j in conn.execute("SELECT * FROM jobs WHERE org_id=? AND status='completed' AND COALESCE(job_type,'') NOT IN ('Survey','Office Task') AND completed_at IS NOT NULL",(current_org_id(),)).fetchall():
         k=local_month(j['completed_at'])
         if k in rows:
             r=rows[k]; r['n']+=1; r['fo']+=j['sale_amount'] or 0; r['lab']+=job_labor(conn,j)['total']
             if j['sale_amount'] is None: r['missing']+=1
     synced=None
-    for q in conn.execute('SELECT * FROM qbo_monthly').fetchall():
+    for q in conn.execute('SELECT * FROM qbo_monthly WHERE org_id=?',(current_org_id(),)).fetchall():
         if q['month'] in rows: rows[q['month']]['qi']=q['invoiced']; rows[q['month']]['qp']=q['paid']
         if q['synced_at'] and (synced is None or q['synced_at']>synced): synced=q['synced_at']
     conn.close()
@@ -5357,7 +5500,11 @@ DAILY_HTML = FIELD_HEAD + """<h2>Daily Log</h2><div style="text-align:center;fon
 </body></html>"""
 
 def page_job(conn, job_id):
-    row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    try:
+        import fieldops_orgs as _orgs
+        row=_orgs.get_job(conn, job_id)
+    except Exception:
+        row=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
     return row if row and can_see(row) else None
 
 def log_dict(r):
@@ -5698,7 +5845,14 @@ def reassign_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
     tech=nice_name((request.get_json(silent=True) or {}).get('tech'))
     if not tech: return jsonify({'error':'tech required'}),400
-    conn=get_db(); old=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
+    conn=get_db(); old,err=own_job(conn, job_id)
+    if err: conn.close(); return err
+    try:
+        import fieldops_orgs as _orgs
+        if not _orgs.user_can_org(conn, tech, _orgs.current_org_id()):
+            conn.close(); return jsonify({'error':'That person is not on this company'}),400
+    except Exception:
+        pass
     n=conn.execute('UPDATE jobs SET tech=? WHERE id=?',(tech,job_id)).rowcount; conn.commit(); conn.close()
     if n and old and ckey(old['tech'])!=ckey(tech):
         push_to_sub(tech,'New job: '+(old['title'] or job_id),(old['customer'] or '')+' - '+nice_day(old['scheduled_date'] or ''),'/?job='+job_id)
@@ -5708,7 +5862,8 @@ def reassign_job(job_id):
 @app.route('/api/jobs/<job_id>', methods=['DELETE'])
 def delete_job(job_id):
     if not is_office(): return jsonify({'error':'office only'}),403
-    conn=get_db()
+    conn=get_db(); row,err=own_job(conn, job_id)
+    if err: conn.close(); return err
     for p in conn.execute('SELECT filename FROM photos WHERE job_id=?',(job_id,)).fetchall():
         try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(p['filename'])))
         except OSError: pass
@@ -5760,8 +5915,15 @@ def mr_init():
 mr_init()
 
 def mr_account(conn):
-    r=conn.execute("SELECT value FROM settings WHERE key='adi_account'").fetchone()
-    return ((r['value'] if r else '') or '').strip() or MR_ACCOUNT_DEFAULT
+    try:
+        import fieldops_orgs as _orgs
+        raw=(_orgs.org_setting(conn, 'adi_account') or '').strip()
+        if _orgs.current_org_id()==_orgs.ORG_DATACOM:
+            return raw
+        return raw or MR_ACCOUNT_DEFAULT
+    except Exception:
+        r=conn.execute("SELECT value FROM settings WHERE key='adi_account'").fetchone()
+        return ((r['value'] if r else '') or '').strip() or MR_ACCOUNT_DEFAULT
 def mr_items(s):
     try: v=json.loads(s or '[]')
     except Exception: v=[]
@@ -5962,7 +6124,13 @@ def mr_orders():
     if not is_office(): return redirect('/')
     conn=get_db(); msg=''
     if request.method=='POST':
-        conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('adi_account',?)",((request.form.get('adi_account') or '').strip()[:40],)); conn.commit(); msg='ADI account # saved.'
+        acct=(request.form.get('adi_account') or '').strip()[:40]
+        try:
+            import fieldops_orgs as _orgs
+            _orgs.set_org_setting(conn, 'adi_account', acct)
+        except Exception:
+            conn.execute("INSERT OR REPLACE INTO settings (key,value) VALUES ('adi_account',?)",(acct,))
+        conn.commit(); msg='ADI account # saved.'
     acct=mr_account(conn); rows=[mr_dict(r, True) for r in conn.execute('SELECT * FROM material_requests ORDER BY id DESC LIMIT 300')]; conn.close()
     show_all=request.args.get('all')=='1'; body='<div class="card"><b>Ship to:</b> %s<form method="post" class="row" style="margin-top:6px"><div><label>ADI account #</label><input name="adi_account" value="%s" placeholder="463208 (default)"></div><button class="big-btn gray" style="flex:0 0 120px;align-self:end">Save</button></form></div>'%(h(MR_SHIP_TO),h(acct))
     if not rows: body+='<div class="card muted" style="text-align:center">No material requests yet. Subs send them from the job screen with Request materials.</div>'
@@ -6689,7 +6857,12 @@ class FoPdf:
         self.doc=pymupdf.open(); self.titles=[]; self.icons={}
         self.info=plan_info(conn,row['id']); self.devs=parse_devices(row['survey_devices']); self.colors={n:c for n,p,c in DEVICE_TYPES}
         self.date=today_local().strftime('%b %-d, %Y'); self.copy='Office copy (with prices)' if prices else 'Client copy'
-        self.logo=os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')
+        try:
+            import fieldops_orgs as _orgs
+            self.brand=_orgs.branding(row['org_id'] if 'org_id' in row.keys() else None)
+        except Exception:
+            self.brand={'name':'True Sense Security','logo_pdf_path':os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')}
+        self.logo=self.brand.get('logo_pdf_path') or os.path.join(os.path.dirname(os.path.abspath(__file__)),'static','logo-pdf.png')
     def page(self, title):
         pg=self.doc.new_page(width=self.PW,height=self.PH); self.titles.append(title); return pg
     def html(self, pg, rect, s): pg.insert_htmlbox(self.pm.Rect(*rect), s)
@@ -6707,7 +6880,7 @@ class FoPdf:
             self.html(pg,(M+120,14,PW-160,46),'<div style="font-family:sans-serif;font-size:15px;font-weight:bold;color:#111">%s</div><div style="font-family:sans-serif;font-size:9px;color:#555">%s &middot; %s</div>'%(h(self.titles[i]),h(row['customer'] or ''),h(row['title'] or '')))
             self.html(pg,(PW-160,16,PW-M,46),'<div style="font-family:sans-serif;font-size:9px;color:#555;text-align:right">Page %d of %d<br>%s</div>'%(i+1,n,self.copy))
             pg.draw_line((M,52),(PW-M,52), color=(0.88,0.87,0.82), width=0.8)
-            self.html(pg,(M,PH-20,PW-M,PH-6),'<div style="font-family:sans-serif;font-size:7.5px;color:#777">True Sense Security &middot; Job %s &middot; Prepared by %s on %s &middot; %s</div>'%(h(row['id']),h(self.who),self.date,h(footnote)))
+            self.html(pg,(M,PH-20,PW-M,PH-6),'<div style="font-family:sans-serif;font-size:7.5px;color:#777">%s &middot; Job %s &middot; Prepared by %s on %s &middot; %s</div>'%(h(self.brand.get('name') or 'True Sense Security'),h(row['id']),h(self.who),self.date,h(footnote)))
         out=self.doc.tobytes(garbage=3, deflate=True); self.doc.close(); return out
     def title_block(self, pg, x0, y0, x1, rows):
         html='<table style="font-family:sans-serif;font-size:8.5px;width:100%;border-collapse:collapse">'+''.join('<tr><td style="color:#666;padding:2px 4px 2px 0;vertical-align:top;width:62px">%s</td><td style="font-weight:bold;padding:2px 0">%s</td></tr>'%(h(k),h(v)) for k,v in rows)+'</table>'
@@ -7187,6 +7360,8 @@ import fieldops_floorplans
 fieldops_floorplans.register(sys.modules[__name__])
 import fieldops_estimator
 fieldops_estimator.register(sys.modules[__name__])
+import fieldops_orgs
+fieldops_orgs.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

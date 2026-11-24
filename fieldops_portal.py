@@ -15,6 +15,32 @@ PORTAL_KIND = 'portal'
 DEFAULT_DAYS = 365
 LICENSE_NO = 'B31163401'
 
+def portal_brand(conn, row=None):
+    oid = 1
+    try:
+        import fieldops_orgs as _orgs
+        if row is not None:
+            try:
+                if 'org_id' in row.keys() and row['org_id']:
+                    oid = int(row['org_id'])
+            except Exception:
+                pass
+            cid = row['company_id'] if row['company_id'] else None
+            if cid:
+                co = conn.execute('SELECT * FROM companies WHERE id=?', (cid,)).fetchone()
+                if co:
+                    try:
+                        if 'org_id' in co.keys() and co['org_id']:
+                            oid = int(co['org_id'])
+                    except Exception:
+                        pass
+        else:
+            oid = _orgs.current_org_id()
+        return _orgs.branding(oid)
+    except Exception:
+        return {'name': 'True Sense Security', 'license': LICENSE_NO, 'logo_url': '/static/logo.png'}
+
+
 
 def now_iso():
     return datetime.utcnow().isoformat(timespec='seconds')
@@ -78,7 +104,11 @@ def link_active(row):
 
 
 def create_link(conn, company_id, site_id=None, who='', days=DEFAULT_DAYS):
-    co = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
+    try:
+        import fieldops_orgs as _orgs
+        co = _orgs.get_company(conn, company_id)
+    except Exception:
+        co = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
     if not co:
         return None, 'Company not found.'
     if site_id:
@@ -89,9 +119,9 @@ def create_link(conn, company_id, site_id=None, who='', days=DEFAULT_DAYS):
     when = now_iso()
     exp = (datetime.utcnow() + timedelta(days=max(1, int(days or DEFAULT_DAYS)))).isoformat(timespec='seconds')
     conn.execute(
-        '''INSERT INTO share_links (token,job_id,kind,created_by,created_at,expires_at,company_id,site_id)
-           VALUES (?,?,?,?,?,?,?,?)''',
-        (token, None, PORTAL_KIND, who or '', when, exp, company_id, site_id))
+        '''INSERT INTO share_links (token,job_id,kind,created_by,created_at,expires_at,company_id,site_id,org_id)
+           VALUES (?,?,?,?,?,?,?,?,?)''',
+        (token, None, PORTAL_KIND, who or '', when, exp, company_id, site_id, (co['org_id'] if co and 'org_id' in co.keys() and co['org_id'] else 1)))
     return conn.execute('SELECT * FROM share_links WHERE token=?', (token,)).fetchone(), None
 
 
@@ -274,7 +304,7 @@ def register(fo):
         conn.commit(); conn.close()
         return redirect('/customers/%d' % cid if cid else '/customers')
 
-    PORTAL_HTML = r'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>True Sense Security: {{ company }}</title>
+    PORTAL_HTML = r'''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>{{ brand_name }}: {{ company }}</title>
 <style>
 *{box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#f7f6ef;color:#1d1f14;margin:0}
@@ -296,8 +326,8 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 </style></head><body>
 <div class="wrap">
 <div class="hdr">
-<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security">
-<div><div style="font-weight:800">True Sense Security</div><div class="muted">License {{ license }}</div></div>
+<img src="{{ logo_url }}" alt="{{ brand_name }}">
+<div><div style="font-weight:800">{{ brand_name }}</div><div class="muted">License {{ license }}</div></div>
 </div>
 {% if msg %}<div class="ok">{{ msg }}</div>{% endif %}
 <h1>{{ company }}</h1>
@@ -363,7 +393,7 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
 </form>
 <p class="muted">This opens a service ticket in our office. The portal does not send email.</p>
 </div>
-<div class="foot">True Sense Security · License {{ license }}</div>
+<div class="foot">{{ brand_name }} · License {{ license }}</div>
 </div></body></html>'''
 
     def _portal_context(conn, link):
@@ -408,8 +438,9 @@ table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;pad
                 'number': 'Q-%d' % q['id'], 'total': money(q['total'] or 0), 'token': q['token'],
             })
         invoices = invoices_for(conn, link['company_id'], customer)
+        brand = portal_brand(conn, link)
         return dict(company=company, site=site_label, equipment=equipment, jobs=jobs, quotes=quotes,
-                    invoices=invoices, token=link['token'], license=LICENSE_NO, money=money)
+                    invoices=invoices, token=link['token'], license=brand['license'], brand_name=brand['name'], logo_url=brand['logo_url'], money=money)
 
     @app.route('/p/<token>')
     def portal_view(token):

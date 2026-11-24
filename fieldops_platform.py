@@ -163,6 +163,14 @@ _OPP_DND_JS = r"""<div id="fo-lost-modal" hidden>
 PRE_MIGRATE_BACKUP = 'fieldops-pre-platform-v2.db'
 
 
+def _oid():
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.current_org_id()
+    except Exception:
+        return 1
+
+
 def nkey(name):
     return ' '.join((name or '').split()).lower()
 
@@ -235,7 +243,8 @@ def init_schema(conn):
         lost_at TEXT
     )''')
     for ix in (
-        'CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_name_key ON companies(name_key)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_name_key ON companies(name_key)',  # dropped after orgs migrate
+
         'CREATE INDEX IF NOT EXISTS ix_contacts_company ON contacts(company_id)',
         'CREATE INDEX IF NOT EXISTS ix_sites_company ON sites(company_id)',
         'CREATE UNIQUE INDEX IF NOT EXISTS ix_sites_addr ON sites(company_id, address_key)',
@@ -277,10 +286,37 @@ def backup_before_migrate(backup_dir, db_path):
     return dst
 
 
-def get_company_by_key(conn, key):
+def get_company_by_key(conn, key, org_id=None):
     if not key:
         return None
+    try:
+        import fieldops_orgs as _orgs
+        oid = int(org_id or _orgs.current_org_id())
+        if 'org_id' in {r[1] for r in conn.execute('PRAGMA table_info(companies)')}:
+            return conn.execute('SELECT * FROM companies WHERE name_key=? AND org_id=?', (key, oid)).fetchone()
+    except Exception:
+        pass
     return conn.execute('SELECT * FROM companies WHERE name_key=?', (key,)).fetchone()
+
+
+def company_by_id(conn, cid):
+    if not cid:
+        return None
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.get_company(conn, cid)
+    except Exception:
+        return conn.execute('SELECT * FROM companies WHERE id=?', (cid,)).fetchone()
+
+
+def opp_by_id(conn, oid):
+    if not oid:
+        return None
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.get_opportunity(conn, oid)
+    except Exception:
+        return conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
 
 
 def upsert_company(conn, name, phone='', email='', billing_address='', notes='', when=None):
@@ -307,10 +343,21 @@ def upsert_company(conn, name, phone='', email='', billing_address='', notes='',
             conn.execute('UPDATE companies SET %s WHERE id=?' % ','.join(sets), args)
             row = conn.execute('SELECT * FROM companies WHERE id=?', (row['id'],)).fetchone()
         return row
+    cols = 'name,name_key,phone,email,billing_address,notes,archived,created_at,updated_at'
+    vals = [name[:200], key, (phone or '').strip()[:40], (email or '').strip()[:120],
+            (billing_address or '').strip()[:300], (notes or '').strip()[:2000], 0, when, when]
+    if 'org_id' in _cols(conn, 'companies'):
+        cols += ',org_id'
+        oid = 1
+        try:
+            import fieldops_orgs as _orgs
+            oid = int(_orgs.current_org_id())
+        except Exception:
+            oid = 1
+        vals.append(oid)
     cur = conn.execute(
-        'INSERT INTO companies (name,name_key,phone,email,billing_address,notes,archived,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?)',
-        (name[:200], key, (phone or '').strip()[:40], (email or '').strip()[:120],
-         (billing_address or '').strip()[:300], (notes or '').strip()[:2000], when, when))
+        'INSERT INTO companies (%s) VALUES (%s)' % (cols, ','.join('?'*len(vals))),
+        vals)
     return conn.execute('SELECT * FROM companies WHERE id=?', (cur.lastrowid,)).fetchone()
 
 
@@ -393,7 +440,7 @@ def link_job(conn, job_row, company_id=None):
     existing = company_id or (job_row['company_id'] if 'company_id' in job_row.keys() else None)
     co = None
     if existing:
-        co = conn.execute('SELECT * FROM companies WHERE id=?', (existing,)).fetchone()
+        co = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (existing, _oid())).fetchone()
     if co is None and customer:
         co = upsert_company(conn, customer, phone=phone, billing_address=address)
     if not co:
@@ -415,11 +462,11 @@ def link_job(conn, job_row, company_id=None):
 
 def archive_company(conn, company_id):
     """Hide a company from default lists. Jobs, contacts, sites and opportunities stay."""
-    row = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
+    row = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone()
     if not row:
         return None, 'Company not found'
     conn.execute('UPDATE companies SET archived=1, updated_at=? WHERE id=?', (now_iso(), company_id))
-    return conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone(), None
+    return conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone(), None
 
 
 def merge_companies(conn, keep_id, drop_id):
@@ -429,8 +476,8 @@ def merge_companies(conn, keep_id, drop_id):
     """
     if not keep_id or not drop_id or int(keep_id) == int(drop_id):
         return None, 'Pick two different companies'
-    keep = conn.execute('SELECT * FROM companies WHERE id=?', (keep_id,)).fetchone()
-    drop = conn.execute('SELECT * FROM companies WHERE id=?', (drop_id,)).fetchone()
+    keep = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (keep_id, _oid())).fetchone()
+    drop = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (drop_id, _oid())).fetchone()
     if not keep or not drop:
         return None, 'Company not found'
     when = now_iso()
@@ -513,10 +560,10 @@ def rename_company(conn, company_id, new_name):
         return None, 'Name is required'
     key = nkey(new_name)
     other = conn.execute(
-        'SELECT id FROM companies WHERE name_key=? AND id!=?', (key, company_id)).fetchone()
+        'SELECT id FROM companies WHERE name_key=? AND id!=? AND org_id=?', (key, company_id, _oid())).fetchone()
     if other:
         return None, 'Another company already has that name'
-    row = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
+    row = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone()
     if not row:
         return None, 'Company not found'
     old_key = row['name_key']
@@ -534,7 +581,7 @@ def rename_company(conn, company_id, new_name):
     conn.execute(
         'UPDATE clients SET name=? WHERE LOWER(TRIM(name))=?',
         (new_name, old_key))
-    return conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone(), None
+    return conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone(), None
 
 
 
@@ -682,8 +729,8 @@ def register(fo):
             (SELECT COUNT(*) FROM contacts t WHERE t.company_id=c.id) AS contacts,
             (SELECT COUNT(*) FROM jobs j WHERE j.company_id=c.id AND j.status!="completed") AS open_jobs,
             (SELECT COUNT(*) FROM opportunities o WHERE o.company_id=c.id AND o.stage NOT IN ("won","lost")) AS open_opps
-            FROM companies c WHERE IFNULL(c.archived,0)=0'''
-        args = []
+            FROM companies c WHERE c.org_id=? AND IFNULL(c.archived,0)=0'''
+        args = [_oid()]
         if q:
             sql += ' AND (LOWER(c.name) LIKE ? OR LOWER(IFNULL(c.phone,"")) LIKE ? OR LOWER(IFNULL(c.billing_address,"")) LIKE ?)'
             like = '%' + q.lower() + '%'
@@ -796,17 +843,17 @@ def register(fo):
                          now_iso(), cid))
                     msg = 'Saved.'
                 conn.commit()
-                co = conn.execute('SELECT * FROM companies WHERE id=?', (cid,)).fetchone()
+                co = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (cid, _oid())).fetchone()
         contacts = conn.execute(
             'SELECT * FROM contacts WHERE company_id=? ORDER BY name COLLATE NOCASE', (cid,)).fetchall()
         sites = conn.execute(
             'SELECT * FROM sites WHERE company_id=? ORDER BY name COLLATE NOCASE, id', (cid,)).fetchall()
         opps = conn.execute(
-            'SELECT * FROM opportunities WHERE company_id=? ORDER BY (stage IN ("won","lost")), id DESC',
-            (cid,)).fetchall()
+            'SELECT * FROM opportunities WHERE company_id=? AND org_id=? ORDER BY (stage IN ("won","lost")), id DESC',
+            (cid, _oid())).fetchall()
         jobs = conn.execute(
-            "SELECT id,title,status,job_type,scheduled_date,address FROM jobs WHERE company_id=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",
-            (cid,)).fetchall()
+            "SELECT id,title,status,job_type,scheduled_date,address FROM jobs WHERE company_id=? AND org_id=? ORDER BY (status='completed'), COALESCE(scheduled_date, created_at) DESC",
+            (cid, _oid())).fetchall()
         conn.close()
 
         vals = {
@@ -919,7 +966,7 @@ def register(fo):
             return gate
         conn = fo.get_db()
         companies = conn.execute(
-            'SELECT id,name,archived FROM companies ORDER BY name COLLATE NOCASE').fetchall()
+            'SELECT id,name,archived FROM companies WHERE org_id=? ORDER BY name COLLATE NOCASE', (_oid(),)).fetchall()
         msg = ''
         if request.method == 'POST':
             try:
@@ -928,8 +975,8 @@ def register(fo):
             except ValueError:
                 keep_id = drop_id = 0
             if request.form.get('confirm') != 'yes':
-                keep = conn.execute('SELECT * FROM companies WHERE id=?', (keep_id,)).fetchone()
-                drop = conn.execute('SELECT * FROM companies WHERE id=?', (drop_id,)).fetchone()
+                keep = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (keep_id, _oid())).fetchone()
+                drop = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (drop_id, _oid())).fetchone()
                 conn.close()
                 if not keep or not drop or keep_id == drop_id:
                     return redirect('/customers/merge')
@@ -1000,7 +1047,7 @@ def register(fo):
             company_id = 0
         if not name or not company_id:
             return None, 'Name and company are required.'
-        if not conn.execute('SELECT 1 FROM companies WHERE id=?', (company_id,)).fetchone():
+        if not conn.execute('SELECT 1 FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone():
             return None, 'Company not found.'
         role = request.form.get('role') if request.form.get('role') in CONTACT_ROLE_SET else 'other'
         vals = (
@@ -1068,12 +1115,12 @@ def register(fo):
                 msg = 'Saved.'
                 conn.commit()
                 row = conn.execute('SELECT * FROM contacts WHERE id=?', (tid,)).fetchone()
-        companies = conn.execute('SELECT id,name FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name').fetchall()
+        companies = conn.execute('SELECT id,name FROM companies WHERE org_id=? AND IFNULL(archived,0)=0 ORDER BY name', (_oid(),)).fetchall()
         vals = {k: row[k] or '' for k in ('name', 'role', 'title', 'phone', 'email', 'notes', 'company_id')}
         form = _contact_form(vals, '/contacts/%d' % tid, 'Save contact', companies)
         if msg:
             form = '<div class="plat-msg">%s</div>' % h(msg) + form
-        co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
+        co = conn.execute('SELECT name FROM companies WHERE id=? AND org_id=?', (row['company_id'], _oid())).fetchone()
         conn.close()
         extra = ''
         if hasattr(fo, 'crm_block'):
@@ -1169,7 +1216,7 @@ def register(fo):
                 msg = 'Saved.'
                 conn.commit()
                 row = conn.execute('SELECT * FROM sites WHERE id=?', (sid,)).fetchone()
-        co = conn.execute('SELECT * FROM companies WHERE id=?', (row['company_id'],)).fetchone()
+        co = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (row['company_id'], _oid())).fetchone()
         jobs = conn.execute(
             'SELECT id,title,status,job_type FROM jobs WHERE site_id=? ORDER BY id DESC',
             (sid,)).fetchall()
@@ -1232,7 +1279,7 @@ def register(fo):
             company_id = 0
         if not title or not company_id:
             return None, 'Title and company are required.'
-        if not conn.execute('SELECT 1 FROM companies WHERE id=?', (company_id,)).fetchone():
+        if not conn.execute('SELECT 1 FROM companies WHERE id=? AND org_id=?', (company_id, _oid())).fetchone():
             return None, 'Company not found.'
         def opt_id(key):
             raw = (request.form.get(key) or '').strip()
@@ -1280,7 +1327,7 @@ def register(fo):
             lost_reason = None
             lost_note = None
         if oid:
-            existing = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
+            existing = conn.execute('SELECT * FROM opportunities WHERE id=? AND org_id=?', (oid, _oid())).fetchone()
             if existing and existing['stage'] == 'won' and stage == 'won':
                 won_at = existing['won_at'] or won_at
             if existing and existing['stage'] == 'lost' and stage == 'lost':
@@ -1290,8 +1337,8 @@ def register(fo):
                 (company_id, contact_id, site_id, title[:200], stage, amount, notes, when, won_at, lost_at, lead_source, fit_grade, lost_reason, lost_note, oid))
             return oid, None
         cur = conn.execute(
-            'INSERT INTO opportunities (company_id,contact_id,site_id,title,stage,amount,notes,created_by,created_at,updated_at,won_at,lost_at,lead_source,fit_grade,lost_reason,lost_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (company_id, contact_id, site_id, title[:200], stage, amount, notes, fo.me(), when, when, won_at, lost_at, lead_source, fit_grade, lost_reason, lost_note))
+            'INSERT INTO opportunities (company_id,contact_id,site_id,title,stage,amount,notes,created_by,created_at,updated_at,won_at,lost_at,lead_source,fit_grade,lost_reason,lost_note,org_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (company_id, contact_id, site_id, title[:200], stage, amount, notes, fo.me(), when, when, won_at, lost_at, lead_source, fit_grade, lost_reason, lost_note, _oid()))
         return cur.lastrowid, None
 
     @app.route('/opportunities')
@@ -1309,16 +1356,16 @@ def register(fo):
                  FROM opportunities o
                  JOIN companies c ON c.id=o.company_id
                  LEFT JOIN sites s ON s.id=o.site_id
-                 LEFT JOIN contacts t ON t.id=o.contact_id'''
-        args = []
+                 LEFT JOIN contacts t ON t.id=o.contact_id WHERE o.org_id=?'''
+        args = [_oid()]
         if stage:
-            sql += ' WHERE o.stage=?'
+            sql += ' AND o.stage=?'
             args.append(stage)
         sql += ' ORDER BY (o.stage IN ("won","lost")), o.updated_at DESC, o.id DESC'
         rows = [dict(r) for r in conn.execute(sql, args).fetchall()]
         counts = {k: 0 for k, _ in OPP_STAGES}
         totals = {k: 0.0 for k, _ in OPP_STAGES}
-        all_rows = conn.execute('SELECT stage, amount FROM opportunities').fetchall()
+        all_rows = conn.execute('SELECT stage, amount FROM opportunities WHERE org_id=?', (_oid(),)).fetchall()
         for r in all_rows:
             counts[r['stage']] = counts.get(r['stage'], 0) + 1
             totals[r['stage']] = totals.get(r['stage'], 0) + (r['amount'] or 0)
@@ -1415,7 +1462,7 @@ def register(fo):
             else:
                 conn.commit(); conn.close()
                 return redirect('/opportunities/%d' % new_id)
-        companies = conn.execute('SELECT id,name FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name').fetchall()
+        companies = conn.execute('SELECT id,name FROM companies WHERE org_id=? AND IFNULL(archived,0)=0 ORDER BY name', (_oid(),)).fetchall()
         contacts = conn.execute(
             'SELECT id,name,company_id FROM contacts WHERE ? IN (0, company_id) ORDER BY name',
             (pre_id,)).fetchall() if pre_id else conn.execute(
@@ -1441,7 +1488,7 @@ def register(fo):
             return gate
         set_area('sales')
         conn = fo.get_db()
-        row = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
+        row = conn.execute('SELECT * FROM opportunities WHERE id=? AND org_id=?', (oid, _oid())).fetchone()
         if not row:
             conn.close()
             return redirect('/opportunities')
@@ -1453,13 +1500,13 @@ def register(fo):
             else:
                 msg = 'Saved.'
                 conn.commit()
-                row = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
-        companies = conn.execute('SELECT id,name FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name').fetchall()
+                row = conn.execute('SELECT * FROM opportunities WHERE id=? AND org_id=?', (oid, _oid())).fetchone()
+        companies = conn.execute('SELECT id,name FROM companies WHERE org_id=? AND IFNULL(archived,0)=0 ORDER BY name', (_oid(),)).fetchall()
         contacts = conn.execute(
             'SELECT id,name FROM contacts WHERE company_id=? ORDER BY name', (row['company_id'],)).fetchall()
         sites = conn.execute(
             'SELECT id,name,address FROM sites WHERE company_id=? ORDER BY name', (row['company_id'],)).fetchall()
-        co = conn.execute('SELECT * FROM companies WHERE id=?', (row['company_id'],)).fetchone()
+        co = conn.execute('SELECT * FROM companies WHERE id=? AND org_id=?', (row['company_id'], _oid())).fetchone()
         site = conn.execute('SELECT * FROM sites WHERE id=?', (row['site_id'],)).fetchone() if row['site_id'] else None
         contact = conn.execute('SELECT * FROM contacts WHERE id=?', (row['contact_id'],)).fetchone() if row['contact_id'] else None
         def _col(key):
@@ -1529,7 +1576,7 @@ def register(fo):
         if stage not in OPP_STAGE_SET:
             return jsonify({'error': 'Unknown stage'}), 400
         conn = fo.get_db()
-        row = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
+        row = conn.execute('SELECT * FROM opportunities WHERE id=? AND org_id=?', (oid, _oid())).fetchone()
         if not row:
             conn.close()
             return jsonify({'error': 'Not found'}), 404
@@ -1573,15 +1620,16 @@ def register(fo):
         rows = conn.execute(
             '''SELECT o.*, c.name AS company FROM opportunities o
                JOIN companies c ON c.id=o.company_id
-               ORDER BY o.updated_at DESC LIMIT 12''').fetchall()
+               WHERE o.org_id=?
+               ORDER BY o.updated_at DESC LIMIT 12''', (_oid(),)).fetchall()
         counts = {k: 0 for k, _ in OPP_STAGES}
         totals = {k: 0.0 for k, _ in OPP_STAGES}
-        for r in conn.execute('SELECT stage, amount FROM opportunities'):
+        for r in conn.execute('SELECT stage, amount FROM opportunities WHERE org_id=?', (_oid(),)):
             counts[r['stage']] = counts.get(r['stage'], 0) + 1
             totals[r['stage']] = totals.get(r['stage'], 0) + (r['amount'] or 0)
         open_n = sum(counts[k] for k, _ in OPP_STAGES if k not in ('won', 'lost'))
         open_amt = sum(totals[k] for k, _ in OPP_STAGES if k not in ('won', 'lost'))
-        n_co = conn.execute('SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0').fetchone()[0]
+        n_co = conn.execute('SELECT COUNT(*) FROM companies WHERE org_id=? AND IFNULL(archived,0)=0', (_oid(),)).fetchone()[0]
         crm_dash = ''
         if hasattr(fo, 'crm_sales_extra'):
             try:
@@ -1686,23 +1734,23 @@ def register(fo):
         block('Companies', '/customers/%s', [
             (r['id'], r['name'], r['billing_address'] or r['phone'] or '')
             for r in conn.execute(
-                "SELECT id,name,billing_address,phone FROM companies WHERE IFNULL(archived,0)=0 AND LOWER(name||' '||IFNULL(billing_address,'')||' '||IFNULL(phone,'')) LIKE ? LIMIT 20",
-                (q,))])
+                "SELECT id,name,billing_address,phone FROM companies WHERE org_id=? AND IFNULL(archived,0)=0 AND LOWER(name||' '||IFNULL(billing_address,'')||' '||IFNULL(phone,'')) LIKE ? LIMIT 20",
+                (_oid(), q))])
         block('Contacts', '/contacts/%s', [
             (r['id'], r['name'], r['company'])
             for r in conn.execute(
-                "SELECT t.id,t.name,t.phone,t.email,c.name AS company FROM contacts t JOIN companies c ON c.id=t.company_id WHERE LOWER(t.name||' '||IFNULL(t.phone,'')||' '||IFNULL(t.email,'')||' '||c.name) LIKE ? LIMIT 20",
-                (q,))])
+                "SELECT t.id,t.name,t.phone,t.email,c.name AS company FROM contacts t JOIN companies c ON c.id=t.company_id WHERE c.org_id=? AND LOWER(t.name||' '||IFNULL(t.phone,'')||' '||IFNULL(t.email,'')||' '||c.name) LIKE ? LIMIT 20",
+                (_oid(), q))])
         block('Sites', '/sites/%s', [
             (r['id'], r['name'] or r['address'] or 'Site', r['company'])
             for r in conn.execute(
-                "SELECT s.id,s.name,s.address,c.name AS company FROM sites s JOIN companies c ON c.id=s.company_id WHERE LOWER(IFNULL(s.name,'')||' '||IFNULL(s.address,'')||' '||c.name) LIKE ? LIMIT 20",
-                (q,))])
+                "SELECT s.id,s.name,s.address,c.name AS company FROM sites s JOIN companies c ON c.id=s.company_id WHERE c.org_id=? AND LOWER(IFNULL(s.name,'')||' '||IFNULL(s.address,'')||' '||c.name) LIKE ? LIMIT 20",
+                (_oid(), q))])
         block('Opportunities', '/opportunities/%s', [
             (r['id'], r['title'], r['company'] + ' · ' + stage_label(r['stage']))
             for r in conn.execute(
-                "SELECT o.id,o.title,o.stage,c.name AS company FROM opportunities o JOIN companies c ON c.id=o.company_id WHERE LOWER(o.title||' '||c.name) LIKE ? LIMIT 20",
-                (q,))])
+                "SELECT o.id,o.title,o.stage,c.name AS company FROM opportunities o JOIN companies c ON c.id=o.company_id WHERE o.org_id=? AND LOWER(o.title||' '||c.name) LIKE ? LIMIT 20",
+                (_oid(), q))])
 
 
     fo.SEARCH_HOOKS.append(plat_search)

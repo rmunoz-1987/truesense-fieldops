@@ -162,7 +162,13 @@ def add_user(conn, name, role, password, created_by, env_keys=None):
         'INSERT INTO app_users (name,name_key,role,password_hash,active,created_at,updated_at,created_by) VALUES (?,?,?,?,1,?,?,?)',
         (name, key, role, generate_password_hash(password), when, when, (created_by or '')[:80]))
     _bust()
-    return conn.execute('SELECT * FROM app_users WHERE name_key=?', (key,)).fetchone(), None
+    row = conn.execute('SELECT * FROM app_users WHERE name_key=?', (key,)).fetchone()
+    try:
+        import fieldops_orgs as _orgs
+        _orgs.set_user_orgs(conn, key, [ _orgs.ORG_TRUE_SENSE ])
+    except Exception:
+        pass
+    return row, None
 
 
 def set_password(conn, user_id, password):
@@ -285,6 +291,40 @@ def _now():
     return datetime.utcnow().isoformat()
 
 
+def org_checkboxes(h, selected, name='org_id'):
+    """True Sense, Datacom, or both."""
+    try:
+        import fieldops_orgs as _orgs
+        orgs = [_orgs.TRUE_SENSE, _orgs.DATACOM]
+    except Exception:
+        return ''
+    selected = {int(x) for x in (selected or [])}
+    bits = ['<div class="plat-orgs" style="margin:8px 0">']
+    bits.append('<div class="muted" style="margin-bottom:4px">Companies</div>')
+    for o in orgs:
+        on = ' checked' if o['id'] in selected else ''
+        bits.append(
+            '<label style="display:inline-flex;align-items:center;gap:6px;margin-right:14px;font-weight:600">'
+            '<input type="checkbox" name="%s" value="%d"%s style="width:auto"> %s</label>'
+            % (name, o['id'], on, h(o['short_name'])))
+    bits.append('</div>')
+    return ''.join(bits)
+
+
+def org_labels_for(conn, name_key):
+    try:
+        import fieldops_orgs as _orgs
+        ids = _orgs.orgs_for_key(conn, name_key)
+        names = [_orgs.branding(i)['short_name'] for i in ids]
+        if not names:
+            return 'True Sense'
+        if len(names) == 1:
+            return names[0]
+        return ' and '.join(names)
+    except Exception:
+        return 'True Sense'
+
+
 def register(fo):
     from flask import request, redirect
 
@@ -301,7 +341,6 @@ def register(fo):
     def users_page_body(msg=''):
         conn = fo.get_db()
         db_rows = list(conn.execute('SELECT * FROM app_users ORDER BY active DESC, name COLLATE NOCASE'))
-        conn.close()
         env = env_entries(fo)
         body = ''
         if msg:
@@ -313,8 +352,8 @@ def register(fo):
             for e in env:
                 body += (
                     '<li><b>%s</b> <span class="plat-pill">%s</span>'
-                    '<div class="muted">Set in Render. Password is not shown. Role comes from OFFICE_NAMES.</div></li>'
-                    % (h(e['name']), role_label(e['role'])))
+                    '<div class="muted">Set in Render. Password is not shown. Role comes from OFFICE_NAMES. Companies: %s.</div></li>'
+                    % (h(e['name']), role_label(e['role']), h(org_labels_for(conn, e['name_key']))))
             body += '</ul>'
         else:
             body += '<div class="muted">No Render NAME_PASSWORD logins are set.</div>'
@@ -324,8 +363,18 @@ def register(fo):
             body += '<ul class="plat-list">'
             for r in db_rows:
                 st = 'Active' if r['active'] else 'Deactivated'
+                assigned = []
+                try:
+                    import fieldops_orgs as _orgs
+                    assigned = _orgs.orgs_for_key(conn, r['name_key'])
+                except Exception:
+                    assigned = [1]
                 body += '<li><b>%s</b> <span class="plat-pill">%s</span> <span class="muted">%s</span>' % (
                     h(r['name']), role_label(r['role']), st)
+                body += (
+                    '<form method="post" action="/users/%d/orgs" class="plat-org-form" style="margin:8px 0 4px">'
+                    '%s<button type="submit" class="plat-link-btn">Save companies</button></form>'
+                ) % (r['id'], org_checkboxes(h, assigned))
                 if r['active']:
                     body += (
                         '<div class="plat-mini-actions">'
@@ -355,9 +404,11 @@ def register(fo):
             '</select></div></div>'
             '<label>Password</label><input name="password" type="password" required autocomplete="new-password">'
             '<div class="muted">At least 10 characters, mix letters with numbers or symbols.</div>'
+            '%s'
             '<button class="plat-btn plat-btn-gold" type="submit">Add user</button></form>'
-        )
+        ) % org_checkboxes(h, [1])
         body += '</div>'
+        conn.close()
         return body
 
     @app.route('/users', methods=['GET', 'POST'])
@@ -368,7 +419,7 @@ def register(fo):
         msg = ''
         if request.method == 'POST':
             conn = fo.get_db()
-            _, err = add_user(
+            row, err = add_user(
                 conn,
                 request.form.get('name'),
                 request.form.get('role') or 'field',
@@ -380,13 +431,47 @@ def register(fo):
                 msg = err
                 conn.close()
             else:
+                try:
+                    import fieldops_orgs as _orgs
+                    ids = request.form.getlist('org_id') or [_orgs.ORG_TRUE_SENSE]
+                    err2 = _orgs.set_user_orgs(conn, row['name_key'], ids)
+                    if err2:
+                        msg = 'User added, but companies were not saved: ' + err2
+                    else:
+                        msg = 'User added.'
+                except Exception:
+                    msg = 'User added.'
                 conn.commit(); conn.close()
-                msg = 'User added.'
         body = users_page_body(msg)
         return fo.ops_page('Users',
             '<div class="plat-head"><div class="plat-head-text"><div class="plat-kicker">Office</div>'
             '<h1 class="plat-title">Users<span class="plat-dot">.</span></h1></div></div>' + body,
             back='/more')
+
+    @app.route('/users/<int:uid>/orgs', methods=['POST'])
+    def users_orgs(uid):
+        gate = office_only()
+        if gate:
+            return gate
+        conn = fo.get_db()
+        row = conn.execute('SELECT * FROM app_users WHERE id=?', (uid,)).fetchone()
+        if not row:
+            conn.close()
+            return redirect('/users')
+        try:
+            import fieldops_orgs as _orgs
+            err = _orgs.set_user_orgs(conn, row['name_key'], request.form.getlist('org_id'))
+        except Exception:
+            err = 'Could not save companies.'
+        if err:
+            conn.close()
+            body = users_page_body(err)
+            return fo.ops_page('Users',
+                '<div class="plat-head"><div class="plat-head-text"><div class="plat-kicker">Office</div>'
+                '<h1 class="plat-title">Users<span class="plat-dot">.</span></h1></div></div>' + body,
+                back='/more')
+        conn.commit(); conn.close()
+        return redirect('/users')
 
     @app.route('/users/<int:uid>/password', methods=['GET', 'POST'])
     def users_password(uid):

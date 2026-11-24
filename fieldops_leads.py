@@ -496,7 +496,7 @@ def followup_items(conn, day, fo=None):
 
 def next_job_id(conn, fo):
     y = fo.today_local().year
-    pre = 'TS-%d-' % y
+    pre = '%s-%d-' % (__import__('fieldops_orgs').job_prefix(), y)
     top = 0
     for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?', (pre + '%',)):
         try:
@@ -549,10 +549,10 @@ def start_survey(conn, oid, fo):
     chk = json.dumps([{'text': x, 'done': False} for x in lines])
     conn.execute(
         '''INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,
-             scheduled_date,created_by,job_type,company_id,site_id,contact_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+             scheduled_date,created_by,job_type,company_id,site_id,contact_id,org_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
         (jid, title, customer, address, '', 'assigned', tech, when, (phone or '')[:40], chk,
-         sd, fo.me(), 'Survey', row['company_id'], row['site_id'], row['contact_id']))
+         sd, fo.me(), 'Survey', row['company_id'], row['site_id'], row['contact_id'], __import__('fieldops_orgs').current_org_id()))
     try:
         plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?', (jid,)).fetchone(),
                       company_id=row['company_id'])

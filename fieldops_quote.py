@@ -21,6 +21,36 @@ QUOTE_TERMS_KEY = 'quote_terms'
 QUOTE_DEPOSIT_MIN_KEY = 'quote_deposit_min'
 DEFAULT_DEPOSIT_MIN = 1000.0
 LICENSE_NO = 'B31163401'
+
+def _quote_org(row=None):
+    try:
+        import fieldops_orgs as _orgs
+        if row is not None:
+            try:
+                if 'org_id' in row.keys() and row['org_id']:
+                    return int(row['org_id'])
+            except Exception:
+                pass
+        return _orgs.current_org_id()
+    except Exception:
+        return 1
+
+def _office_quote(conn, qid):
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.get_quote(conn, qid)
+    except Exception:
+        return conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+
+def quote_brand(row=None):
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.branding(_quote_org(row))
+    except Exception:
+        return {'name': 'True Sense Security', 'license': LICENSE_NO,
+                'logo_url': '/static/logo.png', 'short_name': 'True Sense',
+                'contact_line': '7341 Avenue E, Houston, TX 77011'}
+
 VALID_DAYS = 15
 
 
@@ -59,13 +89,18 @@ def seed_default_terms(conn):
     return True
 
 
-def get_saved_terms(conn):
-    """Live default terms saved in Settings."""
+def get_saved_terms(conn, org_id=None):
+    """Live default terms saved in Settings (True Sense) or org_settings (per company)."""
     try:
-        row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
+        import fieldops_orgs as _orgs
+        val = _orgs.org_setting(conn, QUOTE_TERMS_KEY, org_id=org_id, default='')
+        return (val or '').strip()
     except Exception:
-        return ''
-    return ((row['value'] if row else '') or '').strip()
+        try:
+            row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
+        except Exception:
+            return ''
+        return ((row['value'] if row else '') or '').strip()
 
 
 def get_default_terms(conn):
@@ -73,12 +108,17 @@ def get_default_terms(conn):
     return get_saved_terms(conn)
 
 
-def set_default_terms(conn, text):
+def set_default_terms(conn, text, org_id=None):
     text = (text or '').strip()
     if not text:
         return 'Terms cannot be empty.'
-    conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (QUOTE_TERMS_KEY, text))
-    return None
+    try:
+        import fieldops_orgs as _orgs
+        _orgs.set_org_setting(conn, QUOTE_TERMS_KEY, text, org_id=org_id)
+        return None
+    except Exception:
+        conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (QUOTE_TERMS_KEY, text))
+        return None
 
 
 def quote_number(row):
@@ -586,7 +626,11 @@ def save_quote(conn, data, quote_id=None, created_by=''):
     )['total']
     when = now_iso()
     if quote_id:
-        row = conn.execute('SELECT * FROM quotes WHERE id=?', (quote_id,)).fetchone()
+        try:
+            import fieldops_orgs as _orgs
+            row = _orgs.get_quote(conn, quote_id)
+        except Exception:
+            row = conn.execute('SELECT * FROM quotes WHERE id=?', (quote_id,)).fetchone()
         if not row:
             return None, 'Quote not found.'
         if row['status'] == 'accepted':
@@ -600,11 +644,11 @@ def save_quote(conn, data, quote_id=None, created_by=''):
     ver = next_version(conn, data.get('opportunity_id'), data.get('parent_id'))
     cur = conn.execute(
         '''INSERT INTO quotes (opportunity_id,job_id,company_id,site_id,contact_id,title,version,parent_id,
-           status,notes,clarifications,lines_json,total,created_by,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?)''',
+           status,notes,clarifications,lines_json,total,created_by,created_at,updated_at,org_id)
+           VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?,?)''',
         (data.get('opportunity_id'), data.get('job_id'), data.get('company_id'), data.get('site_id'),
          data.get('contact_id'), title, ver, data.get('parent_id'),
-         (data.get('notes') or '')[:2000], (data.get('clarifications') or '')[:4000], json.dumps(frozen), tot, created_by, when, when))
+         (data.get('notes') or '')[:2000], (data.get('clarifications') or '')[:4000], json.dumps(frozen), tot, created_by, when, when, _quote_org()))
     return conn.execute('SELECT * FROM quotes WHERE id=?', (cur.lastrowid,)).fetchone(), None
 
 
@@ -663,7 +707,12 @@ def record_open(conn, quote_id):
     conn.commit()
 
 
-def _next_job_id(conn):
+def _next_job_id(conn, org_id=None):
+    try:
+        import fieldops_orgs as _orgs
+        return _orgs.next_job_id(conn, org_id=org_id)
+    except Exception:
+        pass
     from datetime import date
     y = date.today().year
     pre = 'TS-%d-' % y
@@ -703,15 +752,15 @@ def accept_quote(conn, quote, selected, name, signature, ip, fo=None):
     address = (site['address'] if site else '') or (company['billing_address'] if company else '') or ''
     phone = (company['phone'] if company else '') or ''
     if not job_id:
-        job_id = _next_job_id(conn)
+        job_id = _next_job_id(conn, org_id=_quote_org(quote))
         tech = ''
         if fo:
             tech = fo.default_sub() or fo.me() or ''
         conn.execute(
-            '''INSERT INTO jobs (id,title,customer,address,phone,scope,status,tech,created_at,scheduled_date,created_by,job_type,company_id,site_id,contact_id,sale_amount)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            '''INSERT INTO jobs (id,title,customer,address,phone,scope,status,tech,created_at,scheduled_date,created_by,job_type,company_id,site_id,contact_id,sale_amount,org_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (job_id, title, customer, address, phone, title, 'assigned', tech, when, None,
-             (quote['created_by'] or ''), 'Install', quote['company_id'], quote['site_id'], quote['contact_id'], totals['total']))
+             (quote['created_by'] or ''), 'Install', quote['company_id'], quote['site_id'], quote['contact_id'], totals['total'], _quote_org(quote)))
         try:
             import fieldops_platform as plat
             plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone(), company_id=quote['company_id'])
@@ -1313,9 +1362,14 @@ def register(fo):
         if gate:
             return gate
         conn = fo.get_db()
-        row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        row = _office_quote(conn, qid)
         if not row:
-            conn.close(); return redirect('/quote')
+            conn.close()
+            try:
+                import fieldops_orgs as _orgs
+                return _orgs.not_found()
+            except Exception:
+                return ('', 404)
         msg = ''
         if request.method == 'POST' and request.form.get('action') == 'save':
             data = {
@@ -1334,7 +1388,7 @@ def register(fo):
                 if fo.is_estimator() and (row['status'] or '')=='ready':
                     conn.execute("UPDATE quotes SET status='draft', updated_at=? WHERE id=?", (now_iso(), qid))
                 conn.commit(); msg = 'Saved. Prices on this quote stay as you saved them.'
-                row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+                row = _office_quote(conn, qid)
         elif request.method == 'POST' and request.form.get('action') in ('link', 'revoke_link') and fo.is_estimator():
             conn.close()
             import fieldops_estimator as _est
@@ -1346,7 +1400,7 @@ def register(fo):
                 conn.execute("UPDATE quotes SET status='ready', updated_at=? WHERE id=?", (now_iso(), qid))
                 conn.commit()
                 msg = 'Marked Ready for Roland. Nothing was sent to the client.'
-                row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+                row = _office_quote(conn, qid)
         elif request.method == 'POST' and request.form.get('action') == 'link':
             row = ensure_token(conn, qid)
             conn.commit(); msg = 'Client link is ready. Copy it and send it yourself. The app does not send anything.'
@@ -1356,7 +1410,7 @@ def register(fo):
                 (now_iso(), fo.me(), now_iso(), qid))
             conn.commit()
             msg = 'Client link was turned off. The old link will no longer open.'
-            row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+            row = _office_quote(conn, qid)
         companies = conn.execute('SELECT id,name FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name').fetchall()
         catalog = conn.execute('SELECT * FROM catalog_items WHERE active=1 ORDER BY name COLLATE NOCASE').fetchall()
         versions = []
@@ -1445,9 +1499,14 @@ def register(fo):
         if gate:
             return gate
         conn = fo.get_db()
-        row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        row = _office_quote(conn, qid)
         if not row:
-            conn.close(); return redirect('/quote')
+            conn.close()
+            try:
+                import fieldops_orgs as _orgs
+                return _orgs.not_found()
+            except Exception:
+                return ('', 404)
         data = {
             'title': row['title'], 'notes': row['notes'], 'clarifications': clarifications_of(row),
             'company_id': row['company_id'], 'opportunity_id': row['opportunity_id'],
@@ -1464,7 +1523,7 @@ def register(fo):
         pass
 
     # Client-facing one estimate
-    CLIENT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>True Sense Security: {{ q.title }}</title>
+    CLIENT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>{{ brand_name }}: {{ q.title }}</title>
 <style>
 *{box-sizing:border-box}
 body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;overflow-wrap:anywhere;background:#f7f6ef;color:#1d1f14;margin:0;padding:0}
@@ -1568,8 +1627,8 @@ details.terms[open] summary:after{content:"Hide"}
 </style></head><body>
 <div class="wrap">
 <header class="hdr">
-<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security">
-<div><div class="brand">True Sense Security</div><div class="muted">License {{ license }}</div></div>
+<img src="{{ logo_url }}" alt="{{ brand_name }}">
+<div><div class="brand">{{ brand_name }}</div><div class="muted">License {{ license }}</div></div>
 <div class="meta">
   <div><b>{{ number }}</b>{% if q.version %} &middot; Version {{ q.version }}{% endif %}</div>
   <div>Date {{ est_date }}</div>
@@ -1653,7 +1712,7 @@ function estSubmit(){var terms=document.querySelector("input[name=agree_terms]")
 function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;var kind=cell.getAttribute("data-kind")||"item";if(kind!=="item")return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});var box=document.querySelector(".totals");var tax=parseFloat((box&&box.getAttribute("data-tax"))||0);var disc=parseFloat((box&&box.getAttribute("data-discount"))||0);var min=parseFloat((box&&box.getAttribute("data-deposit-min"))||0);var sub=document.getElementById("sub");if(sub)sub.textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});t=t-disc+tax;document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var row=document.querySelector(".deposit");var dep=document.getElementById("dep");if(row&&dep){if(t>=min&&t>0){row.style.display="";dep.textContent="$"+(t*0.5).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}else{row.style.display="none"}}}
 </script>
 {% endif %}
-<div class="foot">True Sense Security &middot; License {{ license }}</div>
+<div class="foot">{{ brand_name }} &middot; License {{ license }}</div>
 </div>
 </body></html>
 '''
@@ -1704,7 +1763,8 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             selected=selected, has_addons=any(ln.get('optional') for ln in lines),
             terms=terms, clarifications=clar, est_date=est, valid_until=until,
             deposit=dep, deposit_min=dep_min, scope=client_scope_of(row),
-            number=quote_number(row), license=LICENSE_NO,
+            number=quote_number(row), license=quote_brand(row)['license'],
+            brand_name=quote_brand(row)['name'], logo_url=quote_brand(row)['logo_url'],
             bill_to=bill_to_of(row), ship_to=ship_to_of(row),
             customer_memo=customer_memo_of(row), tax_rate=rate_label)
 
@@ -1752,7 +1812,8 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             est_date=estimate_date(row), valid_until=valid_until(row),
             deposit=deposit_of(totals['total'], min_amount=dep_min), deposit_min=dep_min,
             scope=client_scope_of(row), number=quote_number(row),
-            license=LICENSE_NO,
+            license=quote_brand(row)['license'],
+            brand_name=quote_brand(row)['name'], logo_url=quote_brand(row)['logo_url'],
             bill_to=bill_to_of(row), ship_to=ship_to_of(row),
             customer_memo=customer_memo_of(row), tax_rate=rate_label)
         if print_mode:
@@ -1786,9 +1847,14 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         if not fo.is_office():
             return redirect('/')
         conn = fo.get_db()
-        row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        row = _office_quote(conn, qid)
         if not row:
-            conn.close(); return redirect('/quote')
+            conn.close()
+            try:
+                import fieldops_orgs as _orgs
+                return _orgs.not_found()
+            except Exception:
+                return ('', 404)
         company = ''
         if row['company_id']:
             co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
