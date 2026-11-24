@@ -629,10 +629,9 @@ def import_one(conn, est, today=None, mode='create'):
     return _insert_new(conn, est, lines, header, status, qbo_id, txn)
 
 
-def _notes_for(doc, qbo_id, memo):
-    notes = ['Imported from QuickBooks estimate %s.' % (doc or qbo_id)]
-    return '\n'.join(notes)[:2000], (memo or '')
-
+def office_import_note(doc, qbo_id):
+    """Office-only source label. Never stored on the client-facing quote scope."""
+    return 'Imported from QuickBooks estimate %s.' % (doc or qbo_id)
 
 def _insert_new(conn, est, lines, header, status, qbo_id, txn):
     doc = _doc_number(est)
@@ -646,13 +645,14 @@ def _insert_new(conn, est, lines, header, status, qbo_id, txn):
     if header['ship'] or header['bill']:
         site = plat.upsert_site(conn, company['id'], address=header['ship'] or header['bill'], when=when)
     title = ('Estimate %s' % doc) if doc else ('QBO estimate %s' % qbo_id)
-    note_text, memo = _notes_for(doc, qbo_id, header['memo'])
+    office_note = office_import_note(doc, qbo_id)
+    memo = header['memo'] or ''
     stage = 'won' if status == 'accepted' else 'proposal'
     won_at = when if stage == 'won' else None
     cur = conn.execute(
         '''INSERT INTO opportunities (company_id,contact_id,site_id,title,stage,amount,notes,created_by,created_at,updated_at,won_at,lost_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
-        (company['id'], None, site['id'] if site else None, title, stage, header['total'], note_text,
+        (company['id'], None, site['id'] if site else None, title, stage, header['total'], office_note,
          CREATED_BY, when, when, won_at, None))
     opp_id = cur.lastrowid
     row, err = quote.save_quote(conn, {
@@ -660,14 +660,14 @@ def _insert_new(conn, est, lines, header, status, qbo_id, txn):
         'company_id': company['id'],
         'site_id': site['id'] if site else None,
         'opportunity_id': opp_id,
-        'notes': note_text,
+        'notes': '',
         'lines': lines,
         'tax_amount': header['tax_amount'],
         'discount_amount': header['discount'],
     }, created_by=CREATED_BY)
     if err or not row:
         return 'error', {'qbo_estimate_id': qbo_id, 'error': err or 'Could not save quote.'}
-    digest = snapshot_hash(title, note_text, '', quote.lines_of(row) if hasattr(quote, 'lines_of') else lines,
+    digest = snapshot_hash(title, '', '', quote.lines_of(row) if hasattr(quote, 'lines_of') else lines,
                            header['total'], memo, header['bill'], header['ship'],
                            header['tax_amount'], header['discount'], header['expiration'])
     # Recompute hash from the saved lines so it matches later reads.
@@ -698,7 +698,7 @@ def _update_existing(conn, found, est, lines, header, status, qbo_id, txn):
     # Keep a human title tied to the QBO doc number if it is still the generated one.
     if (found['title'] or '').startswith('Estimate ') or (found['title'] or '').startswith('QBO estimate '):
         title = ('Estimate %s' % doc) if doc else title
-    note_text, memo = _notes_for(doc, qbo_id, header['memo'])
+    note_text = quote.strip_import_scope_note(_rowget(found, 'notes') or '')
     row, err = quote.save_quote(conn, {
         'title': title,
         'company_id': found['company_id'],
@@ -742,7 +742,35 @@ def _update_existing(conn, found, est, lines, header, status, qbo_id, txn):
     }
 
 
+def cleanup_imported_scope_notes(conn):
+    """Strip the old import sentence from client-facing scope on existing quotes.
+
+    Recompute qbo_import_hash when it was set, so a later update re-sync does not
+    treat this cleanup as an office edit.
+    """
+    init_schema(conn)
+    rows = conn.execute(
+        "SELECT * FROM quotes WHERE IFNULL(qbo_estimate_id,'') != ''"
+    ).fetchall()
+    changed = 0
+    for row in rows:
+        notes = row['notes'] if 'notes' in row.keys() else ''
+        notes = notes or ''
+        cleaned = quote.strip_import_scope_note(notes)
+        if cleaned == notes:
+            continue
+        conn.execute('UPDATE quotes SET notes=? WHERE id=?', (cleaned, row['id']))
+        if _rowget(row, 'qbo_import_hash'):
+            saved = conn.execute('SELECT * FROM quotes WHERE id=?', (row['id'],)).fetchone()
+            conn.execute(
+                'UPDATE quotes SET qbo_import_hash=? WHERE id=?',
+                (hash_quote_row(saved), row['id']))
+        changed += 1
+    return changed
+
+
 def unwrap_estimates(payload):
+
     """Accept a list, a single estimate, or a QBO QueryResponse wrapper."""
     if payload is None:
         return []
@@ -821,6 +849,14 @@ def register(fo):
     app = fo.app
     request = fo.request
     jsonify = fo.jsonify
+    try:
+        conn = fo.get_db()
+        cleanup_imported_scope_notes(conn)
+        conn.commit()
+        conn.close()
+    except Exception:
+        # Schema may not be ready in some unit-test import orders.
+        pass
 
     @app.route('/api/qbo/import-estimates', methods=['POST'])
     def qbo_import_estimates():

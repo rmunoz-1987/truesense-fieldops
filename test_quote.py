@@ -122,7 +122,7 @@ class QuoteTests(unittest.TestCase):
         self.assertIn('I agree to the terms and conditions', html)
         self.assertIn('10. Warranty', html)
         self.assertIn('Valid until', html)
-        self.assertIn('Deposit due to schedule', html)
+        self.assertNotIn('Deposit due to schedule', html)  # total is under the $1,000 deposit minimum
         self.assertNotIn('Cost $', html)
         self.assertNotIn('$100', html)
         self.assertNotIn('Cost', html)

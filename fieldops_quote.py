@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, date
 from pathlib import Path
@@ -17,6 +18,8 @@ from pathlib import Path
 
 DEFAULT_MARKUP = 1.25
 QUOTE_TERMS_KEY = 'quote_terms'
+QUOTE_DEPOSIT_MIN_KEY = 'quote_deposit_min'
+DEFAULT_DEPOSIT_MIN = 1000.0
 LICENSE_NO = 'B31163401'
 VALID_DAYS = 15
 
@@ -114,11 +117,71 @@ def valid_until(row, days=VALID_DAYS):
         return ''
 
 
-def deposit_of(total):
+def get_deposit_min(conn=None):
+    """Minimum estimate total that still asks for a 50% deposit. Default $1,000."""
+    owned = False
+    if conn is None:
+        try:
+            import fieldops_app as fo
+            conn = fo.get_db()
+            owned = True
+        except Exception:
+            return DEFAULT_DEPOSIT_MIN
     try:
-        return round(float(total or 0) * 0.5, 2)
+        row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_DEPOSIT_MIN_KEY,)).fetchone()
+        if row and str(row['value'] or '').strip() != '':
+            val = float(row['value'])
+            if val >= 0:
+                return val
+    except (TypeError, ValueError, Exception):
+        pass
+    finally:
+        if owned and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return DEFAULT_DEPOSIT_MIN
+
+
+def set_deposit_min(conn, raw):
+    text = (raw or '').strip().replace(',', '')
+    if text == '':
+        val = DEFAULT_DEPOSIT_MIN
+    else:
+        try:
+            val = float(text)
+        except (TypeError, ValueError):
+            return 'Deposit minimum must be a number.'
+        if val < 0:
+            return 'Deposit minimum cannot be negative.'
+    conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                 (QUOTE_DEPOSIT_MIN_KEY, str(val)))
+    return None
+
+
+def deposit_applies(total, min_amount=None, conn=None):
+    try:
+        total = float(total or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    if min_amount is None:
+        min_amount = get_deposit_min(conn)
+    try:
+        min_amount = float(min_amount)
+    except (TypeError, ValueError):
+        min_amount = DEFAULT_DEPOSIT_MIN
+    return total >= min_amount and total > 0
+
+
+def deposit_of(total, min_amount=None, conn=None):
+    try:
+        total = float(total or 0)
     except (TypeError, ValueError):
         return 0.0
+    if not deposit_applies(total, min_amount=min_amount, conn=conn):
+        return 0.0
+    return round(total * 0.5, 2)
 
 
 def terms_of(row):
@@ -144,6 +207,25 @@ def _rowcol(row, key, default=''):
     except Exception:
         pass
     return default
+
+
+
+IMPORT_SCOPE_NOTE_RE = re.compile(
+    r'(?im)^Imported from QuickBooks estimate [A-Za-z0-9._-]+\.\s*'
+)
+
+
+def strip_import_scope_note(text):
+    """Remove the internal QBO import sentence from client-facing scope notes."""
+    return IMPORT_SCOPE_NOTE_RE.sub('', text or '').strip()
+
+
+def client_scope_of(row):
+    try:
+        notes = (row['notes'] or '') if 'notes' in row.keys() else ''
+    except Exception:
+        notes = ''
+    return strip_import_scope_note(notes)
 
 
 def customer_memo_of(row):
@@ -938,6 +1020,11 @@ def register(fo):
                 c['id'], c['sell'] or 0, c['cost'] or 0, h(c['unit'] or ''),
                 h(c['name']), (' · ' + money(c['sell'])) if c['sell'] else '')
             for c in catalog)
+        qbo_doc = (vals.get('qbo_doc_number') or '').strip()
+        qbo_banner = ''
+        if qbo_doc:
+            qbo_banner = ('<p class="muted">QuickBooks estimate %s. This note is office only '
+                          'and is not shown on the client link.</p>' % h(qbo_doc))
         form = (
             '<form class="plat-form" method="post" action="%s" id="quote-form">'
             '<label>Title</label><input name="title" required maxlength="200" value="%s">'
@@ -945,13 +1032,14 @@ def register(fo):
             '<input type="hidden" name="opportunity_id" value="%s">'
             '<input type="hidden" name="job_id" value="%s">'
             '<input type="hidden" name="parent_id" value="%s">'
-            '<label>Notes (shown on the client link)</label><textarea name="notes" rows="3">%s</textarea>'
+            '<label>Notes (shown on the client link)</label><textarea name="notes" rows="3">%s</textarea>%s'
             '<label>Clarifications (job-specific, shown above the terms)</label><textarea name="clarifications" rows="3" placeholder="Lift work billed extra. Fire alarm by others.">%s</textarea>'
             '<h2>Lines</h2><p class="muted">Sell prices are copied from the catalog and then frozen on this quote. Mark a line as an add-on if the client can tick it on or off. The one estimate still has a single total.</p>'
             '<div id="quote-lines">' % (
                 h(action), h(vals.get('title') or ''), co_opts,
                 h(str(vals.get('opportunity_id') or '')), h(str(vals.get('job_id') or '')),
-                h(str(vals.get('parent_id') or '')), h(vals.get('notes') or ''),
+                h(str(vals.get('parent_id') or '')), h(strip_import_scope_note(vals.get('notes') or '')),
+                qbo_banner,
                 h(vals.get('clarifications') or ''))
         )
         for i, ln in enumerate(lines):
@@ -1123,6 +1211,7 @@ def register(fo):
             'title': row['title'], 'notes': row['notes'] or '', 'clarifications': clarifications_of(row),
             'company_id': row['company_id'] or '', 'opportunity_id': row['opportunity_id'] or '',
             'job_id': row['job_id'] or '', 'lines': lines_of(row),
+            'qbo_doc_number': (row['qbo_doc_number'] or '') if 'qbo_doc_number' in row.keys() else '',
         }
         body = ''
         if row['status'] == 'accepted':
@@ -1284,7 +1373,7 @@ details.terms[open] summary:after{content:"Hide"}
 </div>
 {% endif %}
 {% if customer_memo %}<h2>Message</h2><div class="card pre">{{ customer_memo }}</div>{% endif %}
-{% if q.notes %}<h2>Scope</h2><div class="card pre">{{ q.notes }}</div>{% endif %}
+{% if scope %}<h2>Scope</h2><div class="card pre">{{ scope }}</div>{% endif %}
 {% if accepted %}
 <div class="ok">Approved by {{ q.accepted_name }} on {{ q.accepted_at[:10] }}. Total {{ money(q.total) }}.</div>
 {% endif %}
@@ -1301,14 +1390,14 @@ details.terms[open] summary:after{content:"Hide"}
 </tr>
 {% endfor %}
 </table>
-<div class="totals" data-tax="{{ totals.tax }}" data-discount="{{ totals.discount }}">
+<div class="totals" data-tax="{{ totals.tax }}" data-discount="{{ totals.discount }}" data-deposit-min="{{ deposit_min }}">
   <div class="breakdown">
     <span>Subtotal</span><b id="sub">{{ money(totals.subtotal) }}</b>
     {% if totals.discount %}<span>Discount</span><b id="disc">{{ money(totals.discount) }}</b>{% endif %}
     {% if totals.tax or tax_rate %}<span>Sales tax{% if tax_rate %} ({{ tax_rate }}){% endif %}</span><b id="tax">{{ money(totals.tax) }}</b>{% endif %}
   </div>
   <div class="total" id="tot">{{ money(totals.total) }}</div>
-  <div class="deposit">Deposit due to schedule (50%): <b id="dep">{{ money(deposit) }}</b></div>
+  {% if deposit %}<div class="deposit">Deposit due to schedule (50%): <b id="dep">{{ money(deposit) }}</b></div>{% endif %}
   <div class="muted" id="tot-note">This is the total for the items above{% if has_addons and not accepted %}, including any optional add-ons you tick{% endif %}. The balance is due upon completion, net 15.</div>
 </div>
 </div>
@@ -1344,7 +1433,7 @@ c.addEventListener("pointermove",function(e){if(!on)return;var q=p(e);x.lineTo(q
 c.addEventListener("pointerup",function(){on=false})})();
 function estClear(){var c=document.getElementById("est-pad");c.getContext("2d").clearRect(0,0,c.width,c.height);estDrawn=false}
 function estSubmit(){var terms=document.querySelector("input[name=agree_terms]");if(terms&&!terms.checked){alert("Please agree to the terms and conditions");return false}if(!estDrawn){alert("Please sign in the box");return false}document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
-function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;var kind=cell.getAttribute("data-kind")||"item";if(kind!=="item")return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});var box=document.querySelector(".totals");var tax=parseFloat((box&&box.getAttribute("data-tax"))||0);var disc=parseFloat((box&&box.getAttribute("data-discount"))||0);var sub=document.getElementById("sub");if(sub)sub.textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});t=t-disc+tax;document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var d=t*0.5;document.getElementById("dep").textContent="$"+d.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;var kind=cell.getAttribute("data-kind")||"item";if(kind!=="item")return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});var box=document.querySelector(".totals");var tax=parseFloat((box&&box.getAttribute("data-tax"))||0);var disc=parseFloat((box&&box.getAttribute("data-discount"))||0);var min=parseFloat((box&&box.getAttribute("data-deposit-min"))||0);var sub=document.getElementById("sub");if(sub)sub.textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});t=t-disc+tax;document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var row=document.querySelector(".deposit");var dep=document.getElementById("dep");if(row&&dep){if(t>=min&&t>0){row.style.display="";dep.textContent="$"+(t*0.5).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}else{row.style.display="none"}}}
 </script>
 {% endif %}
 <div class="foot">True Sense Security &middot; License {{ license }}</div>
@@ -1390,13 +1479,15 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         clar = clarifications_of(row)
         est = estimate_date(row)
         until = valid_until(row)
-        dep = deposit_of(totals['total'])
+        dep_min = get_deposit_min()
+        dep = deposit_of(totals['total'], min_amount=dep_min)
         return render_template_string(
             CLIENT_HTML, q=row, company=company, lines=lines, money=money,
             totals=totals, accepted=row['status'] == 'accepted',
             selected=selected, has_addons=any(ln.get('optional') for ln in lines),
             terms=terms, clarifications=clar, est_date=est, valid_until=until,
-            deposit=dep, number=quote_number(row), license=LICENSE_NO,
+            deposit=dep, deposit_min=dep_min, scope=client_scope_of(row),
+            number=quote_number(row), license=LICENSE_NO,
             bill_to=bill_to_of(row), ship_to=ship_to_of(row),
             customer_memo=customer_memo_of(row), tax_rate=rate_label)
 
@@ -1435,13 +1526,15 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         terms = terms_of(row) or ''
         if not terms:
             conn = fo.get_db(); terms = get_default_terms(conn); conn.close()
+        dep_min = get_deposit_min()
         html = render_template_string(
             CLIENT_HTML, q=row, company=company, lines=lines, money=money,
             totals=totals, accepted=row['status'] == 'accepted',
             selected=selected, has_addons=any(ln.get('optional') for ln in lines),
             terms=terms, clarifications=clarifications_of(row),
             est_date=estimate_date(row), valid_until=valid_until(row),
-            deposit=deposit_of(totals['total']), number=quote_number(row),
+            deposit=deposit_of(totals['total'], min_amount=dep_min), deposit_min=dep_min,
+            scope=client_scope_of(row), number=quote_number(row),
             license=LICENSE_NO,
             bill_to=bill_to_of(row), ship_to=ship_to_of(row),
             customer_memo=customer_memo_of(row), tax_rate=rate_label)
@@ -1545,6 +1638,7 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             return ''
         conn = fo.get_db()
         text = get_saved_terms(conn)
+        min_amt = get_deposit_min(conn)
         conn.close()
         live = bool(text)
         body = (
@@ -1560,10 +1654,30 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             body += ('<p class="muted">No live default is set yet. Save the approved terms to use them on new client links. Nothing is sent.</p>')
             body += '<textarea name="quote_terms" rows="22" style="width:100%">' + fo.h(DEFAULT_TERMS) + '</textarea>'
             body += '<button class="plat-btn plat-btn-gold" type="submit" style="margin-top:10px">Save as live default</button></form>'
+        shown = fo.h('%g' % min_amt)
+        body += (
+            '<form method="post" class="plat-form" style="margin:28px 0">'
+            '<input type="hidden" name="action" value="save_quote_deposit_min">'
+            '<h2>Deposit on estimates</h2>'
+            '<p class="muted">A 50% deposit is shown on the client estimate and PDF when the total is '
+            'at least this amount. Estimates under this amount do not show a deposit line. '
+            'The default is $1,000, which covers small service quotes without asking for a deposit to schedule.</p>'
+            '<label>Ask for a 50% deposit when the total is at least ($)</label>'
+            '<input name="quote_deposit_min" type="number" step="0.01" min="0" value="' + shown + '" style="max-width:200px">'
+            '<button class="plat-btn plat-btn-gold" type="submit" style="margin-top:10px">Save deposit rule</button></form>'
+        )
         return body
 
     def quote_settings_post():
-        if request.form.get('action') != 'save_quote_terms':
+        action = request.form.get('action')
+        if action == 'save_quote_deposit_min':
+            conn = fo.get_db()
+            err = set_deposit_min(conn, request.form.get('quote_deposit_min'))
+            if err:
+                conn.close(); return err
+            conn.commit(); conn.close()
+            return 'Deposit rule saved. It applies to the client estimate and PDF.'
+        if action != 'save_quote_terms':
             return None
         conn = fo.get_db()
         err = set_default_terms(conn, request.form.get('quote_terms'))

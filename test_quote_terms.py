@@ -93,6 +93,8 @@ class QuoteTermsTests(unittest.TestCase):
         self.login()
         page = self.c.get('/settings').get_data(as_text=True)
         self.assertIn('Estimate terms and conditions', page)
+        self.assertIn('Deposit on estimates', page)
+        self.assertIn('quote_deposit_min', page)
         self.assertIn('copied onto a quote when you make the client link', page)
         self.assertNotIn('Draft wording (not live)', page)
         self.assertIn('22. Acceptance', page)
@@ -125,6 +127,7 @@ class QuoteTermsTests(unittest.TestCase):
         self.assertEqual(until, (datetime.strptime(start, '%Y-%m-%d').date() + timedelta(days=15)).isoformat())
         # 50% of 320*2+720 = 1360, deposit 680
         self.assertIn('$680.00', html)
+        self.assertIn('Deposit due to schedule', html)
         self.assertIn('License B31163401', html)
         self.assertIn('I agree to the terms and conditions', html)
         self.assertNotIn('\u2014', html)
@@ -179,6 +182,71 @@ class QuoteTermsTests(unittest.TestCase):
         office_print = self.c.get('/quotes/%d/print' % row['id'])
         self.assertEqual(office_print.status_code, 200)
         self.assertIn('10. Warranty', office_print.get_data(as_text=True))
+
+    def _quote_total(self, total, notes=''):
+        conn = fo.get_db()
+        co = plat.upsert_company(conn, 'Service Client')
+        row, err = quote.save_quote(conn, {
+            'title': 'Service call', 'company_id': co['id'],
+            'notes': notes,
+            'lines': [{'name': 'Service visit', 'qty': 1, 'cost': 80, 'sell': total}],
+        }, created_by='Roland')
+        self.assertIsNone(err)
+        conn.commit(); conn.close()
+        return row
+
+    def test_small_quotes_hide_deposit_and_empty_scope(self):
+        conn = fo.get_db()
+        quote.set_deposit_min(conn, '1000')
+        self._activate_terms(conn)
+        conn.commit(); conn.close()
+        row = self._quote_total(264.40, notes='Imported from QuickBooks estimate 1024.')
+        conn = fo.get_db()
+        sent = quote.ensure_token(conn, row['id'])
+        token = sent['token']
+        conn.commit(); conn.close()
+        html = self.c.get('/q/' + token).get_data(as_text=True)
+        printed = self.c.get('/q/' + token + '/print').get_data(as_text=True)
+        for page in (html, printed):
+            self.assertIn('$264.40', page)
+            self.assertNotIn('Deposit due to schedule', page)
+            self.assertNotIn('Imported from QuickBooks', page)
+            self.assertNotIn('>Scope</h2>', page)
+        large = self._quote_total(52305)
+        conn = fo.get_db()
+        sent = quote.ensure_token(conn, large['id'])
+        token = sent['token']
+        conn.commit(); conn.close()
+        html = self.c.get('/q/' + token).get_data(as_text=True)
+        self.assertIn('Deposit due to schedule', html)
+        self.assertIn('$26,152.50', html)
+
+    def test_deposit_minimum_is_an_office_setting(self):
+        self.login()
+        try:
+            r = self.c.post('/settings', data={
+                'action': 'save_quote_deposit_min',
+                'quote_deposit_min': '250',
+            }, follow_redirects=True)
+            self.assertEqual(r.status_code, 200)
+            self.assertIn('Deposit rule saved', r.get_data(as_text=True))
+            conn = fo.get_db()
+            self.assertEqual(quote.get_deposit_min(conn), 250)
+            conn.close()
+            row = self._quote_total(264.40)
+            conn = fo.get_db()
+            sent = quote.ensure_token(conn, row['id'])
+            token = sent['token']
+            conn.commit(); conn.close()
+            html = self.c.get('/q/' + token).get_data(as_text=True)
+            self.assertIn('Deposit due to schedule', html)
+            self.assertIn('$132.20', html)
+        finally:
+            self.c.post('/settings', data={
+                'action': 'save_quote_deposit_min',
+                'quote_deposit_min': '1000',
+            }, follow_redirects=True)
+
 
 
 if __name__ == '__main__':

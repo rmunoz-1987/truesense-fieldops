@@ -95,7 +95,8 @@ class QboImportTests(unittest.TestCase):
         self.assertEqual(q['qbo_doc_number'], 'EST-101')
         self.assertEqual(q['qbo_txn_status'], 'Pending')
         self.assertEqual(q['status'], 'sent')
-        self.assertIn('Imported from QuickBooks estimate EST-101', q['notes'])
+        self.assertNotIn('Imported from QuickBooks', q['notes'] or '')
+        self.assertEqual((q['notes'] or '').strip(), '')
         lines = json.loads(q['lines_json'])
         items = [ln for ln in lines if (ln.get('kind') or 'item') == 'item']
         self.assertEqual(len(items), 1)
@@ -120,6 +121,7 @@ class QboImportTests(unittest.TestCase):
         self.assertEqual(opp['stage'], 'proposal')
         self.assertEqual(opp['amount'], 640)
         self.assertEqual(opp['created_by'], 'QBO import')
+        self.assertIn('Imported from QuickBooks estimate EST-101', opp['notes'] or '')
         # second pass does not duplicate
         again = qboimp.import_estimates(conn, [estimate()], today=TODAY)
         conn.commit()
@@ -264,6 +266,9 @@ class QboImportTests(unittest.TestCase):
         self.assertIn('Sales tax', html)
         self.assertIn('8.25%', html)
         self.assertIn('$264.40', html)
+        self.assertNotIn('Imported from QuickBooks', html)
+        self.assertNotIn('>Scope</h2>', html)
+        self.assertNotIn('Deposit due to schedule', html)
         self.assertIn('Please call before arrival.', html)
         self.assertIn('Bill to', html)
         self.assertIn('100 Main St', html)
@@ -310,7 +315,44 @@ class QboImportTests(unittest.TestCase):
         self.assertEqual(kept['total'], 99)
         conn.close()
 
+
+    def test_cleanup_strips_import_note_without_flagging(self):
+        conn = fo.get_db()
+        result = qboimp.import_estimates(conn, [estimate('501', '501', name='Cleanup Co')], today=TODAY)
+        conn.commit()
+        qid = result['quotes'][0]['quote_id']
+        # Simulate a previously imported quote that still has the old client-facing sentence,
+        # plus a real office scope note that must be kept.
+        conn.execute(
+            "UPDATE quotes SET notes=? WHERE id=?",
+            ('Imported from QuickBooks estimate 501.\nReplace the lobby keypad.', qid))
+        saved = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        conn.execute('UPDATE quotes SET qbo_import_hash=? WHERE id=?',
+                     (qboimp.hash_quote_row(saved), qid))
+        conn.commit()
+        n = qboimp.cleanup_imported_scope_notes(conn)
+        conn.commit()
+        self.assertEqual(n, 1)
+        q = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        self.assertEqual(q['notes'], 'Replace the lobby keypad.')
+        self.assertNotIn('Imported from QuickBooks', q['notes'])
+        # a later update re-sync should not flag this as an office edit
+        again = qboimp.import_estimates(conn, [estimate('501', '501', name='Cleanup Co')], today=TODAY, mode='update')
+        conn.commit()
+        self.assertEqual(again['flagged'], 0, again)
+        self.assertEqual(again['updated'], 1, again)
+        kept = conn.execute('SELECT notes FROM quotes WHERE id=?', (qid,)).fetchone()
+        self.assertEqual(kept['notes'], 'Replace the lobby keypad.')
+        row = quote.ensure_token(conn, qid)
+        tok = row['token']
+        conn.commit(); conn.close()
+        html = self.c.get('/q/' + tok).get_data(as_text=True)
+        self.assertIn('Replace the lobby keypad.', html)
+        self.assertIn('Scope', html)
+        self.assertNotIn('Imported from QuickBooks', html)
+
     def test_mcp_payload_and_high_precision_rate(self):
+
         est = {
             'id': 'djQ:257',
             'reference_number': '1018',
