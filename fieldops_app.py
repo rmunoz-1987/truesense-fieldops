@@ -1483,6 +1483,8 @@ def init_db():
         _portal.init_schema(conn)
         import fieldops_qbo_import as _qboimp
         _qboimp.init_schema(conn)
+        import fieldops_security as _sec
+        _sec.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -2403,6 +2405,8 @@ def set_job_type(job_id):
     return (jsonify({'ok':True,'job_type':jt}) if n else ('',404))
 
 def save_ticks(job_id, col, key):
+    if col not in ('punch_list',):
+        return jsonify({'error':'bad field'}),400
     conn=get_db(); row,err=own_job(conn, job_id)
     if err: conn.close(); return err
     items=parse_ticks((request.get_json(silent=True) or {}).get(key) or [])
@@ -2660,7 +2664,12 @@ def blueprints(conn, job_id):
     return out
 
 def plan_files(conn, job_id):
-    return [r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='plan' ORDER BY id",(job_id,)).fetchall()]
+    files=[r['filename'] for r in conn.execute("SELECT filename FROM photos WHERE job_id=? AND photo_type='plan' ORDER BY id",(job_id,)).fetchall()]
+    try:
+        import fieldops_areas as _areas
+        return _areas.ordered_files(conn, job_id, files)
+    except Exception:
+        return files
 
 def survey_edit_row(conn, job_id):
     row,err=own_job(conn, job_id)
@@ -6801,6 +6810,8 @@ import fieldops_portal
 fieldops_portal.register(sys.modules[__name__])
 import fieldops_qbo_import
 fieldops_qbo_import.register(sys.modules[__name__])
+import fieldops_security
+fieldops_security.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

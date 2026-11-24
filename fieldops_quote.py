@@ -203,7 +203,7 @@ def lines_of(row):
     return data if isinstance(data, list) else []
 
 
-def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit=''):
+def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='', source='', plan_key=''):
     try:
         qty = float(qty or 0)
     except (TypeError, ValueError):
@@ -219,7 +219,7 @@ def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='')
     if sell <= 0 and cost > 0:
         sell = sell_from_cost(cost)
     qty = max(0, qty)
-    return {
+    out = {
         'name': (name or '')[:200],
         'qty': qty,
         'unit': (unit or '')[:20],
@@ -229,6 +229,10 @@ def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='')
         'catalog_id': catalog_id,
         'line_total': round(qty * sell, 2),
     }
+    if source:
+        out['source'] = source
+        out['plan_key'] = plan_key or ''
+    return out
 
 
 def quote_totals(lines, selected=None):
@@ -329,7 +333,8 @@ def save_quote(conn, data, quote_id=None, created_by=''):
             continue
         frozen.append(freeze_line(
             name, ln.get('qty') or 1, ln.get('cost') or 0, ln.get('sell') or 0,
-            optional=bool(ln.get('optional')), catalog_id=ln.get('catalog_id'), unit=ln.get('unit') or ''))
+            optional=bool(ln.get('optional')), catalog_id=ln.get('catalog_id'), unit=ln.get('unit') or '',
+            source=ln.get('source') or '', plan_key=ln.get('plan_key') or ''))
     if not frozen:
         return None, 'Add at least one line.'
     tot = quote_totals(frozen)['base']  # stored total is the required base; add-ons apply at accept
@@ -366,6 +371,17 @@ def ensure_token(conn, quote_id):
     if not row['token']:
         sets.append('token=?'); args.append(secrets.token_urlsafe(24))
         sets.append("status=CASE WHEN status='draft' THEN 'sent' ELSE status END")
+    exp = ''
+    try:
+        exp = (row['token_expires_at'] or '') if 'token_expires_at' in row.keys() else ''
+    except Exception:
+        exp = ''
+    if not exp:
+        try:
+            import fieldops_security as _sec
+            sets.append('token_expires_at=?'); args.append(_sec.expiry_iso())
+        except Exception:
+            pass
     sent = ''
     try:
         sent = (row['sent_at'] or '') if 'sent_at' in row.keys() else ''
@@ -862,6 +878,13 @@ def register(fo):
         elif request.method == 'POST' and request.form.get('action') == 'link':
             row = ensure_token(conn, qid)
             conn.commit(); msg = 'Client link is ready. Copy it and send it yourself. The app does not send anything.'
+        elif request.method == 'POST' and request.form.get('action') == 'revoke_link':
+            conn.execute(
+                'UPDATE quotes SET token_revoked_at=?, token_revoked_by=?, updated_at=? WHERE id=? AND IFNULL(token,"")!=""',
+                (now_iso(), fo.me(), now_iso(), qid))
+            conn.commit()
+            msg = 'Client link was turned off. The old link will no longer open.'
+            row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
         companies = conn.execute('SELECT id,name FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name').fetchall()
         catalog = conn.execute('SELECT * FROM catalog_items WHERE active=1 ORDER BY name COLLATE NOCASE').fetchall()
         versions = []
@@ -898,6 +921,20 @@ def register(fo):
                     h((row['opened_at'] or '')[:19].replace('T', ' ')))
             else:
                 body += '<p class="muted">Not opened yet.</p>'
+            revoked = ''
+            exp = ''
+            try:
+                revoked = (row['token_revoked_at'] or '') if 'token_revoked_at' in row.keys() else ''
+                exp = (row['token_expires_at'] or '') if 'token_expires_at' in row.keys() else ''
+            except Exception:
+                pass
+            if revoked:
+                body += '<p class="muted">This link was turned off on %s.</p>' % h(revoked[:19].replace('T', ' '))
+            elif exp:
+                body += '<p class="muted">Link expires %s.</p>' % h(exp[:10])
+            if row['token'] and not revoked:
+                body += ('<form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_link">'
+                         '<button class="plat-btn plat-btn-ghost" type="submit">Turn off link</button></form>')
         if row['status'] != 'accepted':
             body += ('<form method="post"><input type="hidden" name="action" value="link">'
                      '<button class="plat-btn plat-btn-gold" type="submit">%s</button></form>' % (
@@ -1069,6 +1106,15 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
 </body></html>
 '''
 
+    def _quote_link_gone(row):
+        try:
+            import fieldops_security as _sec
+            if _sec.token_block_reason(row):
+                return (_sec.LINK_GONE, 410)
+        except Exception:
+            pass
+        return None
+
     @app.route('/q/<token>')
     def quote_client(token):
         conn = fo.get_db()
@@ -1076,6 +1122,9 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         if not row:
             conn.close()
             return ('This link is not valid.', 404)
+        gone = _quote_link_gone(row)
+        if gone:
+            conn.close(); return gone
         record_open(conn, row['id'])
         row = conn.execute('SELECT * FROM quotes WHERE id=?', (row['id'],)).fetchone()
         company = ''
@@ -1116,6 +1165,9 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         row = conn.execute('SELECT * FROM quotes WHERE token=?', (token,)).fetchone()
         if not row:
             conn.close(); return ('This link is not valid.', 404)
+        gone = _quote_link_gone(row)
+        if gone:
+            conn.close(); return gone
         if row['status'] == 'accepted':
             conn.close(); return redirect('/q/' + token)
         name = (request.form.get('name') or '').strip()[:100]
@@ -1167,6 +1219,9 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         row = conn.execute('SELECT * FROM quotes WHERE token=?', (token,)).fetchone()
         if not row:
             conn.close(); return ('This link is not valid.', 404)
+        gone = _quote_link_gone(row)
+        if gone:
+            conn.close(); return gone
         company = ''
         if row['company_id']:
             co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()

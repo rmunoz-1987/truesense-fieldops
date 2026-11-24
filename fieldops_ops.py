@@ -257,9 +257,25 @@ def ensure_co_token(conn, coid):
             return conn.execute('SELECT * FROM change_orders WHERE id=?', (coid,)).fetchone()
         return row
     token = secrets.token_urlsafe(24)
-    conn.execute(
-        "UPDATE change_orders SET token=?, status=CASE WHEN status='draft' THEN 'sent' ELSE status END, updated_at=? WHERE id=?",
-        (token, now_iso(), coid))
+    exp = ''
+    try:
+        import fieldops_security as _sec
+        exp = _sec.expiry_iso()
+    except Exception:
+        exp = ''
+    if exp:
+        try:
+            conn.execute(
+                "UPDATE change_orders SET token=?, token_expires_at=?, status=CASE WHEN status='draft' THEN 'sent' ELSE status END, updated_at=? WHERE id=?",
+                (token, exp, now_iso(), coid))
+        except Exception:
+            conn.execute(
+                "UPDATE change_orders SET token=?, status=CASE WHEN status='draft' THEN 'sent' ELSE status END, updated_at=? WHERE id=?",
+                (token, now_iso(), coid))
+    else:
+        conn.execute(
+            "UPDATE change_orders SET token=?, status=CASE WHEN status='draft' THEN 'sent' ELSE status END, updated_at=? WHERE id=?",
+            (token, now_iso(), coid))
     return conn.execute('SELECT * FROM change_orders WHERE id=?', (coid,)).fetchone()
 
 
@@ -828,6 +844,12 @@ function foSubmit(){if(!drawn){alert("Please sign in the box");return false}docu
         row = conn.execute('SELECT * FROM change_orders WHERE token=?', (token,)).fetchone()
         if not row:
             conn.close(); return ('This link is not valid.', 404)
+        try:
+            import fieldops_security as _sec
+            if _sec.token_block_reason(row):
+                conn.close(); return (_sec.LINK_GONE, 410)
+        except Exception:
+            pass
         job = conn.execute('SELECT * FROM jobs WHERE id=?', (row['job_id'],)).fetchone()
         conn.close()
         lines = json.loads(row['lines_json'] or '[]')
@@ -842,6 +864,12 @@ function foSubmit(){if(!drawn){alert("Please sign in the box");return false}docu
         row = conn.execute('SELECT * FROM change_orders WHERE token=?', (token,)).fetchone()
         if not row:
             conn.close(); return ('This link is not valid.', 404)
+        try:
+            import fieldops_security as _sec
+            if _sec.token_block_reason(row):
+                conn.close(); return (_sec.LINK_GONE, 410)
+        except Exception:
+            pass
         if row['status'] == 'accepted':
             conn.close(); return redirect('/co/' + token)
         name = (request.form.get('name') or '').strip()[:100]
