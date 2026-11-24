@@ -58,25 +58,46 @@ class QuoteTermsTests(unittest.TestCase):
         conn.commit(); conn.close()
         return row
 
-    def test_draft_terms_are_not_seeded_until_saved(self):
+    def test_approved_terms_are_seeded_if_none_are_set(self):
+        text = quote.DEFAULT_TERMS
+        self.assertTrue(text.strip())
+        self.assertIn('Terms & Conditions', text)
+        self.assertIn('True Sense Security LLC', text)
+        self.assertIn('Texas DPS License B31163401', text)
+        self.assertIn('1. Scope of Work', text)
+        self.assertIn('4. Site Conditions', text)
+        self.assertIn('Existing doors, frames, and lock hardware must be in working order', text)
+        self.assertIn('10. Warranty', text)
+        self.assertIn('1-year workmanship warranty', text)
+        self.assertIn('12. Payment Terms', text)
+        self.assertIn('50% deposit due upon acceptance', text)
+        self.assertIn('22. Acceptance & Electronic Signatures', text)
+        self.assertNotIn('50% deposit is due to schedule the work', text)
         conn = fo.get_db()
+        # Boot already seeds when settings are empty.
+        saved = quote.get_saved_terms(conn)
+        self.assertEqual(saved, text.strip())
+        # Do not overwrite a custom office save.
+        quote.set_default_terms(conn, 'CUSTOM OFFICE TERMS')
+        conn.commit()
+        self.assertFalse(quote.seed_default_terms(conn))
+        self.assertEqual(quote.get_saved_terms(conn), 'CUSTOM OFFICE TERMS')
+        # Empty settings get the approved default.
         conn.execute('DELETE FROM settings WHERE key=?', (quote.QUOTE_TERMS_KEY,))
         conn.commit()
-        quote.seed_default_terms(conn)
+        self.assertTrue(quote.seed_default_terms(conn))
         conn.commit()
         saved = quote.get_saved_terms(conn)
-        seeded = conn.execute("SELECT value FROM settings WHERE key=?", (quote.QUOTE_TERMS_KEY,)).fetchone()
         conn.close()
-        self.assertEqual(saved, '')
-        self.assertTrue(not seeded or not (seeded['value'] or '').strip())
-        self.assertIn('8. Warranty: True Sense Security warrants its labor for 1 year', quote.DEFAULT_TERMS)
-        self.assertIn('Manufacturer warranties apply to equipment.', quote.DEFAULT_TERMS)
-        self.assertIn('50% deposit is due to schedule the work', quote.DEFAULT_TERMS)
+        self.assertEqual(saved, text.strip())
         self.login()
         page = self.c.get('/settings').get_data(as_text=True)
-        self.assertIn('not used on client links until you save', page)
-        self.assertIn('Draft wording (not live)', page)
-        self.assertIn('8. Warranty:', page)
+        self.assertIn('Estimate terms and conditions', page)
+        self.assertIn('copied onto a quote when you make the client link', page)
+        self.assertNotIn('Draft wording (not live)', page)
+        self.assertIn('22. Acceptance', page)
+        self.assertIn('B31163401', page)
+        self.assertIn('1-year workmanship warranty', page)
 
     def test_terms_freeze_on_send_and_later_edits_do_not_change_them(self):
         row = self._quote()
@@ -84,7 +105,7 @@ class QuoteTermsTests(unittest.TestCase):
         self._activate_terms(conn)
         sent = quote.ensure_token(conn, row['id'])
         self.assertTrue(sent['token'])
-        self.assertEqual((sent['terms_text'] or '').strip(), quote.DEFAULT_TERMS)
+        self.assertEqual((sent['terms_text'] or '').strip(), quote.DEFAULT_TERMS.strip())
         self.assertTrue(sent['sent_at'])
         frozen = sent['terms_text']
         # change default settings
@@ -94,7 +115,7 @@ class QuoteTermsTests(unittest.TestCase):
         self.assertEqual(again['terms_text'], frozen)
         conn.close()
         html = self.c.get('/q/' + sent['token']).get_data(as_text=True)
-        self.assertIn('8. Warranty:', html)
+        self.assertIn('10. Warranty', html)
         self.assertNotIn('CHANGED TERMS ONLY', html)
         self.assertIn('Lift work billed extra', html)
         self.assertIn('Valid until', html)
@@ -132,7 +153,7 @@ class QuoteTermsTests(unittest.TestCase):
         q = conn.execute('SELECT * FROM quotes WHERE id=?', (row['id'],)).fetchone()
         self.assertEqual(q['status'], 'accepted')
         self.assertTrue(q['terms_agreed_at'])
-        self.assertEqual((q['terms_text'] or '').strip(), quote.DEFAULT_TERMS)
+        self.assertEqual((q['terms_text'] or '').strip(), quote.DEFAULT_TERMS.strip())
         conn.close()
 
     def test_print_includes_terms_and_settings_are_office_only(self):
@@ -144,7 +165,7 @@ class QuoteTermsTests(unittest.TestCase):
         conn.commit(); conn.close()
         html = self.c.get('/q/%s/print' % token).get_data(as_text=True)
         self.assertEqual(self.c.get('/q/%s/print' % token).status_code, 200)
-        self.assertIn('8. Warranty:', html)
+        self.assertIn('10. Warranty', html)
         self.assertIn('Lift work billed extra', html)
         self.assertIn('Print this estimate', html)
         self.login('Woody Rodriguez', 'TestPass1234')
@@ -154,10 +175,10 @@ class QuoteTermsTests(unittest.TestCase):
         self.login()
         page = self.c.get('/settings').get_data(as_text=True)
         self.assertIn('Estimate terms and conditions', page)
-        self.assertIn('8. Warranty:', page)
+        self.assertIn('10. Warranty', page)
         office_print = self.c.get('/quotes/%d/print' % row['id'])
         self.assertEqual(office_print.status_code, 200)
-        self.assertIn('8. Warranty:', office_print.get_data(as_text=True))
+        self.assertIn('10. Warranty', office_print.get_data(as_text=True))
 
 
 if __name__ == '__main__':

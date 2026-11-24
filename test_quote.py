@@ -120,7 +120,7 @@ class QuoteTests(unittest.TestCase):
         self.assertIn('Video doorbell', html)
         self.assertIn('License B31163401', html)
         self.assertIn('I agree to the terms and conditions', html)
-        self.assertIn('8. Warranty:', html)
+        self.assertIn('10. Warranty', html)
         self.assertIn('Valid until', html)
         self.assertIn('Deposit due to schedule', html)
         self.assertNotIn('Cost $', html)

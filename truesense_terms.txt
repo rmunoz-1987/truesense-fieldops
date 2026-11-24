@@ -1,0 +1,110 @@
+Terms & Conditions – Low-Voltage Services (Texas)
+True Sense Security LLC  •  Texas DPS License B31163401
+Structured Cabling • Security Systems • Professional Integration
+
+1. Scope of Work
+True Sense Security (“Contractor”) will perform only the services and provide only the materials specifically listed in the accompanying estimate or proposal. Any additional cabling, devices, programming, relocation, or system expansion requires a written and approved change order.
+
+2. Estimate Validity & Material Escalation
+All estimates are valid for 15 days from the date issued. Pricing may be adjusted after expiration due to material availability, supplier changes, or labor conditions within Texas markets.
+If manufacturer or distributor pricing for equipment or materials increases by more than 5% between acceptance and the date materials are ordered, Contractor may adjust the contract price by the documented increase, with notice to Customer.
+
+3. Exclusions
+Unless explicitly stated in writing, the following are excluded from the scope of work:
+• Wall repair, painting, or patching
+• Conduit installation beyond listed areas
+• IT/network configuration or cybersecurity services
+• Fire-stopping beyond standard low-voltage requirements
+• After-hours or weekend labor
+• Permits, inspection fees, engineering documentation
+• Work requiring access to hazardous or restricted areas
+• Line-voltage (120V) power, fire alarm panel work, and door hardware not listed in the estimate
+
+4. Site Conditions
+Pricing assumes normal access and standard building conditions. Additional charges may apply for:
+• Fire-rated walls
+• Plenum ceilings
+• Blocked pathways
+• Asbestos or hazardous materials
+• Code-restricted areas
+• Unexpected structural conditions
+Existing doors, frames, and lock hardware must be in working order and properly aligned. Door adjustment, frame repair, or replacement hardware is not included and will be quoted separately.
+
+5. Delays & Remobilization
+Contractor is not responsible for delays caused by site inaccessibility, unsafe conditions, other trades, Customer or owner changes, weather, or manufacturer and supply-chain lead times. Contract time is extended for any such delay. If Contractor must leave and return because an area is not ready, each additional trip is billed at Contractor’s then-current rates.
+
+6. Customer Responsibilities
+Customer agrees to:
+• Provide building access during scheduled work hours
+• Ensure work areas are clear and safe
+• Provide accurate device locations
+• Provide network credentials, IP addresses, and internet service when required for device activation
+• Communicate building rules, security requirements, and access limitations
+
+7. Customer-Furnished Equipment
+Equipment, devices, or materials furnished by Customer, the owner, the general contractor, or others are installed as-is. Contractor does not warrant them and is not responsible for their compatibility, performance, or defects. Labor to troubleshoot, repair, return, or replace customer-furnished items is billed at Contractor’s then-current rates.
+
+8. Change Orders
+Any deviation from the original scope requires a written change order approved by the Customer. Additional labor is billed at True Sense Security’s then-current rates (see Section 9). Contractor is not obligated to perform changed work until the change order is approved.
+
+9. Labor Rates
+Change orders, after-hours, weekend and holiday work, and additional trips are billed at Contractor’s then-current rates, available on request.
+
+10. Warranty
+True Sense Security provides a 1-year workmanship warranty from the date of completion. Manufacturer warranties apply to equipment. Warranty does not cover:
+• Customer-provided equipment
+• Damage caused by others
+• Network or ISP issues
+• Lightning, power surges, or weather events common in Texas
+
+11. Cloud Services & Subscriptions
+Cloud-hosted services (such as Brivo access control, video, or remote-monitoring subscriptions) are billed separately from installation, monthly or annually as stated, and renew automatically until canceled in writing with 30 days’ notice. These services are subject to the manufacturer’s terms of service. Contractor is not responsible for outages, data loss, or feature changes by the manufacturer or Customer’s internet provider. Services may be suspended for non-payment.
+
+12. Payment Terms
+Unless otherwise stated in the estimate:
+• 50% deposit due upon acceptance
+• Remaining balance due upon completion, net 15 days from the completion invoice
+• If a contract requires retainage, it may not exceed 10% and is released at substantial completion of Contractor’s scope
+Past-due balances accrue interest at 1.5% per month or the maximum rate allowed by law, whichever is less. Customer is responsible for reasonable collection costs and attorney’s fees. Contractor may suspend work on 7 days’ written notice if payment is not received when due.
+
+13. Lien & Bond Rights
+Contractor reserves all mechanic’s lien and payment bond claim rights under Texas Property Code Chapter 53. Nothing in these terms or any subcontract waives those rights except a statutory lien waiver signed in exchange for payment actually received.
+
+14. Completion & Acceptance of Work
+Contractor’s work is complete when the system is installed, tested, and operating as described in the estimate. The work is considered accepted if Customer does not provide a written list of deficiencies within 5 business days after notice of completion, or when the system is placed into use, whichever occurs first. Punch-list items do not delay payment of amounts not related to those items.
+
+15. Permits & Code Compliance
+Customer is responsible for permit fees unless stated otherwise. Work is performed in accordance with:
+• NEC low-voltage standards
+• Texas Administrative Code licensing requirements
+• Local city ordinances
+
+16. Liability Limitations
+True Sense Security is not responsible for:
+• Pre-existing wiring or infrastructure
+• Failures of customer-provided equipment
+• Network outages or ISP issues
+• Loss of data, business interruption, or consequential damages
+Liability is limited to the total amount paid for the project.
+Customer understands that security, video, and access control systems are designed to reduce risk and do not guarantee that theft, intrusion, vandalism, injury, or other loss will be prevented or detected. Contractor is not an insurer, and Customer is responsible for obtaining its own insurance. Contractor is not liable for any loss or damage resulting from the system's failure to prevent or report an event.
+Customer is responsible for complying with all laws on video and audio recording, privacy, and notice, including posting signage and obtaining any required consent. Audio recording is not enabled unless Customer requests it in writing.
+
+17. Cancellation Policy
+If the project is canceled after materials are ordered or work is scheduled, Customer is responsible for restocking fees, non-returnable materials, and minimum labor charges.
+
+18. Ownership of Materials
+All materials remain the property of True Sense Security until paid in full. Contractor may remove unpaid materials or equipment as permitted under Texas law.
+
+19. Order of Precedence
+These Terms & Conditions and the accompanying estimate form the agreement between the parties. They control over any conflicting terms in a purchase order, general-contractor subcontract, or flow-down provision, including pay-if-paid or pay-when-paid clauses, unless a written subcontract signed by an authorized officer of Contractor specifically states otherwise.
+
+20. Governing Law & Venue
+These terms are governed by the laws of the State of Texas. Venue for any dispute lies in Harris County, Texas.
+
+21. Residential Projects
+For work on a residence, Contractor will provide any notices and disclosures required by Texas Property Code Chapter 53, including the residential construction notices, and lien rights on a homestead are subject to that chapter's requirements. If this agreement was signed at the Customer's home following a sale made there, Customer may have the right to cancel within three business days as provided by Texas law.
+
+22. Acceptance & Electronic Signatures
+Approval of the estimate or commencement of work constitutes acceptance of these Terms & Conditions. Electronic signatures, e-mail approvals, and online acceptance of the estimate are binding to the same extent as an original signature, and this agreement may be signed in counterparts.
+
+True Sense Security • 7341 Avenue E, Houston, TX 77011 • truesensesecurity.com

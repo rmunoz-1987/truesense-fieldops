@@ -12,21 +12,23 @@ import io
 import json
 import secrets
 from datetime import datetime, timedelta, date
+from pathlib import Path
 
 
 DEFAULT_MARKUP = 1.25
 QUOTE_TERMS_KEY = 'quote_terms'
 LICENSE_NO = 'B31163401'
 VALID_DAYS = 15
-DEFAULT_TERMS = """TERMS AND CONDITIONS
-1. Validity: This estimate is valid for 15 days from the estimate date.
-2. Payment: 50% deposit is due to schedule the work. The balance is due upon completion, net 15.
-3. Late payment: Past-due balances accrue a late fee of 1.5% per month or the maximum allowed by law, whichever is less.
-4. Lien rights: True Sense Security reserves all lien rights allowed by law.
-5. Additional work: Work outside this scope is billed at our then-current rates, available on request. Changes or differing site conditions are handled by written change order.
-6. Drywall: Installation may require cutting sheetrock. Drywall patch, texture and paint repairs are by others.
-7. Doors and hardware: Existing doors, frames and lock hardware must be in working order and properly aligned. Pre-existing door misalignment, knob, lever or lockset problems, frame damage, and any door adjustment or replacement hardware are not our responsibility and will be quoted separately.
-8. Warranty: True Sense Security warrants its labor for 1 year from the date of completion. Manufacturer warranties apply to equipment."""
+
+
+def _load_default_terms():
+    try:
+        return Path(__file__).resolve().parent.joinpath('truesense_terms.txt').read_text(encoding='utf-8')
+    except Exception:
+        return ''
+
+
+DEFAULT_TERMS = _load_default_terms()
 
 
 def _cols(conn, table):
@@ -41,12 +43,21 @@ def _add_col(conn, table, coldef):
 
 
 def seed_default_terms(conn):
-    """Do not write terms on deploy. The draft wording stays in DEFAULT_TERMS until Roland OKs it."""
-    return False
+    """Write the approved True Sense terms once, if no live default is set yet."""
+    stored = (DEFAULT_TERMS or '').strip()
+    if not stored:
+        return False
+    row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
+    if row and (row['value'] or '').strip():
+        return False
+    if not stored.endswith('\n'):
+        stored = stored + '\n'
+    conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (QUOTE_TERMS_KEY, stored))
+    return True
 
 
 def get_saved_terms(conn):
-    """Active terms saved in Settings. Empty until the office saves a reviewed draft."""
+    """Live default terms saved in Settings."""
     try:
         row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
     except Exception:
@@ -55,7 +66,7 @@ def get_saved_terms(conn):
 
 
 def get_default_terms(conn):
-    """Active saved terms only. Does not fall back to unreviewed draft wording."""
+    """Live default terms. Same as get_saved_terms after seed or a Settings save."""
     return get_saved_terms(conn)
 
 
@@ -177,6 +188,10 @@ def init_schema(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS ix_quotes_token ON quotes(token)')
     for col in ('terms_text TEXT', 'clarifications TEXT', 'sent_at TEXT', 'terms_agreed_at TEXT'):
         _add_col(conn, 'quotes', col)
+    try:
+        seed_default_terms(conn)
+    except Exception:
+        pass
     conn.execute('CREATE INDEX IF NOT EXISTS ix_catalog_name ON catalog_items(name)')
 
 
@@ -1247,15 +1262,12 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         )
         if live:
             body += '<p class="muted">This text is copied onto a quote when you make the client link, so later edits here do not change a link that is already out. Nothing is sent.</p>'
-            body += '<textarea name="quote_terms" rows="16" style="width:100%">' + fo.h(text) + '</textarea>'
+            body += '<textarea name="quote_terms" rows="22" style="width:100%">' + fo.h(text) + '</textarea>'
             body += '<button class="plat-btn plat-btn-gold" type="submit" style="margin-top:10px">Save terms</button></form>'
         else:
-            body += ('<p class="muted">No live default is set yet. Roland is reviewing the wording. '
-                     'This draft is not used on client links until you save it here.</p>')
-            body += '<textarea name="quote_terms" rows="16" style="width:100%" placeholder="Paste the approved terms, then save."></textarea>'
+            body += ('<p class="muted">No live default is set yet. Save the approved terms to use them on new client links. Nothing is sent.</p>')
+            body += '<textarea name="quote_terms" rows="22" style="width:100%">' + fo.h(DEFAULT_TERMS) + '</textarea>'
             body += '<button class="plat-btn plat-btn-gold" type="submit" style="margin-top:10px">Save as live default</button></form>'
-            body += '<h3 style="margin-top:18px">Draft wording (not live)</h3>'
-            body += '<div class="plat-panel" style="white-space:pre-wrap">' + fo.h(DEFAULT_TERMS) + '</div>'
         return body
 
     def quote_settings_post():
