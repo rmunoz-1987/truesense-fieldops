@@ -514,7 +514,7 @@ def area_from_request(path, saved=None, area_arg=None):
     if area_arg in ('ops', 'sales', 'quote'):
         return area_arg, True
     path = path or '/'
-    if path.startswith(('/sales', '/opportunities', '/opportunity')):
+    if path.startswith(('/sales', '/opportunities', '/opportunity', '/tasks', '/activities')):
         return 'sales', True
     if is_estimate_path(path):
         return 'quote', True
@@ -835,6 +835,11 @@ def register(fo):
                 % (cid, msg)
             )
         body += '<div class="plat-mini-actions" style="margin-top:10px"><a href="/customers/merge?drop=%d">Merge into another company</a></div></div>' % cid
+        if hasattr(fo, 'crm_block'):
+            try:
+                body += fo.crm_block('company', cid, company_id=cid)
+            except Exception:
+                fo.app.logger.exception('crm company block failed')
         return page(co['name'], body, back='/customers', kicker='Customer',
                     actions='<a class="plat-btn plat-btn-ghost" href="/systems?client=%s">Installed systems</a>' % urllib.parse.quote(co['name']))
 
@@ -1014,7 +1019,13 @@ def register(fo):
             form = '<div class="plat-msg">%s</div>' % h(msg) + form
         co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
         conn.close()
-        return page(row['name'], form, back='/customers/%d' % row['company_id'],
+        extra = ''
+        if hasattr(fo, 'crm_block'):
+            try:
+                extra = fo.crm_block('contact', tid, company_id=row['company_id'], contact_id=tid)
+            except Exception:
+                fo.app.logger.exception('crm contact block failed')
+        return page(row['name'], form + extra, back='/customers/%d' % row['company_id'],
                     kicker=(co['name'] if co else 'Contact'))
 
     # ----- Sites -----
@@ -1375,7 +1386,14 @@ def register(fo):
         conn.close()
         if msg:
             form = '<div class="plat-msg">%s</div>' % h(msg) + form
-        return page(row['title'], form + extra, back='/opportunities',
+        crm = ''
+        if hasattr(fo, 'crm_block'):
+            try:
+                crm = fo.crm_block('opportunity', oid, company_id=row['company_id'],
+                                   contact_id=row['contact_id'], opportunity_id=oid)
+            except Exception:
+                fo.app.logger.exception('crm opportunity block failed')
+        return page(row['title'], form + extra + crm, back='/opportunities',
                     kicker=(co['name'] if co else 'Opportunity'), area='sales')
 
     # ----- Sales and Quote homes -----
@@ -1432,6 +1450,12 @@ def register(fo):
         open_n = sum(counts[k] for k, _ in OPP_STAGES if k not in ('won', 'lost'))
         open_amt = sum(totals[k] for k, _ in OPP_STAGES if k not in ('won', 'lost'))
         n_co = conn.execute('SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0').fetchone()[0]
+        crm_dash = ''
+        if hasattr(fo, 'crm_sales_extra'):
+            try:
+                crm_dash = fo.crm_sales_extra(conn) or ''
+            except Exception:
+                fo.app.logger.exception('crm sales dashboard failed')
         conn.close()
         body = (
             '<div class="plat-stats">'
@@ -1454,8 +1478,9 @@ def register(fo):
         else:
             body += '<div class="muted">No opportunities yet. When a lead comes in, add one here. A later step will add a full pipeline board, tasks and follow-ups.</div>'
         body += '</div>'
-        body += '<p class="muted">This is the Sales home. Customers are the same list you see in Ops and Quote.</p>'
-        actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a>'
+        body += crm_dash
+        body += '<p class="muted">This is the Sales home. Customers are the same list you see in Ops and Quote. Signing or accepting a quote moves that opportunity to Won.</p>'
+        actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a> <a class="plat-btn plat-btn-ghost" href="/tasks">Tasks</a>'
         return page('Sales', body, kicker='Field Ops', actions=actions, area='sales')
 
     @app.route('/quote')

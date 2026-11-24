@@ -505,15 +505,15 @@ def register(fo):
             '<button class="plat-btn plat-btn-ghost" type="submit">Search</button></form>' % h(q))
         body += (
             '<div class="plat-panel"><h2>Add item</h2>'
-            '<form class="plat-form" method="post">'
+            '<form class="plat-form cat-row" method="post">'
             '<input type="hidden" name="action" value="add">'
-            '<label>Name</label><input name="name" required maxlength="200">'
-            '<div class="plat-row"><div><label>SKU</label><input name="sku"></div>'
-            '<div><label>Unit</label><input name="unit" placeholder="each"></div>'
-            '<div><label>Category</label><input name="category"></div></div>'
-            '<div class="plat-row"><div><label>Cost $</label><input name="cost" type="number" step="0.01" min="0" value=""></div>'
-            '<div><label>Sell $</label><input name="sell" type="number" step="0.01" min="0" placeholder="cost + 25%"></div></div>'
-            '<button class="plat-btn plat-btn-gold" type="submit">Add to catalog</button></form></div>')
+            '<label>Name<input name="name" required maxlength="200" placeholder="Item name"></label>'
+            '<label>SKU<input name="sku" placeholder="SKU"></label>'
+            '<label>Unit<input name="unit" placeholder="each"></label>'
+            '<label>Category<input name="category" placeholder="Category"></label>'
+            '<label>Cost $<input name="cost" type="number" step="0.01" min="0"></label>'
+            '<label>Sell $<input name="sell" type="number" step="0.01" min="0" placeholder="cost + 25%"></label>'
+            '<button class="plat-btn plat-btn-gold" type="submit">Add</button></form></div>')
         body += (
             '<div class="plat-panel"><h2>Import CSV</h2>'
             '<p class="muted">Header row required. Columns: name, cost, sell (optional), sku, unit, category. If sell is blank, it is set to cost plus 25 percent.</p>'
@@ -521,27 +521,26 @@ def register(fo):
             '<input type="file" name="file" accept=".csv,text/csv" required>'
             '<button class="plat-btn plat-btn-ghost" type="submit">Import</button></form></div>')
         if rows:
-            body += '<div class="plat-panel"><h2>Items</h2>'
+            body += '<div class="plat-panel"><h2>Items</h2><div class="cat-list">'
             for r in rows:
                 body += (
-                    '<form class="plat-form" method="post" style="border-bottom:1px solid var(--line);padding:10px 0">'
+                    '<form class="plat-form cat-row" method="post">'
                     '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="%d">'
-                    '<div class="plat-row"><div style="flex:2"><label>Name</label><input name="name" value="%s" required></div>'
-                    '<div><label>SKU</label><input name="sku" value="%s"></div>'
-                    '<div><label>Unit</label><input name="unit" value="%s"></div></div>'
-                    '<div class="plat-row"><div><label>Category</label><input name="category" value="%s"></div>'
-                    '<div><label>Cost $</label><input name="cost" type="number" step="0.01" min="0" value="%s"></div>'
-                    '<div><label>Sell $</label><input name="sell" type="number" step="0.01" min="0" value="%s"></div></div>'
-                    '<button class="plat-btn plat-btn-ghost" type="submit">Save</button> ' % (
+                    '<label>Name<input name="name" value="%s" required></label>'
+                    '<label>SKU<input name="sku" value="%s"></label>'
+                    '<label>Unit<input name="unit" value="%s"></label>'
+                    '<label>Category<input name="category" value="%s"></label>'
+                    '<label>Cost $<input name="cost" type="number" step="0.01" min="0" value="%s"></label>'
+                    '<label>Sell $<input name="sell" type="number" step="0.01" min="0" value="%s"></label>'
+                    '<span class="cat-btns"><button class="plat-btn plat-btn-ghost" type="submit">Save</button>' % (
                         r['id'], h(r['name']), h(r['sku'] or ''), h(r['unit'] or ''), h(r['category'] or ''),
                         (('%g' % r['cost']) if r['cost'] else '0'), (('%g' % r['sell']) if r['sell'] else '0')))
                 if r['active']:
-                    body += ('<button class="plat-btn plat-btn-ghost" type="submit" name="action" value="off">Deactivate</button>'
-                             if True else '')
+                    body += '<button class="plat-btn plat-btn-ghost" type="submit" name="action" value="off">Off</button>'
                 else:
-                    body += '<span class="muted">Inactive</span> <button class="plat-btn plat-btn-ghost" type="submit" name="action" value="on">Reactivate</button>'
-                body += '</form>'
-            body += '</div>'
+                    body += '<button class="plat-btn plat-btn-ghost" type="submit" name="action" value="on">On</button>'
+                body += '</span></form>'
+            body += '</div></div>'
         else:
             body += '<div class="muted">The catalog is empty.</div>'
         actions = '<a class="plat-btn plat-btn-gold" href="/quotes/new">+ Quote</a>'
@@ -818,7 +817,7 @@ h1{font-size:1.4rem;margin:10px 0 4px}h2{font-size:1.1rem;color:#a49f2a;margin:2
 .btn{width:100%;background:#2e7d32;color:#fff;border:0;padding:18px;border-radius:10px;font-size:1.2rem;font-weight:700}
 .ok{background:#e8f5e9;border:2px solid #2e7d32;border-radius:12px;padding:14px;font-weight:700;font-size:1.1rem;color:#1b5e20}
 table{width:100%;border-collapse:collapse;table-layout:fixed}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th:nth-child(2),td:nth-child(2){width:18%;text-align:center}th:nth-child(3),td:nth-child(3){width:28%;text-align:right;white-space:nowrap}
-input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}
+input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}.addon-lab{display:flex;align-items:flex-start;gap:8px;margin:0}.addon-lab input{width:22px;height:22px;margin:0;flex:0 0 22px}.addon-lab span{min-width:0}.addon-tag{flex:0 0 auto;white-space:nowrap;font-style:normal;font-size:.75rem;background:#f3f0e0;color:#6b6a16;border-radius:6px;padding:1px 6px}
 .total{font-size:1.6rem;font-weight:800;margin-top:8px}</style></head><body>
 <img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block;margin:0 auto">
 <h1>{{ q.title }}</h1>
@@ -835,7 +834,7 @@ input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10p
 <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
 {% for ln in lines %}
 <tr>
-<td>{% if ln.optional %}<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="addon" value="{{ ln.idx }}" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()" style="width:22px;height:22px;margin:0"> {{ ln.name }} <span class="muted">(optional)</span></label>{% else %}{{ ln.name }}{% endif %}</td>
+<td>{% if ln.optional %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% endif %}</td>
 <td>{{ ln.qty_label }}</td>
 <td data-amt="{{ ln.line_total }}">{{ money(ln.line_total) }}</td>
 </tr>

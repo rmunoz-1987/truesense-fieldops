@@ -752,6 +752,11 @@ html[data-theme=dark] img,html[data-theme=dark] video,html[data-theme=dark] canv
 html[data-theme=dark] .leaflet-container img{filter:none}
 .plat-link-btn{background:none;border:0;color:var(--gold,#6b6a16);padding:0;font:inherit;font-weight:650;cursor:pointer;text-decoration:underline}
 .plat-mini-actions{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:6px}
+.cat-row{display:grid;grid-template-columns:minmax(8em,2fr) 6em 5em 7em 6em 6em auto;gap:6px 8px;align-items:end;margin:0 0 8px}
+.cat-row label{display:flex;flex-direction:column;gap:2px;font-size:.75rem;font-weight:650;color:var(--muted);margin:0}
+.cat-row input{width:100%;margin:0;padding:8px 10px}
+.cat-btns{display:flex;gap:6px;flex-wrap:wrap}
+@media (max-width:800px){.cat-row{grid-template-columns:1fr 1fr}}
 </style>"""
 
 
@@ -792,7 +797,7 @@ def shell_links(path, office):
     area=plat_area(path)
     more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
-        main=[('/sales','Home'),('/opportunities','Opportunities'),('/customers','Customers')]
+        main=[('/sales','Home'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
     elif area=='quote':
         main=[('/quote','Estimates'),('/catalog','Catalog'),('/customers','Customers')]
     else:
@@ -1011,6 +1016,13 @@ def api_today():
     qm=conn.execute('SELECT invoiced FROM qbo_monthly WHERE month=?',(mo,)).fetchone()
     msrc='Field Ops sales'
     if qm and qm['invoiced'] is not None and fnum(qm['invoiced'])>=month: month=fnum(qm['invoiced']); msrc='QuickBooks invoiced'
+    extra_fn=globals().get('crm_today_actions')
+    if callable(extra_fn):
+        try:
+            for a in (extra_fn(conn, ti) or []):
+                acts.append(a)
+        except Exception:
+            app.logger.exception('crm today actions failed')
     conn.close()
     hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
     return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
@@ -1413,6 +1425,8 @@ def init_db():
         _users.init_schema(conn)
         import fieldops_quote as _quote
         _quote.init_schema(conn)
+        import fieldops_crm as _crm
+        _crm.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -6651,6 +6665,8 @@ import fieldops_users
 fieldops_users.register(sys.modules[__name__])
 import fieldops_quote
 fieldops_quote.register(sys.modules[__name__])
+import fieldops_crm
+fieldops_crm.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
