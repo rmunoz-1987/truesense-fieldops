@@ -117,6 +117,11 @@ class QuoteTests(unittest.TestCase):
         html = r.get_data(as_text=True)
         self.assertIn('Front door access', html)
         self.assertIn('Video doorbell', html)
+        self.assertIn('License B31163401', html)
+        self.assertIn('I agree to the terms and conditions', html)
+        self.assertIn('8. Warranty:', html)
+        self.assertIn('Valid until', html)
+        self.assertIn('Deposit due to schedule', html)
         self.assertNotIn('Cost $', html)
         self.assertNotIn('$100', html)
         self.assertNotIn('Cost', html)
@@ -128,7 +133,7 @@ class QuoteTests(unittest.TestCase):
         conn.close()
         # accept with the add-on ticked
         r = self.c.post('/q/%s/accept' % token, data={
-            'name': 'Pat Client', 'signature': SIG, 'agree': '1', 'addon': '1',
+            'name': 'Pat Client', 'signature': SIG, 'agree': '1', 'agree_terms': '1', 'addon': '1',
         }, follow_redirects=True)
         self.assertEqual(r.status_code, 200)
         self.assertIn('Approved by Pat Client', r.get_data(as_text=True))

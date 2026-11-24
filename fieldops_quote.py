@@ -11,9 +11,104 @@ import csv
 import io
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta, date
+
 
 DEFAULT_MARKUP = 1.25
+QUOTE_TERMS_KEY = 'quote_terms'
+LICENSE_NO = 'B31163401'
+VALID_DAYS = 15
+DEFAULT_TERMS = """TERMS AND CONDITIONS
+1. Validity: This estimate is valid for 15 days from the estimate date.
+2. Payment: 50% deposit is due to schedule the work. The balance is due upon completion, net 15.
+3. Late payment: Past-due balances accrue a late fee of 1.5% per month or the maximum allowed by law, whichever is less.
+4. Lien rights: True Sense Security reserves all lien rights allowed by law.
+5. Additional work: Work outside this scope is billed at our then-current rates, available on request. Changes or differing site conditions are handled by written change order.
+6. Drywall: Installation may require cutting sheetrock. Drywall patch, texture and paint repairs are by others.
+7. Doors and hardware: Existing doors, frames and lock hardware must be in working order and properly aligned. Pre-existing door misalignment, knob, lever or lockset problems, frame damage, and any door adjustment or replacement hardware are not our responsibility and will be quoted separately.
+8. Warranty: True Sense Security warrants its labor for 1 year from the date of completion. Manufacturer warranties apply to equipment."""
+
+
+def _cols(conn, table):
+    return {r[1] for r in conn.execute('PRAGMA table_info(%s)' % table)}
+
+
+def _add_col(conn, table, coldef):
+    name = coldef.split()[0]
+    if name in _cols(conn, table):
+        return
+    conn.execute('ALTER TABLE %s ADD COLUMN %s' % (table, coldef))
+
+
+def seed_default_terms(conn):
+    row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
+    if not row or not (row['value'] or '').strip():
+        conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (QUOTE_TERMS_KEY, DEFAULT_TERMS))
+
+
+def get_default_terms(conn):
+    try:
+        row = conn.execute('SELECT value FROM settings WHERE key=?', (QUOTE_TERMS_KEY,)).fetchone()
+    except Exception:
+        return DEFAULT_TERMS
+    text = (row['value'] if row else '') or ''
+    return text.strip() or DEFAULT_TERMS
+
+
+def set_default_terms(conn, text):
+    text = (text or '').strip()
+    if not text:
+        return 'Terms cannot be empty.'
+    conn.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (QUOTE_TERMS_KEY, text))
+    return None
+
+
+def quote_number(row):
+    return 'Q-%d' % row['id']
+
+
+def estimate_date(row):
+    sent = ''
+    try:
+        sent = (row['sent_at'] or '') if 'sent_at' in row.keys() else ''
+    except Exception:
+        sent = ''
+    raw = sent or (row['created_at'] or '')
+    return (raw or '')[:10]
+
+
+def valid_until(row, days=VALID_DAYS):
+    d = estimate_date(row)
+    if not d:
+        return ''
+    try:
+        return (datetime.strptime(d, '%Y-%m-%d').date() + timedelta(days=days)).isoformat()
+    except ValueError:
+        return ''
+
+
+def deposit_of(total):
+    try:
+        return round(float(total or 0) * 0.5, 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def terms_of(row):
+    try:
+        text = (row['terms_text'] or '') if 'terms_text' in row.keys() else ''
+    except Exception:
+        text = ''
+    return (text or '').strip()
+
+
+def clarifications_of(row):
+    try:
+        text = (row['clarifications'] or '') if 'clarifications' in row.keys() else ''
+    except Exception:
+        text = ''
+    return (text or '').strip()
+
 
 
 def now_iso():
@@ -76,6 +171,12 @@ def init_schema(conn):
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS ix_quotes_opp ON quotes(opportunity_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS ix_quotes_token ON quotes(token)')
+    for col in ('terms_text TEXT', 'clarifications TEXT', 'sent_at TEXT', 'terms_agreed_at TEXT'):
+        _add_col(conn, 'quotes', col)
+    try:
+        seed_default_terms(conn)
+    except Exception:
+        pass
     conn.execute('CREATE INDEX IF NOT EXISTS ix_catalog_name ON catalog_items(name)')
 
 
@@ -225,19 +326,19 @@ def save_quote(conn, data, quote_id=None, created_by=''):
         if row['status'] == 'accepted':
             return None, 'This quote is accepted. Start a new version to change it.'
         conn.execute(
-            'UPDATE quotes SET title=?,notes=?,lines_json=?,total=?,updated_at=?,company_id=?,site_id=?,contact_id=?,opportunity_id=?,job_id=? WHERE id=?',
-            (title, (data.get('notes') or '')[:2000], json.dumps(frozen), tot, when,
+            'UPDATE quotes SET title=?,notes=?,clarifications=?,lines_json=?,total=?,updated_at=?,company_id=?,site_id=?,contact_id=?,opportunity_id=?,job_id=? WHERE id=?',
+            (title, (data.get('notes') or '')[:2000], (data.get('clarifications') or '')[:4000], json.dumps(frozen), tot, when,
              data.get('company_id'), data.get('site_id'), data.get('contact_id'),
              data.get('opportunity_id'), data.get('job_id') or row['job_id'], quote_id))
         return conn.execute('SELECT * FROM quotes WHERE id=?', (quote_id,)).fetchone(), None
     ver = next_version(conn, data.get('opportunity_id'), data.get('parent_id'))
     cur = conn.execute(
         '''INSERT INTO quotes (opportunity_id,job_id,company_id,site_id,contact_id,title,version,parent_id,
-           status,notes,lines_json,total,created_by,created_at,updated_at)
-           VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?)''',
+           status,notes,clarifications,lines_json,total,created_by,created_at,updated_at)
+           VALUES (?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?)''',
         (data.get('opportunity_id'), data.get('job_id'), data.get('company_id'), data.get('site_id'),
          data.get('contact_id'), title, ver, data.get('parent_id'),
-         (data.get('notes') or '')[:2000], json.dumps(frozen), tot, created_by, when, when))
+         (data.get('notes') or '')[:2000], (data.get('clarifications') or '')[:4000], json.dumps(frozen), tot, created_by, when, when))
     return conn.execute('SELECT * FROM quotes WHERE id=?', (cur.lastrowid,)).fetchone(), None
 
 
@@ -245,13 +346,24 @@ def ensure_token(conn, quote_id):
     row = conn.execute('SELECT * FROM quotes WHERE id=?', (quote_id,)).fetchone()
     if not row:
         return None
-    if row['token']:
-        return row
-    token = secrets.token_urlsafe(24)
     when = now_iso()
-    conn.execute(
-        "UPDATE quotes SET token=?, status=CASE WHEN status='draft' THEN 'sent' ELSE status END, updated_at=? WHERE id=?",
-        (token, when, quote_id))
+    sets, args = [], []
+    if not row['token']:
+        sets.append('token=?'); args.append(secrets.token_urlsafe(24))
+        sets.append("status=CASE WHEN status='draft' THEN 'sent' ELSE status END")
+    sent = ''
+    try:
+        sent = (row['sent_at'] or '') if 'sent_at' in row.keys() else ''
+    except Exception:
+        sent = ''
+    if not sent:
+        sets.append('sent_at=?'); args.append(when)
+    if not terms_of(row):
+        sets.append('terms_text=?'); args.append(get_default_terms(conn))
+    if sets:
+        sets.append('updated_at=?'); args.append(when)
+        args.append(quote_id)
+        conn.execute('UPDATE quotes SET ' + ', '.join(sets) + ' WHERE id=?', args)
     # Move opportunity to proposal when a link is made
     if row['opportunity_id'] and (row['status'] in (None, 'draft', 'sent')):
         conn.execute(
@@ -301,8 +413,8 @@ def accept_quote(conn, quote, selected, name, signature, ip, fo=None):
         kept.append(ln)
     conn.execute(
         '''UPDATE quotes SET status='accepted', accepted_at=?, accepted_name=?, signature=?, accepted_ip=?,
-           lines_json=?, total=?, updated_at=? WHERE id=?''',
-        (when, (name or '')[:100], signature or '', (ip or '')[:80], json.dumps(kept), totals['total'], when, quote['id']))
+           lines_json=?, total=?, terms_agreed_at=?, updated_at=? WHERE id=?''',
+        (when, (name or '')[:100], signature or '', (ip or '')[:80], json.dumps(kept), totals['total'], when, when, quote['id']))
     job_id = quote['job_id']
     # Create or update job
     title = quote['title']
@@ -588,11 +700,13 @@ def register(fo):
             '<input type="hidden" name="job_id" value="%s">'
             '<input type="hidden" name="parent_id" value="%s">'
             '<label>Notes (shown on the client link)</label><textarea name="notes" rows="3">%s</textarea>'
+            '<label>Clarifications (job-specific, shown above the terms)</label><textarea name="clarifications" rows="3" placeholder="Lift work billed extra. Fire alarm by others.">%s</textarea>'
             '<h2>Lines</h2><p class="muted">Sell prices are copied from the catalog and then frozen on this quote. Mark a line as an add-on if the client can tick it on or off. The one estimate still has a single total.</p>'
             '<div id="quote-lines">' % (
                 h(action), h(vals.get('title') or ''), co_opts,
                 h(str(vals.get('opportunity_id') or '')), h(str(vals.get('job_id') or '')),
-                h(str(vals.get('parent_id') or '')), h(vals.get('notes') or ''))
+                h(str(vals.get('parent_id') or '')), h(vals.get('notes') or ''),
+                h(vals.get('clarifications') or ''))
         )
         for i, ln in enumerate(lines):
             form += (
@@ -669,6 +783,7 @@ def register(fo):
             data = {
                 'title': request.form.get('title'),
                 'notes': request.form.get('notes'),
+                'clarifications': request.form.get('clarifications'),
                 'company_id': int(request.form.get('company_id') or 0) or None,
                 'opportunity_id': int(request.form.get('opportunity_id') or 0) or None,
                 'job_id': (request.form.get('job_id') or '').strip() or None,
@@ -715,6 +830,7 @@ def register(fo):
             data = {
                 'title': request.form.get('title'),
                 'notes': request.form.get('notes'),
+                'clarifications': request.form.get('clarifications'),
                 'company_id': int(request.form.get('company_id') or 0) or None,
                 'opportunity_id': int(request.form.get('opportunity_id') or 0) or None,
                 'job_id': (request.form.get('job_id') or '').strip() or None,
@@ -737,7 +853,7 @@ def register(fo):
                 'SELECT id,version,status,total,updated_at FROM quotes WHERE opportunity_id=? ORDER BY version',
                 (row['opportunity_id'],)).fetchall()
         vals = {
-            'title': row['title'], 'notes': row['notes'] or '',
+            'title': row['title'], 'notes': row['notes'] or '', 'clarifications': clarifications_of(row),
             'company_id': row['company_id'] or '', 'opportunity_id': row['opportunity_id'] or '',
             'job_id': row['job_id'] or '', 'lines': lines_of(row),
         }
@@ -768,7 +884,7 @@ def register(fo):
         if row['status'] != 'accepted':
             body += ('<form method="post"><input type="hidden" name="action" value="link">'
                      '<button class="plat-btn plat-btn-gold" type="submit">%s</button></form>' % (
-                         'Make client link' if not row['token'] else 'Refresh link status'))
+                         'Make client link' if not row['token'] else 'Refresh link status')) + (' <a class="plat-btn plat-btn-ghost" href="/quotes/%d/print" target="_blank">Print</a>' % qid)
         body += '</div>'
         body += '<div class="plat-panel"><h2>Versions</h2>'
         if versions:
@@ -795,7 +911,7 @@ def register(fo):
         if not row:
             conn.close(); return redirect('/quote')
         data = {
-            'title': row['title'], 'notes': row['notes'],
+            'title': row['title'], 'notes': row['notes'], 'clarifications': clarifications_of(row),
             'company_id': row['company_id'], 'opportunity_id': row['opportunity_id'],
             'job_id': row['job_id'], 'site_id': row['site_id'], 'contact_id': row['contact_id'],
             'parent_id': row['id'], 'lines': lines_of(row),
@@ -811,44 +927,112 @@ def register(fo):
 
     # Client-facing one estimate
     CLIENT_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>True Sense Security: {{ q.title }}</title>
-<style>*{box-sizing:border-box}body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:640px;margin:auto;padding:14px}
-h1{font-size:1.4rem;margin:10px 0 4px}h2{font-size:1.1rem;color:#a49f2a;margin:20px 0 6px;border-bottom:2px solid #a49f2a}
-.muted{color:#666}.card{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:14px;margin:10px 0}
-.btn{width:100%;background:#2e7d32;color:#fff;border:0;padding:18px;border-radius:10px;font-size:1.2rem;font-weight:700}
+<style>
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;overflow-wrap:anywhere;background:#f7f6ef;color:#1d1f14;margin:0;padding:0}
+.wrap{max-width:880px;margin:0 auto;padding:24px 20px 48px}
+@media(min-width:800px){.wrap{padding:36px 28px 64px}}
+.hdr{display:grid;grid-template-columns:auto 1fr auto;gap:16px 20px;align-items:center;border-bottom:2px solid #a49f2a;padding-bottom:16px;margin-bottom:20px}
+.hdr img{height:56px}
+@media(max-width:700px){
+  .hdr{grid-template-columns:1fr;justify-items:center;text-align:center}
+  .meta{text-align:center}
+  .hdr img{margin:0 auto}
+}
+.brand{font-weight:800;font-size:1.15rem;letter-spacing:-.02em}
+.muted{color:#6b6d60}
+.meta{text-align:right;font-size:.95rem;line-height:1.45}
+h1{font-size:1.7rem;margin:8px 0 4px;letter-spacing:-.03em}
+h2{font-size:1.05rem;color:#5f5b16;margin:22px 0 8px;border-bottom:2px solid #a49f2a;padding-bottom:4px}
+.card{background:#fff;border:1px solid #ecece6;border-radius:14px;padding:16px 18px;margin:10px 0}
+.pre{white-space:pre-wrap}
+.btn{width:100%;background:linear-gradient(145deg,#baa205,#7a7a12);color:#fff;border:0;padding:18px;border-radius:12px;font-size:1.15rem;font-weight:700;cursor:pointer}
 .ok{background:#e8f5e9;border:2px solid #2e7d32;border-radius:12px;padding:14px;font-weight:700;font-size:1.1rem;color:#1b5e20}
-table{width:100%;border-collapse:collapse;table-layout:fixed}td,th{border-bottom:1px solid #eee;padding:8px 6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}th:nth-child(2),td:nth-child(2){width:18%;text-align:center}th:nth-child(3),td:nth-child(3){width:28%;text-align:right;white-space:nowrap}
-input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}.addon-lab{display:flex;align-items:flex-start;gap:8px;margin:0}.addon-lab input{width:22px;height:22px;margin:0;flex:0 0 22px}.addon-lab span{min-width:0}.addon-tag{flex:0 0 auto;white-space:nowrap;font-style:normal;font-size:.75rem;background:#f3f0e0;color:#6b6a16;border-radius:6px;padding:1px 6px}
-.total{font-size:1.6rem;font-weight:800;margin-top:8px}</style></head><body>
-<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security" style="height:48px;display:block;margin:0 auto">
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+td,th{border-bottom:1px solid #eee;padding:10px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+th:nth-child(2),td:nth-child(2){width:16%;text-align:center}
+th:nth-child(3),td:nth-child(3){width:26%;text-align:right;white-space:nowrap}
+input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}
+.addon-lab{display:flex;align-items:flex-start;gap:8px;margin:0}
+.addon-lab input{width:22px;height:22px;margin:0;flex:0 0 22px}
+.addon-tag{flex:0 0 auto;white-space:nowrap;font-style:normal;font-size:.75rem;background:#f3f0e0;color:#6b6a16;border-radius:6px;padding:1px 6px}
+.totals{margin-top:12px}
+.total{font-size:1.7rem;font-weight:800}
+.deposit{font-size:1.05rem;margin-top:6px}
+.deposit b{font-size:1.2rem}
+details.terms{background:#fff;border:1px solid #ecece6;border-radius:14px;padding:0;margin:10px 0}
+details.terms summary{cursor:pointer;font-weight:700;padding:14px 18px;list-style:none}
+details.terms summary::-webkit-details-marker{display:none}
+details.terms summary:after{content:"Show";float:right;color:#6b6d60;font-weight:600;font-size:.9rem}
+details.terms[open] summary:after{content:"Hide"}
+.terms-body{padding:0 18px 16px;white-space:pre-wrap;line-height:1.5;font-size:.98rem}
+.check{display:flex;gap:10px;align-items:flex-start;margin:12px 0;font-size:1.05rem}
+.check input{width:28px;height:28px;margin:0;flex:0 0 28px}
+.foot{margin-top:28px;text-align:center;color:#6b6d60;font-size:.9rem}
+@media print{
+  body{background:#fff}
+  .noprint{display:none !important}
+  .wrap{max-width:none;padding:0}
+  details.terms{border:0}
+  details.terms summary:after{display:none}
+}
+</style></head><body>
+<div class="wrap">
+<header class="hdr">
+<img src="https://images.squarespace-cdn.com/content/v1/67d276f4d07a612e1c237f44/17e784b4-e371-44a7-a3b5-2c26669c7fc0/Logo.png?format=500w" alt="True Sense Security">
+<div><div class="brand">True Sense Security</div><div class="muted">License {{ license }}</div></div>
+<div class="meta">
+  <div><b>{{ number }}</b>{% if q.version %} &middot; Version {{ q.version }}{% endif %}</div>
+  <div>Date {{ est_date }}</div>
+  {% if valid_until %}<div>Valid until {{ valid_until }}</div>{% endif %}
+  <div class="noprint"><a href="/q/{{ q.token }}/print">Print</a></div>
+</div>
+</header>
 <h1>{{ q.title }}</h1>
-<div>{{ company }}</div>
-{% if q.notes %}<div class="card" style="white-space:pre-wrap">{{ q.notes }}</div>{% endif %}
+{% if company %}<div>Prepared for <b>{{ company }}</b></div>{% endif %}
+{% if q.notes %}<h2>Scope</h2><div class="card pre">{{ q.notes }}</div>{% endif %}
 {% if accepted %}
 <div class="ok">Approved by {{ q.accepted_name }} on {{ q.accepted_at[:10] }}. Total {{ money(q.total) }}.</div>
-{% else %}
-<form method="post" action="/q/{{ q.token }}/accept" onsubmit="return estSubmit()">
-<input type="hidden" name="signature" id="est-sig">
+{% endif %}
 <h2>Estimate</h2>
 <div class="card">
 <table>
 <tr><th>Item</th><th>Qty</th><th>Price</th></tr>
 {% for ln in lines %}
 <tr>
-<td>{% if ln.optional %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% endif %}</td>
+<td>{% if ln.optional and not accepted %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" form="est-form" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% if ln.optional %} <em class="addon-tag">Add-on</em>{% endif %}{% endif %}</td>
 <td>{{ ln.qty_label }}</td>
 <td data-amt="{{ ln.line_total }}">{{ money(ln.line_total) }}</td>
 </tr>
 {% endfor %}
 </table>
-<div class="total" id="tot">{{ money(totals.total) }}</div>
-<div class="muted" id="tot-note">This is the total for the items above{% if has_addons %}, including any optional add-ons you tick{% endif %}.</div>
+<div class="totals">
+  <div class="total" id="tot">{{ money(totals.total) }}</div>
+  <div class="deposit">Deposit due to schedule (50%): <b id="dep">{{ money(deposit) }}</b></div>
+  <div class="muted" id="tot-note">This is the total for the items above{% if has_addons and not accepted %}, including any optional add-ons you tick{% endif %}. The balance is due upon completion, net 15.</div>
 </div>
+</div>
+{% if clarifications %}
+<h2>Clarifications</h2>
+<div class="card pre">{{ clarifications }}</div>
+{% endif %}
+{% if terms %}
+<h2>Terms and conditions</h2>
+<details class="terms" open>
+<summary>Terms and conditions</summary>
+<div class="terms-body">{{ terms }}</div>
+</details>
+{% endif %}
+{% if not accepted %}
+<form method="post" action="/q/{{ q.token }}/accept" id="est-form" class="noprint" onsubmit="return estSubmit()">
+<input type="hidden" name="signature" id="est-sig">
 <h2>Sign to approve</h2>
 <input type="text" name="name" placeholder="Your full name" required maxlength="100">
 <div class="muted">Sign with your finger below</div>
 <canvas id="est-pad" width="600" height="200" style="width:100%;height:160px;border:2px solid #ccc;border-radius:10px;background:#fff;touch-action:none"></canvas>
-<button type="button" style="background:#eee;color:#111;border:0;border-radius:10px;padding:12px;width:100%;font-size:1rem" onclick="estClear()">Clear signature</button>
-<label style="display:flex;gap:10px;align-items:center;margin:12px 0;font-size:1.05rem"><input type="checkbox" name="agree" value="1" required style="width:28px;height:28px;margin:0"> I approve this estimate and price.</label>
+<button type="button" class="noprint" style="background:#eee;color:#111;border:0;border-radius:10px;padding:12px;width:100%;font-size:1rem;margin-top:8px" onclick="estClear()">Clear signature</button>
+{% if terms %}<label class="check"><input type="checkbox" name="agree_terms" value="1" required> I agree to the terms and conditions.</label>{% endif %}
+<label class="check"><input type="checkbox" name="agree" value="1" required> I approve this estimate and price.</label>
 <button class="btn" type="submit">Approve and Sign</button>
 </form>
 <script>
@@ -859,11 +1043,14 @@ c.addEventListener("pointerdown",function(e){on=true;var q=p(e);x.beginPath();x.
 c.addEventListener("pointermove",function(e){if(!on)return;var q=p(e);x.lineTo(q[0],q[1]);x.stroke();estDrawn=true});
 c.addEventListener("pointerup",function(){on=false})})();
 function estClear(){var c=document.getElementById("est-pad");c.getContext("2d").clearRect(0,0,c.width,c.height);estDrawn=false}
-function estSubmit(){if(!estDrawn){alert("Please sign in the box");return false}document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
-function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+function estSubmit(){var terms=document.querySelector("input[name=agree_terms]");if(terms&&!terms.checked){alert("Please agree to the terms and conditions");return false}if(!estDrawn){alert("Please sign in the box");return false}document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
+function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var d=t*0.5;document.getElementById("dep").textContent="$"+d.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
 </script>
 {% endif %}
-<div class="muted" style="margin-top:24px;text-align:center">True Sense Security</div></body></html>'''
+<div class="foot">True Sense Security &middot; License {{ license }}</div>
+</div>
+</body></html>
+'''
 
     @app.route('/q/<token>')
     def quote_client(token):
@@ -878,6 +1065,10 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         if row['company_id']:
             co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
             company = co['name'] if co else ''
+        if terms_of(row):
+            terms = terms_of(row)
+        else:
+            terms = get_default_terms(conn)
         conn.close()
         lines = []
         for i, ln in enumerate(lines_of(row)):
@@ -891,10 +1082,16 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             selected = set(range(len(lines)))
         totals = quote_totals(lines, selected if row['status'] == 'accepted' else set())
         from flask import render_template_string
+        clar = clarifications_of(row)
+        est = estimate_date(row)
+        until = valid_until(row)
+        dep = deposit_of(totals['total'])
         return render_template_string(
             CLIENT_HTML, q=row, company=company, lines=lines, money=money,
             totals=totals, accepted=row['status'] == 'accepted',
-            selected=selected, has_addons=any(ln.get('optional') for ln in lines))
+            selected=selected, has_addons=any(ln.get('optional') for ln in lines),
+            terms=terms, clarifications=clar, est_date=est, valid_until=until,
+            deposit=dep, number=quote_number(row), license=LICENSE_NO)
 
     @app.route('/q/<token>/accept', methods=['POST'])
     def quote_client_accept(token):
@@ -908,6 +1105,8 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         sig = request.form.get('signature') or ''
         if not name or not sig.startswith('data:image/png;base64,'):
             conn.close(); return redirect('/q/' + token)
+        if (terms_of(row) or get_default_terms(conn)) and request.form.get('agree_terms') != '1':
+            conn.close(); return redirect('/q/' + token)
         selected = []
         for v in request.form.getlist('addon'):
             try:
@@ -918,6 +1117,65 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         accept_quote(conn, row, selected, name, sig, ip, fo=fo)
         conn.commit(); conn.close()
         return redirect('/q/' + token)
+
+    def _render_quote_client(row, company, print_mode=False):
+        from flask import render_template_string, Response
+        lines = []
+        for i, ln in enumerate(lines_of(row)):
+            item = dict(ln); item['idx'] = i
+            qv = item.get('qty') or 0
+            item['qty_label'] = ('%g' % qv)
+            lines.append(item)
+        selected = set(range(len(lines))) if row['status'] == 'accepted' else set()
+        totals = quote_totals(lines, selected if row['status'] == 'accepted' else set())
+        terms = terms_of(row) or ''
+        if not terms:
+            conn = fo.get_db(); terms = get_default_terms(conn); conn.close()
+        html = render_template_string(
+            CLIENT_HTML, q=row, company=company, lines=lines, money=money,
+            totals=totals, accepted=row['status'] == 'accepted',
+            selected=selected, has_addons=any(ln.get('optional') for ln in lines),
+            terms=terms, clarifications=clarifications_of(row),
+            est_date=estimate_date(row), valid_until=valid_until(row),
+            deposit=deposit_of(totals['total']), number=quote_number(row),
+            license=LICENSE_NO)
+        if print_mode:
+            html = html.replace('</style>', '@media screen{.print-hint{display:block;text-align:center;margin:8px 0 16px}}@media print{.print-hint{display:none}}</style>')
+            html = html.replace('<div class="wrap">', '<div class="wrap"><p class="print-hint noprint"><button class="btn" type="button" onclick="window.print()" style="max-width:280px;margin:0 auto;display:block">Print this estimate</button></p>')
+        return html
+
+    @app.route('/q/<token>/print')
+    def quote_client_print(token):
+        conn = fo.get_db()
+        row = conn.execute('SELECT * FROM quotes WHERE token=?', (token,)).fetchone()
+        if not row:
+            conn.close(); return ('This link is not valid.', 404)
+        company = ''
+        if row['company_id']:
+            co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
+            company = co['name'] if co else ''
+        if not terms_of(row):
+            # do not mutate; print the current default for older quotes
+            pass
+        terms_fallback = get_default_terms(conn)
+        conn.close()
+        # _render will refetch default if needed
+        return _render_quote_client(row, company, print_mode=True)
+
+    @app.route('/quotes/<int:qid>/print')
+    def quote_office_print(qid):
+        if not fo.is_office():
+            return redirect('/')
+        conn = fo.get_db()
+        row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        if not row:
+            conn.close(); return redirect('/quote')
+        company = ''
+        if row['company_id']:
+            co = conn.execute('SELECT name FROM companies WHERE id=?', (row['company_id'],)).fetchone()
+            company = co['name'] if co else ''
+        conn.close()
+        return _render_quote_client(row, company, print_mode=True)
 
     # Enhance /quote home footer and prepend quotes. We wrap after platform registered.
     # Patch the existing muted sentence by providing extra + actions via a before-render hook already set.
@@ -972,3 +1230,31 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
 
     # Replace the platform /quote view
     app.view_functions['quote_home'] = quote_home_rich
+
+    def quote_settings_html():
+        if not fo.is_office():
+            return ''
+        conn = fo.get_db()
+        text = get_default_terms(conn)
+        conn.close()
+        return (
+            '<form method="post" class="plat-form" style="margin:18px 0">'
+            '<input type="hidden" name="action" value="save_quote_terms">'
+            '<h2>Estimate terms and conditions</h2>'
+            '<p class="muted">This is the True Sense default for every estimate. It is copied onto a quote when you make the client link, so later edits here do not change a link that is already out. Nothing is sent.</p>'
+            '<textarea name="quote_terms" rows="16" style="width:100%">' + fo.h(text) + '</textarea>'
+            '<button class="plat-btn plat-btn-gold" type="submit" style="margin-top:10px">Save terms</button></form>'
+        )
+
+    def quote_settings_post():
+        if request.form.get('action') != 'save_quote_terms':
+            return None
+        conn = fo.get_db()
+        err = set_default_terms(conn, request.form.get('quote_terms'))
+        if err:
+            conn.close(); return err
+        conn.commit(); conn.close()
+        return 'Terms saved. New client links will use this text. Already-sent quotes stay as they were.'
+
+    fo.quote_settings_html = quote_settings_html
+    fo.quote_settings_post = quote_settings_post

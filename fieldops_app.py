@@ -921,10 +921,25 @@ def me_settings_body():
     return ('<div class="fo-card" style="margin-bottom:12px"><b style="margin:0">%s</b><small>%s</small></div>'%(h(me()),'Office' if is_office() else 'Sub')+
             '<button id="fo-theme" class="big-btn gray" onclick="foTheme(document.documentElement.getAttribute(\'data-theme\')===\'dark\'?\'light\':\'dark\')">%s</button>'%('Dark mode is on' if dark else 'Dark mode is off'))
 
-@app.route('/settings')
+@app.route('/settings', methods=['GET','POST'])
 def settings_page():
     if not is_office(): return redirect('/me')
-    return ops_page('Settings', me_settings_body()+'<button class="big-btn gray" onclick="foLogout()">Log out</button>', back='/more')
+    msg=''
+    post=globals().get('quote_settings_post')
+    if request.method=='POST' and callable(post):
+        try:
+            msg=post() or ''
+        except Exception:
+            app.logger.exception('quote settings failed')
+            msg='Could not save terms.'
+    extra=''
+    html_fn=globals().get('quote_settings_html')
+    if callable(html_fn):
+        try:
+            extra=html_fn() or ''
+        except Exception:
+            app.logger.exception('quote settings html failed')
+    return ops_page('Settings', me_settings_body()+extra+'<button class="big-btn gray" onclick="foLogout()">Log out</button>', back='/more', msg=msg)
 
 @app.route('/me')
 def me_page():
