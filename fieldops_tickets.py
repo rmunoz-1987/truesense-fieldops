@@ -548,6 +548,12 @@ def register(fo):
                 _, err = assign_and_schedule(conn, tid, request.form.get('sub'), request.form.get('day'),
                                              request.form.get('start'), request.form.get('end'), fo.me())
                 msg = err or 'Saved.'
+                if not err:
+                    cw = getattr(fo, 'compliance_warning', None)
+                    if callable(cw):
+                        warn = cw(conn, request.form.get('sub'))
+                        if warn:
+                            msg = warn
             elif a == 'note':
                 body = (request.form.get('body') or '').strip()
                 if body:

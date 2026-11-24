@@ -803,7 +803,7 @@ def shell_tabs(path, office):
 
 def shell_links(path, office):
     area=plat_area(path)
-    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/tickets','Service tickets'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
+    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/tickets','Service tickets'),('/compliance','Sub compliance'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
         main=[('/sales','Home'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
     elif area=='quote':
@@ -913,7 +913,7 @@ def money_page():
 def more_page():
     if not is_office(): return redirect('/')
     return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
-        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/tickets','Service tickets','Call and portal intake queue','alert'),('/checklists','Checklists','Job templates','check'),
+        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/tickets','Service tickets','Call and portal intake queue','alert'),('/compliance','Sub compliance','COI, W-9, agreements and 1099 totals','doc'),('/checklists','Checklists','Job templates','check'),
         ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Crew board, day week fortnight and month','cal'),('/calendar','Calendar','Month view of the same board','cal'),('/costing','Job costing','Sale, labor, materials and profit','money'),('/timesheets','Timesheets','Weekly approval and sub-pay CSV','clock'),('/change-orders','Change orders','Priced extras the client can accept','note'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
 
 def me_settings_body():
@@ -1001,7 +1001,8 @@ def api_today():
     ready=[r for r in conn.execute("SELECT d.job_id,j.customer FROM invoice_drafts d JOIN jobs j ON j.id=d.job_id WHERE d.status='ready_for_review'") if r['job_id'] not in queued]
     follow=conn.execute("SELECT COUNT(*) FROM followups WHERE done=0 AND due<=?",(ti,)).fetchone()[0]
     texts=conn.execute("SELECT COUNT(*) FROM msg_drafts WHERE status='pending'").fetchone()[0]
-    docs=doc_alerts(conn); low=low_stock(conn)
+    alerts_fn=globals().get('compliance_alerts')
+    docs=alerts_fn(conn) if callable(alerts_fn) else doc_alerts(conn); low=low_stock(conn)
     qq=sum(1 for v in queued.values() if v=='queued'); qerr=sum(1 for v in queued.values() if v=='error')
     def one(rows, label):
         return {'href':'/?job='+urllib.parse.quote(rows[0]['id']),'btn':'Open'} if len(rows)==1 else {'href':'/jobs?f='+label,'btn':'Show'}
@@ -1014,7 +1015,7 @@ def api_today():
     add(len(ready),'Ready to invoice',', '.join((r['customer'] or r['job_id']) for r in ready[:3]),'money','/qbo','Export')
     add(follow,'Follow-ups due','Calls to make today','bell','/jobs?f=follow','Call list')
     add(texts,'Texts to review','Drafts waiting for your OK. Nothing sends on its own.','note','/jobs?f=texts','Review')
-    add(len(docs),'Sub docs due',', '.join('%s %s'%(d['sub'],'missing' if d['missing'] else ('expired' if d['expired'] else 'expires '+d['expires'])) for d in docs[:3]),'doc','/techs','Check')
+    add(len(docs),'Sub compliance',', '.join('%s %s %s'%(d['sub'],d.get('kind') or 'doc','missing' if d.get('missing') else ('expired' if d.get('expired') else ('expires '+(d.get('expires') or '')))) for d in docs[:3]),'doc','/compliance' if callable(alerts_fn) else '/techs','Check','red' if any(d.get('expired') or d.get('missing') for d in docs) else '')
     mrn={r['status']:r['n'] for r in conn.execute("SELECT status,COUNT(*) n FROM material_requests WHERE status IN ('submitted','waiting_roland') GROUP BY status")}
     add(sum(mrn.values()),'Materials to order',', '.join(x for x in ('%d new'%mrn['submitted'] if mrn.get('submitted') else '','%d waiting on you'%mrn['waiting_roland'] if mrn.get('waiting_roland') else '') if x),'cart','/orders','Order')
     add(len(low),'Low stock',', '.join(r['name'] for r in low[:3]),'box','/stock','Restock')
@@ -6749,6 +6750,8 @@ import fieldops_ops
 fieldops_ops.register(sys.modules[__name__])
 import fieldops_tickets
 fieldops_tickets.register(sys.modules[__name__])
+import fieldops_compliance
+fieldops_compliance.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

@@ -597,8 +597,16 @@ const SKED = %(json)s;
             job, err = place(conn, tid, d.get('day'), d.get('sub'), d.get('start') or '08:00', d.get('end') or '16:00', fo.me())
             if err:
                 conn.close(); return jsonify({'error': err}),400
-            conn.commit(); conn.close()
-            return jsonify({'ok': True, 'job_id': job['id'] if job else None})
+            conn.commit()
+            warn = None
+            cw = getattr(fo, 'compliance_warning', None)
+            if callable(cw):
+                warn = cw(conn, d.get('sub'))
+            conn.close()
+            out = {'ok': True, 'job_id': job['id'] if job else None}
+            if warn:
+                out['warning'] = warn
+            return jsonify(out)
         slot_id = d.get('id') or None
         if slot_id:
             try:
@@ -614,6 +622,10 @@ const SKED = %(json)s;
             conn.close(); return jsonify({'error': err}), 400
         # notify like the old schedule API
         old = conn.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+        warn = None
+        cw = getattr(fo, 'compliance_warning', None)
+        if callable(cw):
+            warn = cw(conn, d.get('sub') or (old['tech'] if old else ''))
         conn.commit(); conn.close()
         if old:
             try:
@@ -621,7 +633,10 @@ const SKED = %(json)s;
                                'Now ' + fo.nice_day(d.get('day')), '/?job=' + job_id)
             except Exception:
                 pass
-        return jsonify({'ok': True, 'slot': dict(row)})
+        out = {'ok': True, 'slot': dict(row)}
+        if warn:
+            out['warning'] = warn
+        return jsonify(out)
 
     # ---------- Change orders ----------
     def lines_from_form():
@@ -1291,8 +1306,9 @@ SCHED_JS = r'''
   async function post(body){
     show('Saving...');
     const r=await fetch('/api/schedule/slots',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(r.ok) location.reload();
-    else {const d=await r.json().catch(()=>({})); alert(d.error||'Could not save'); hide()}
+    const d=await r.json().catch(()=>({}));
+    if(r.ok){ if(d.warning) alert(d.warning); location.reload(); }
+    else { alert(d.error||'Could not save'); hide()}
   }
   function place(day, sub, start, end){
     if(!sel) return;
