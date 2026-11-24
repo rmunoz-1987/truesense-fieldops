@@ -771,9 +771,13 @@ html[data-theme=dark] .leaflet-container img{filter:none}
 .fo-tabs{display:none}
 .fo-search-btn{display:none}
 .fo-phone-only{display:none}
-.fo-more-sheet .fo-more-list a{display:flex;align-items:center;gap:12px;padding:14px 8px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:650;min-height:52px}
-.fo-more-sheet .fo-more-list a:last-child{border-bottom:0}
-.fo-more-sheet .fo-more-list a svg{flex:0 0 22px;color:var(--brand)}
+.fo-more-back{display:none}
+.fo-more-group{margin:4px 0 18px}
+.fo-more-group h2{font-size:.78rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);border:0;margin:16px 0 8px}
+.fo-more-rows{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow)}
+.fo-more-row{display:flex;align-items:center;gap:14px;padding:16px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:650;min-height:56px;font-size:1.05rem}
+.fo-more-row:last-child{border-bottom:0}
+.fo-more-row svg{flex:0 0 24px;width:24px;height:24px;color:var(--brand)}
 @media print{
   .fo-tabs,.fo-top,.fo-veil,.fo-sheet{display:none!important}
 }
@@ -795,6 +799,8 @@ html[data-theme=dark] .leaflet-container img{filter:none}
   .fo-tabs a.on span.fo-dot{background:var(--gold)}
   .fo-desk-only{display:none!important}
   .fo-phone-only{display:block}
+  html.fo-shell .fo-more-back{display:inline-flex;align-items:center;gap:8px;margin:0 0 12px;min-height:44px;padding:10px 16px;border-radius:12px;background:#fff;border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:700;width:auto;box-sizing:border-box}
+  html.fo-shell:has(.fo-more-back) body>a.fo-back{display:none!important}
   .fo-phone-primary-wrap{margin:0 0 14px}
   .fo-phone-primary-wrap .big-btn{display:flex;width:100%;box-sizing:border-box;text-decoration:none;justify-content:center}
   #today .fo-prog,#today .fo-kpis,#today .fo-desk-today{display:none!important}
@@ -833,21 +839,57 @@ def initials_of(name):
     if len(parts)==1: return parts[0][:2].upper()
     return (parts[0][0]+parts[-1][0]).upper()
 
-def more_tool_items(office=True):
-    """Links for the More page and the phone More sheet. No money items for subs."""
+def more_tool_groups(office=True):
+    """Grouped More links as icon + label rows. No money items for subs."""
     if not office:
-        return [('/floor-plans','Floor Plans','plan'),('/me','My settings','me'),('/agreement','Agreement','pen'),('/my-schedule','My schedule','cal')]
-    items=[
-        ('/sales','Sales','chart'),('/quote','Quote','note'),('/floor-plans','Floor Plans','plan'),
-        ('/schedule','Schedule','cal'),('/plans','Service Plans','repeat'),('/revenue','Revenue','chart'),
-        ('/customers','Customers','clients'),('/history','Job History','clock'),
-        ('/techs','Subs','users'),('/stock','Stock','box'),('/orders','Orders','cart'),('/to-order','To Order','cart'),
-        ('/equipment','Equipment','shield'),('/tickets','Service tickets','alert'),('/compliance','Sub compliance','doc'),
-        ('/checklists','Checklists','check'),('/safety','Safety','alert'),('/agreement','Agreements','pen'),
-        ('/users','Users','users'),('/calendar','Calendar','cal'),('/costing','Job costing','money'),
-        ('/timesheets','Timesheets','clock'),('/change-orders','Change orders','note'),('/settings','Settings','gear'),
+        return [('For you', [('/floor-plans','Floor Plans','plan'),('/me','My settings','me'),('/agreement','Agreement','pen'),('/my-schedule','My schedule','cal')])]
+    return [
+        ('Work', [
+            ('/schedule','Schedule','cal'),('/floor-plans','Floor Plans','plan'),('/plans','Service Plans','repeat'),
+            ('/calendar','Calendar','cal'),('/history','Job History','clock'),('/tickets','Service tickets','alert'),
+            ('/equipment','Equipment','shield'),('/stock','Stock','box'),('/orders','Orders','cart'),
+            ('/to-order','To Order','cart'),('/checklists','Checklists','check'),('/safety','Safety','alert'),
+        ]),
+        ('Sales', [
+            ('/sales','Sales','chart'),('/quote','Quote','note'),('/change-orders','Change orders','note'),
+        ]),
+        ('Office', [
+            ('/revenue','Revenue','chart'),('/reports','Reports','money'),('/qbo','QuickBooks','qbo'),
+            ('/timelog','Time Log','clock'),('/techs','Subs','users'),('/compliance','Compliance','doc'),
+            ('/users','Users','users'),('/agreement','Agreements','pen'),('/costing','Job costing','money'),
+            ('/timesheets','Timesheets','clock'),('/settings','Settings','gear'),
+        ]),
     ]
+
+def more_tool_items(office=True):
+    items=[]
+    for _g, rows in more_tool_groups(office):
+        items.extend(rows)
     return items
+
+def more_path_prefixes(office=True):
+    prefs=['/more']
+    for u,_,_ in more_tool_items(office):
+        if u not in prefs:
+            prefs.append(u)
+    for extra in ('/quotes','/catalog','/money','/opportunities','/tasks'):
+        if extra not in prefs:
+            prefs.append(extra)
+    return prefs
+
+def path_in_prefixes(path, prefixes):
+    for p_ in prefixes:
+        if (p_=='/' and path=='/') or (p_!='/' and (path==p_ or path.startswith(p_.rstrip('/')+'/'))):
+            return True
+    return False
+
+def more_back_html(path, office):
+    """Phone-only Back to More on every page opened from the More tab."""
+    if not office or path=='/more' or path.startswith('/more/'):
+        return ''
+    if not path_in_prefixes(path, more_path_prefixes(True)):
+        return ''
+    return '<a class="fo-more-back" href="/more">&larr; Back</a>'
 
 def phone_tab_items(path, office):
     """At most four phone tabs. Office: Today, Jobs, Customers, More. Subs: My Jobs, Floor Plans, Help."""
@@ -855,38 +897,34 @@ def phone_tab_items(path, office):
         tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/customers','Customers','clients'),('/more','More','more')]
         groups={
             'today':('/',),
-            'jobs':('/jobs','/history','/new-job','/calendar'),
+            'jobs':('/jobs','/new-job'),
             'clients':('/customers','/clients','/contacts','/sites','/systems'),
-            'more':('/more','/sales','/quote','/quotes','/catalog','/schedule','/floor-plans','/plans','/revenue','/money','/opportunities','/tasks','/stock','/orders','/tickets','/compliance','/equipment','/techs','/users','/checklists','/safety','/agreement','/to-order','/costing','/timesheets','/change-orders','/reports','/timelog','/settings','/history'),
+            'more': tuple(more_path_prefixes(True)),
         }
     else:
         tabs=[('/','My Jobs','jobs'),('/floor-plans','Floor Plans','plan'),('/help','Help','help')]
         groups={'jobs':('/', '/job/'),'plan':('/floor-plans',),'help':('/help',)}
     active=None
     for u,lab,key in tabs:
-        for p_ in groups.get(key,()):
-            if (p_=='/' and path=='/') or (p_!='/' and (path==p_ or path.startswith(p_.rstrip('/')+'/'))):
-                active=key
-                break
-        if active:
+        if path_in_prefixes(path, groups.get(key,())):
+            active=key
             break
     html='<nav class="fo-tabs fo-sh" aria-label="Main">'
     for u,lab,k in tabs:
         is_on = (k==active)
-        extra=''
-        if k=='more':
-            extra=' onclick="if(window.matchMedia&&window.matchMedia(\'(max-width: 767px)\').matches){foMoreSheet(true);return false}"'
-        html+='<a href="%s" class="%s"%s%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(
-            h(u),'on' if is_on else '',' aria-current="page"' if is_on else '', extra, ICONS[k], h(lab))
+        html+='<a href="%s" class="%s"%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(
+            h(u),'on' if is_on else '',' aria-current="page"' if is_on else '', ICONS[k], h(lab))
     html+='</nav>'
     return html
 
-def more_sheet_html(office):
-    items=more_tool_items(office)
-    body=''.join('<a href="%s">%s<span>%s</span></a>'%(h(u),ICONS.get(i,''),h(lab)) for u,lab,i in items)
-    return ('<div class="fo-veil fo-sh" id="fo-more-veil" onclick="foMoreSheet(false)"></div>'
-            '<div class="fo-sheet fo-sh fo-more-sheet" id="fo-more-sheet" role="dialog" aria-label="More">'
-            '<div class="fo-grab"></div><h3>More</h3><div class="fo-more-list">%s</div></div>'%body)
+def more_list_html(office=True):
+    parts=[]
+    for group, rows in more_tool_groups(office):
+        parts.append('<section class="fo-more-group"><h2>%s</h2><div class="fo-more-rows">'%h(group))
+        for u,lab,ico in rows:
+            parts.append('<a class="fo-more-row" href="%s">%s<span>%s</span></a>'%(h(u),ICONS.get(ico,''),h(lab)))
+        parts.append('</div></section>')
+    return ''.join(parts)
 
 def shell_tabs(path, office):
 
@@ -940,11 +978,11 @@ def shell_html(path, office, q=''):
                '<button type="button" onclick="foLogout()">Log out</button>'
                '</div></details>'%(h(who), h(initials_of(who)), '<a href="/settings">Office settings</a>' if office else ''))
     tabs=phone_tab_items(path, office)
-    more=more_sheet_html(office)
+    back=more_back_html(path, office)
     if not office:
         top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
              +search_btn+search_form+'<div class="fo-tools">'+user_menu+'</div></header>')
-        return top, tabs+more
+        return top, tabs
     area=plat_area(path)
     switch=''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if area==k else '',lab) for k,u,lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')))
     links=shell_links(path, office)
@@ -962,7 +1000,7 @@ def shell_html(path, office, q=''):
            ('/sales','Sales','chart'),('/quote','Quote','note'),('/schedule','Schedule','cal')]
     sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
            ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('t=')[1]) if '?t=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
-    return top+seg, tabs+sheet+more
+    return top+seg+back, tabs+sheet
 
 SHELL_JS = """<script id="shell-js">
 function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);if(v)v.classList.toggle('on',on)}
@@ -1029,18 +1067,7 @@ def money_page():
 @app.route('/more')
 def more_page():
     if not is_office(): return redirect('/')
-    blurbs={
-        '/sales':'Pipeline and follow-ups','/quote':'Estimates and catalog','/floor-plans':'Job and survey plans',
-        '/schedule':'Crew board, day week fortnight and month','/plans':'Recurring visits','/revenue':'Sales vs QuickBooks',
-        '/customers':'Companies and sites','/history':'Completed jobs','/techs':'Rates, docs and jobs',
-        '/stock':'Shop and truck parts','/orders':'Material requests to ADI','/to-order':'Parts to buy',
-        '/equipment':'Devices by site','/tickets':'Call and portal intake queue','/compliance':'COI, W-9, agreements and 1099 totals',
-        '/checklists':'Job templates','/safety':'Daily checks and talks','/agreement':'Sub agreement and signatures',
-        '/users':'Office and field logins','/calendar':'Month view of the same board','/costing':'Sale, labor, materials and profit',
-        '/timesheets':'Weekly approval and sub-pay CSV','/change-orders':'Priced extras the client can accept','/settings':'Dark mode and account',
-    }
-    items=[(u,lab,blurbs.get(u,lab),ico) for u,lab,ico in more_tool_items(True)]
-    return ops_page('More', card_grid(items), back=False)
+    return ops_page('More', more_list_html(True), back=False)
 
 def me_settings_body():
     dark=theme_of(me())=='dark'

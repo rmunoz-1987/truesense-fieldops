@@ -46,9 +46,19 @@ class PhoneNavTests(unittest.TestCase):
         self.assertIn('fo-search-btn', html)
         # Schedule, Sales, Quote, Floor Plans, Service Plans and Revenue live in More
         more = self.c.get('/more').get_data(as_text=True)
-        for needle in ('Schedule', 'Sales', 'Quote', 'Floor Plans', 'Service Plans', 'Revenue'):
+        for needle in ('Schedule', 'Sales', 'Quote', 'Floor Plans', 'Service Plans', 'Revenue', 'Reports', 'QuickBooks'):
             self.assertIn(needle, more)
-        self.assertIn('id="fo-more-sheet"', html)
+        self.assertIn('>Work</h2>', more)
+        self.assertIn('>Sales</h2>', more)
+        self.assertIn('>Office</h2>', more)
+        self.assertIn('class="fo-more-row"', more)
+        # More is a real page with the tab bar, not a sheet that covers it
+        self.assertNotIn('id="fo-more-sheet"', html)
+        self.assertNotIn('id="fo-more-sheet"', more)
+        self.assertNotIn('foMoreSheet(true)', html)
+        more_tabs = re.search(r'<nav class="fo-tabs[^"]*" aria-label="Main">(.*?)</nav>', more, re.S).group(1)
+        self.assertRegex(more_tabs, r'href="/more"[^>]*class="on"')
+        self.assertNotIn('class="fo-more-back"', more)
         self.assertIn('New job', html)
         self.assertIn('Pending surveys', html)
         self.assertIn('fo-desk-today', html)
@@ -92,6 +102,44 @@ class PhoneNavTests(unittest.TestCase):
         self.assertTrue(any(s.startswith('/p/') for s in fo.SHELL_SKIP))
         html = self.c.get('/login').get_data(as_text=True)
         self.assertNotIn('class="fo-tabs', html)
+
+    def _assert_tabs(self, path, more_on=False, labels=None):
+        r = self.c.get(path, follow_redirects=True)
+        self.assertEqual(r.status_code, 200, path)
+        html = r.get_data(as_text=True)
+        self.assertIn('class="fo-tabs', html, path)
+        block = re.search(r'<nav class="fo-tabs[^"]*" aria-label="Main">(.*?)</nav>', html, re.S)
+        self.assertIsNotNone(block, 'missing fo-tabs on %s' % path)
+        body = block.group(1)
+        if labels is not None:
+            self.assertEqual(re.findall(r'<span>([^<]+)</span>', body), labels, path)
+        if more_on:
+            self.assertRegex(body, r'href="/more"[^>]*class="on"', path)
+            if path.rstrip('/') != '/more':
+                self.assertIn('class="fo-more-back"', html, path)
+                self.assertIn('href="/more"', html)
+        return html
+
+    def test_more_pages_keep_tab_bar_and_back(self):
+        self.login()
+        for path in ('/schedule', '/floor-plans', '/plans', '/sales', '/quote',
+                     '/revenue', '/reports', '/qbo', '/techs', '/compliance',
+                     '/settings', '/history', '/calendar', '/stock', '/orders'):
+            self._assert_tabs(path, more_on=True)
+
+    def test_main_office_pages_keep_tab_bar(self):
+        self.login()
+        for path in ('/', '/jobs', '/customers'):
+            html = self._assert_tabs(path, more_on=False)
+            self.assertNotIn('class="fo-more-back"', html, path)
+
+    def test_sub_pages_keep_tab_bar(self):
+        self.login('Woody Rodriguez', 'TestPass1234')
+        labels = ['My Jobs', 'Floor Plans', 'Help']
+        for path in ('/', '/floor-plans', '/help', '/me'):
+            html = self._assert_tabs(path, labels=labels)
+            self.assertNotIn('href="/more"', html, path)
+            self.assertNotIn('class="fo-more-back"', html, path)
 
 
 if __name__ == '__main__':
