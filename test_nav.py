@@ -79,6 +79,10 @@ class PhoneNavTests(unittest.TestCase):
         r = self.c.get('/help')
         self.assertEqual(r.status_code, 200)
         self.assertIn('Need help', r.get_data(as_text=True))
+        # Floor Plans tile stays in the desktop grid, hidden on phones; Open Job is full width in cards.
+        self.assertIn('fo-desk-only', html)
+        self.assertIn('html.fo-phone-shell .job .big-btn', html)
+        self.assertIn('width:100%', html)
 
     def test_designer_and_client_pages_have_no_bottom_bar(self):
         self.login()
