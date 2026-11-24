@@ -44,6 +44,11 @@ def init_schema(conn):
         created_by TEXT
     )''')
     conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS ix_app_users_key ON app_users(name_key)')
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS user_audit ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, actor TEXT, action TEXT, "
+        "user_name TEXT, user_key TEXT, user_id INTEGER, detail TEXT)"
+    )
 
 
 def password_ok(pw):
@@ -200,6 +205,81 @@ def set_role(conn, user_id, role, actor_key=None):
     return None
 
 
+def login_gen_key(name_key):
+    return 'login_gen:' + nkey(name_key)
+
+
+def login_gen(conn, name_key):
+    try:
+        r = conn.execute('SELECT value FROM settings WHERE key=?', (login_gen_key(name_key),)).fetchone()
+        return int(r['value'] or 0) if r else 0
+    except Exception:
+        return 0
+
+
+def bump_login_gen(conn, name_key):
+    g = login_gen(conn, name_key) + 1
+    conn.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (login_gen_key(name_key), str(g)))
+    return g
+
+
+def session_is_current(name_key, session_gen, conn=None):
+    close = False
+    if conn is None:
+        import fieldops_app as fo
+        conn = fo.get_db()
+        close = True
+    try:
+        g = login_gen(conn, name_key)
+    finally:
+        if close:
+            conn.close()
+    try:
+        sg = int(session_gen) if session_gen is not None else 0
+    except (TypeError, ValueError):
+        sg = 0
+    return sg == g
+
+
+def office_login_count(fo, conn, except_id=None):
+    n = len(set(fo.OFFICE_NAMES or []))
+    if except_id:
+        r = conn.execute("SELECT COUNT(*) AS n FROM app_users WHERE active=1 AND role='office' AND id!=?", (except_id,)).fetchone()
+    else:
+        r = conn.execute("SELECT COUNT(*) AS n FROM app_users WHERE active=1 AND role='office'").fetchone()
+    return n + int((r['n'] if r else 0) or 0)
+
+
+def write_audit(conn, actor, action, row, detail=''):
+    conn.execute(
+        'INSERT INTO user_audit (at,actor,action,user_name,user_key,user_id,detail) VALUES (?,?,?,?,?,?,?)',
+        (_now(), (actor or '')[:80], action, row['name'], row['name_key'], row['id'], (detail or '')[:400]))
+
+
+def delete_user(conn, user_id, actor_key, confirm_name, fo=None):
+    """Remove a database login. Names on jobs, quotes, logs and history stay as plain text."""
+    row = conn.execute('SELECT * FROM app_users WHERE id=?', (user_id,)).fetchone()
+    if not row:
+        return 'User not found.'
+    if actor_key and nkey(row['name']) == nkey(actor_key):
+        return 'You cannot delete your own login.'
+    if fo is not None and row['role'] == 'office' and int(row['active'] or 0):
+        if office_login_count(fo, conn, except_id=user_id) < 1:
+            return 'You cannot delete the last office login.'
+    if nkey(confirm_name) != nkey(row['name']):
+        return 'Type the name to confirm.'
+    detail = 'role=%s active=%s' % (row['role'], 'yes' if row['active'] else 'no')
+    write_audit(conn, actor_key, 'delete', row, detail)
+    bump_login_gen(conn, row['name_key'])
+    try:
+        conn.execute('DELETE FROM user_favorites WHERE user_key=?', (row['name_key'],))
+    except Exception:
+        pass
+    conn.execute('DELETE FROM app_users WHERE id=?', (user_id,))
+    _bust()
+    return None
+
+
 def _now():
     from datetime import datetime
     return datetime.utcnow().isoformat()
@@ -251,15 +331,17 @@ def register(fo):
                         '<div class="plat-mini-actions">'
                         '<a href="/users/%d/password">Set password</a>'
                         '<form method="post" action="/users/%d/deactivate" style="display:inline" onsubmit="return confirm(\'Deactivate %s? They will not be able to log in.\')">'
-                        '<button type="submit" class="plat-link-btn">Deactivate</button></form></div>'
-                    ) % (r['id'], r['id'], h(r['name']))
+                        '<button type="submit" class="plat-link-btn">Deactivate</button></form>'
+                        '<a href="/users/%d/delete">Delete</a></div>'
+                    ) % (r['id'], r['id'], h(r['name']), r['id'])
                 else:
                     body += (
                         '<div class="plat-mini-actions">'
                         '<form method="post" action="/users/%d/activate" style="display:inline">'
                         '<button type="submit" class="plat-link-btn">Reactivate</button></form>'
-                        '<a href="/users/%d/password">Set password</a></div>'
-                    ) % (r['id'], r['id'])
+                        '<a href="/users/%d/password">Set password</a>'
+                        '<a href="/users/%d/delete">Delete</a></div>'
+                    ) % (r['id'], r['id'], r['id'])
                 body += '</li>'
             body += '</ul>'
         else:
@@ -360,4 +442,43 @@ def register(fo):
         set_active(conn, uid, True, actor_key=fo.me())
         conn.commit(); conn.close()
         return redirect('/users')
+
+
+    @app.route('/users/<int:uid>/delete', methods=['GET', 'POST'])
+    def users_delete(uid):
+        gate = office_only()
+        if gate:
+            return gate
+        conn = fo.get_db()
+        row = conn.execute('SELECT * FROM app_users WHERE id=?', (uid,)).fetchone()
+        if not row:
+            conn.close()
+            return fo.ops_page('User not found', '<p>That login is already gone.</p><p><a href="/users">Back to Users</a></p>', back='/users'), 404
+        err = ''
+        if request.method == 'POST':
+            err = delete_user(conn, uid, fo.me(), request.form.get('confirm_name') or '', fo=fo)
+            if not err:
+                conn.commit()
+                conn.close()
+                return redirect('/users')
+        role = role_label(row['role'])
+        state = 'Active' if row['active'] else 'Deactivated'
+        body = (
+            '<div class="card">'
+            '<p>You are about to delete the login for <strong>%s</strong> (%s, %s). '
+            'This cannot be undone. Their name will stay on past jobs, quotes, logs and history. '
+            'They will not be able to sign in.</p>'
+            '%s'
+            '<form class="plat-form" method="post" action="/users/%d/delete">'
+            '<label>Type the name to confirm<input type="text" name="confirm_name" autocomplete="off" required></label>'
+            '<div class="plat-mini-actions" style="margin-top:12px">'
+            '<button type="submit" class="btn">Delete login</button>'
+            '<a class="btn secondary" href="/users">Cancel</a>'
+            '</div></form></div>'
+        ) % (h(row['name']), h(role), h(state),
+             ('<p class="err">%s</p>' % h(err)) if err else '',
+             uid)
+        conn.close()
+        return fo.ops_page('Delete %s' % row['name'], body, back='/users')
+
 

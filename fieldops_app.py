@@ -223,7 +223,14 @@ def me():
     try:
         import fieldops_users as _users
         u = _users.active_user(k)
-        if u: return u['name']
+        if not u: return ''
+        if not _users.session_is_current(k, session.get('login_gen')):
+            try:
+                session.clear()
+            except Exception:
+                pass
+            return ''
+        return u['name']
     except Exception:
         pass
     return ''
@@ -1372,6 +1379,13 @@ def login():
             return redirect('/')
         elif db_ok:
             login_ok(canon); session.clear(); session.permanent = True; session['name'] = canon
+            try:
+                import fieldops_users as _users
+                gconn = get_db()
+                session['login_gen'] = _users.login_gen(gconn, canon)
+                gconn.close()
+            except Exception:
+                session['login_gen'] = 0
             return redirect('/')
         else:
             login_fail(name); error = 'Wrong name or password'
