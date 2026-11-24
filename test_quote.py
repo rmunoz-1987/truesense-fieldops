@@ -107,6 +107,7 @@ class QuoteTests(unittest.TestCase):
             ],
         }, created_by='Roland')
         self.assertIsNone(err)
+        quote.set_default_terms(conn, quote.DEFAULT_TERMS)
         row = quote.ensure_token(conn, row['id'])
         token = row['token']
         self.assertTrue(token)

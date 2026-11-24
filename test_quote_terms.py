@@ -33,6 +33,15 @@ class QuoteTermsTests(unittest.TestCase):
         r = self.c.post('/login', data={'name': name, 'password': pw}, follow_redirects=False)
         self.assertIn(r.status_code, (302, 303))
 
+    def _activate_terms(self, conn=None):
+        own = conn is None
+        if own:
+            conn = fo.get_db()
+        err = quote.set_default_terms(conn, quote.DEFAULT_TERMS)
+        self.assertIsNone(err)
+        if own:
+            conn.commit(); conn.close()
+
     def _quote(self, clarifications='Lift work billed extra. Fire alarm by others.'):
         conn = fo.get_db()
         co = plat.upsert_company(conn, 'Memorial Family Clinic')
@@ -49,18 +58,30 @@ class QuoteTermsTests(unittest.TestCase):
         conn.commit(); conn.close()
         return row
 
-    def test_seeded_default_terms_include_warranty(self):
+    def test_draft_terms_are_not_seeded_until_saved(self):
         conn = fo.get_db()
-        text = quote.get_default_terms(conn)
+        conn.execute('DELETE FROM settings WHERE key=?', (quote.QUOTE_TERMS_KEY,))
+        conn.commit()
+        quote.seed_default_terms(conn)
+        conn.commit()
+        saved = quote.get_saved_terms(conn)
+        seeded = conn.execute("SELECT value FROM settings WHERE key=?", (quote.QUOTE_TERMS_KEY,)).fetchone()
         conn.close()
-        self.assertEqual(text, quote.DEFAULT_TERMS)
-        self.assertIn('8. Warranty: True Sense Security warrants its labor for 1 year', text)
-        self.assertIn('Manufacturer warranties apply to equipment.', text)
-        self.assertIn('50% deposit is due to schedule the work', text)
+        self.assertEqual(saved, '')
+        self.assertTrue(not seeded or not (seeded['value'] or '').strip())
+        self.assertIn('8. Warranty: True Sense Security warrants its labor for 1 year', quote.DEFAULT_TERMS)
+        self.assertIn('Manufacturer warranties apply to equipment.', quote.DEFAULT_TERMS)
+        self.assertIn('50% deposit is due to schedule the work', quote.DEFAULT_TERMS)
+        self.login()
+        page = self.c.get('/settings').get_data(as_text=True)
+        self.assertIn('not used on client links until you save', page)
+        self.assertIn('Draft wording (not live)', page)
+        self.assertIn('8. Warranty:', page)
 
     def test_terms_freeze_on_send_and_later_edits_do_not_change_them(self):
         row = self._quote()
         conn = fo.get_db()
+        self._activate_terms(conn)
         sent = quote.ensure_token(conn, row['id'])
         self.assertTrue(sent['token'])
         self.assertEqual((sent['terms_text'] or '').strip(), quote.DEFAULT_TERMS)
@@ -90,6 +111,7 @@ class QuoteTermsTests(unittest.TestCase):
     def test_accept_requires_terms_and_stores_timestamp(self):
         row = self._quote()
         conn = fo.get_db()
+        self._activate_terms(conn)
         sent = quote.ensure_token(conn, row['id'])
         token = sent['token']
         conn.commit(); conn.close()
@@ -116,6 +138,7 @@ class QuoteTermsTests(unittest.TestCase):
     def test_print_includes_terms_and_settings_are_office_only(self):
         row = self._quote()
         conn = fo.get_db()
+        self._activate_terms(conn)
         sent = quote.ensure_token(conn, row['id'])
         token = sent['token']
         conn.commit(); conn.close()
