@@ -176,5 +176,163 @@ class PlatformTests(unittest.TestCase):
         self.assertNotIn('class="on">Quote</a>', html)
         self.assertNotIn('animation:fo-in', html)
 
+
+    def test_archive_company_keeps_jobs(self):
+        self.login('Roland', 'TestPass1234')
+        conn=fo.get_db()
+        before=conn.execute("SELECT COUNT(*) FROM jobs WHERE LOWER(TRIM(customer))='abc warehouse'").fetchone()[0]
+        self.assertTrue(before)
+        job_ids=[r['id'] for r in conn.execute("SELECT id FROM jobs WHERE LOWER(TRIM(customer))='abc warehouse'")]
+        conn.close()
+        r=self.c.get('/clients/remove?name=ABC Warehouse')
+        html=r.get_data(as_text=True)
+        self.assertIn('Jobs stay', html)
+        self.assertNotIn('ALL of its jobs', html)
+        r=self.c.post('/clients/remove', data={'name':'ABC Warehouse','confirm':'yes'}, follow_redirects=False)
+        self.assertIn(r.status_code,(302,303))
+        conn=fo.get_db()
+        after=conn.execute("SELECT id FROM jobs WHERE id IN (%s)"%(','.join('?'*len(job_ids))), job_ids).fetchall()
+        self.assertEqual(len(after), before)
+        co=plat.get_company_by_key(conn,'abc warehouse')
+        self.assertTrue(co['archived'])
+        conn.execute('UPDATE companies SET archived=0 WHERE id=?',(co['id'],))
+        conn.commit(); conn.close()
+
+    def test_link_job_keeps_company_id(self):
+        """A typo in the customer string must not split off a second company."""
+        conn=fo.get_db()
+        co=plat.upsert_company(conn,'Link Co LLC')
+        conn.execute(
+            "INSERT INTO jobs (id,title,customer,address,status,created_at,company_id) VALUES (?,?,?,?,?,?,?)",
+            ('TS-TEST-LNK','Typo job','Link Co L.L.C. typo','9 Main', 'assigned','2026-01-01',co['id']))
+        plat.link_job(conn, conn.execute("SELECT * FROM jobs WHERE id='TS-TEST-LNK'").fetchone())
+        job=conn.execute("SELECT customer,company_id FROM jobs WHERE id='TS-TEST-LNK'").fetchone()
+        self.assertEqual(job['company_id'], co['id'])
+        self.assertEqual(job['customer'], 'Link Co LLC')
+        self.assertIsNone(plat.get_company_by_key(conn,'link co l.l.c. typo'))
+        conn.execute("DELETE FROM jobs WHERE id='TS-TEST-LNK'")
+        conn.execute('DELETE FROM companies WHERE id=?',(co['id'],))
+        conn.commit(); conn.close()
+
+    def test_create_job_uses_company_id(self):
+        self.login('Roland','TestPass1234')
+        conn=fo.get_db()
+        co=plat.upsert_company(conn,'Picker Co')
+        conn.commit(); cid=co['id']; conn.close()
+        r=self.c.post('/api/jobs', json={
+            'id':'TS-TEST-PICK','title':'Install cameras','customer':'Picker Company typo',
+            'company_id':cid,'address':'10 Main','tech':'Woody Rodriguez','job_type':'Install'
+        })
+        self.assertEqual(r.status_code,201)
+        conn=fo.get_db()
+        job=conn.execute("SELECT customer,company_id FROM jobs WHERE id='TS-TEST-PICK'").fetchone()
+        self.assertEqual(job['company_id'], cid)
+        self.assertEqual(job['customer'], 'Picker Co')
+        self.assertIsNone(plat.get_company_by_key(conn,'picker company typo'))
+        conn.execute("DELETE FROM jobs WHERE id='TS-TEST-PICK'")
+        conn.execute('DELETE FROM companies WHERE id=?',(cid,))
+        conn.commit(); conn.close()
+
+    def test_merge_companies_moves_jobs(self):
+        conn=fo.get_db()
+        keep=plat.upsert_company(conn,'Keep Firm')
+        drop=plat.upsert_company(conn,'Drop Firm')
+        conn.execute("INSERT INTO jobs (id,title,customer,status,created_at,company_id) VALUES (?,?,?,?,?,?)",
+                     ('TS-TEST-MRG','Merge job','Drop Firm','assigned','2026-01-01',drop['id']))
+        plat.ensure_contact(conn, drop['id'], 'Pat Lee', role='pm')
+        conn.commit()
+        row,err=plat.merge_companies(conn, keep['id'], drop['id'])
+        self.assertIsNone(err)
+        job=conn.execute("SELECT customer,company_id FROM jobs WHERE id='TS-TEST-MRG'").fetchone()
+        self.assertEqual(job['company_id'], keep['id'])
+        self.assertEqual(job['customer'], 'Keep Firm')
+        self.assertIsNone(conn.execute('SELECT 1 FROM companies WHERE id=?',(drop['id'],)).fetchone())
+        self.assertTrue(conn.execute('SELECT 1 FROM contacts WHERE company_id=? AND name=?',(keep['id'],'Pat Lee')).fetchone())
+        conn.execute("DELETE FROM jobs WHERE id='TS-TEST-MRG'")
+        conn.execute('DELETE FROM contacts WHERE company_id=?',(keep['id'],))
+        conn.execute('DELETE FROM companies WHERE id=?',(keep['id'],))
+        conn.commit(); conn.close()
+
+    def test_opportunity_stage_api(self):
+        self.login('Roland','TestPass1234')
+        conn=fo.get_db()
+        co=plat.upsert_company(conn,'Stage Co')
+        conn.execute(
+            'INSERT INTO opportunities (company_id,title,stage,amount,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
+            (co['id'],'Move me','lead',1000,'Roland','2026-01-01','2026-01-01'))
+        oid=conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        conn.commit(); conn.close()
+        r=self.c.post('/api/opportunities/%d/stage'%oid, json={'stage':'proposal'})
+        self.assertEqual(r.status_code,200)
+        conn=fo.get_db()
+        row=conn.execute('SELECT stage FROM opportunities WHERE id=?',(oid,)).fetchone()
+        self.assertEqual(row['stage'],'proposal')
+        html=self.c.get('/opportunities').get_data(as_text=True)
+        self.assertIn('foOppStage', html)
+        self.assertIn('Move to', html)
+        conn.execute('DELETE FROM opportunities WHERE id=?',(oid,))
+        conn.execute('DELETE FROM companies WHERE id=?',(co['id'],))
+        conn.commit(); conn.close()
+
+    def test_merge_page_renders(self):
+        self.login('Roland','TestPass1234')
+        r=self.c.get('/customers/merge')
+        self.assertEqual(r.status_code,200)
+        html=r.get_data(as_text=True)
+        self.assertIn('Merge this duplicate', html)
+        self.assertIn('Into this company', html)
+
+    def test_users_page_and_db_login(self):
+        import fieldops_users as users
+        self.login('Roland','TestPass1234')
+        html=self.c.get('/users').get_data(as_text=True)
+        self.assertIn('Render logins', html)
+        self.assertIn('Roland', html)
+        self.assertIn('Woody Rodriguez', html)
+        self.assertIn('Set in Render', html)
+        # weak password rejected
+        r=self.c.post('/users', data={'name':'Pat Field','role':'field','password':'short'}, follow_redirects=True)
+        self.assertIn('at least 10', r.get_data(as_text=True).lower())
+        r=self.c.post('/users', data={'name':'Pat Field','role':'field','password':'onlylettersxx'}, follow_redirects=True)
+        self.assertIn('mix letters', r.get_data(as_text=True).lower())
+        # cannot shadow an env login
+        r=self.c.post('/users', data={'name':'Roland','role':'office','password':'GoodPass1234'}, follow_redirects=True)
+        self.assertIn('already has a Render login', r.get_data(as_text=True))
+        r=self.c.post('/users', data={'name':'Pat Field','role':'field','password':'GoodPass1234'}, follow_redirects=True)
+        self.assertIn('User added', r.get_data(as_text=True))
+        self.c.get('/logout')
+        r=self.c.post('/login', data={'name':'Pat Field','password':'GoodPass1234'}, follow_redirects=False)
+        self.assertIn(r.status_code,(302,303))
+        # field cannot open Users
+        r=self.c.get('/users', follow_redirects=False)
+        self.assertIn(r.status_code,(302,303))
+        self.c.get('/logout')
+        # env login still works
+        r=self.c.post('/login', data={'name':'Roland','password':'TestPass1234'}, follow_redirects=False)
+        self.assertIn(r.status_code,(302,303))
+        # add an office user and confirm is_office
+        r=self.c.post('/users', data={'name':'Casey Office','role':'office','password':'OfficePass1234'}, follow_redirects=True)
+        self.assertIn('User added', r.get_data(as_text=True))
+        self.c.get('/logout')
+        r=self.c.post('/login', data={'name':'Casey Office','password':'OfficePass1234'}, follow_redirects=False)
+        self.assertIn(r.status_code,(302,303))
+        r=self.c.get('/users')
+        self.assertEqual(r.status_code,200)
+        # deactivate Pat, then login fails
+        conn=fo.get_db()
+        pat=conn.execute("SELECT id FROM app_users WHERE name_key='pat field'").fetchone()
+        self.assertIsNotNone(pat)
+        conn.close()
+        self.c.post('/users/%d/deactivate'%pat['id'], follow_redirects=True)
+        self.c.get('/logout')
+        r=self.c.post('/login', data={'name':'Pat Field','password':'GoodPass1234'}, follow_redirects=True)
+        self.assertIn('Wrong name or password', r.get_data(as_text=True))
+        # cleanup
+        self.login('Roland','TestPass1234')
+        conn=fo.get_db()
+        conn.execute("DELETE FROM app_users WHERE name_key IN ('pat field','casey office')")
+        conn.commit(); conn.close()
+        users._bust()
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -29,6 +29,86 @@ CONTACT_ROLES = [
 ]
 CONTACT_ROLE_SET = {k for k, _ in CONTACT_ROLES}
 
+_OPP_DND_JS = r"""<script>
+(function(){
+  const board=document.getElementById('plat-board');
+  if(!board) return;
+  window.foOppStage=async function(id,stage){
+    const r=await fetch('/api/opportunities/'+id+'/stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:stage})});
+    if(!r.ok){const e=await r.json().catch(()=>({}));alert(e.error||'Could not move');return}
+    location.reload();
+  };
+  function colFromPoint(x,y){
+    const el=document.elementFromPoint(x,y);
+    return el && el.closest ? el.closest('.plat-col') : null;
+  }
+  let drag=null;
+  board.querySelectorAll('.plat-opp').forEach(card=>{
+    card.addEventListener('dragstart',e=>{
+      drag=card; card.classList.add('dragging');
+      try{e.dataTransfer.setData('text/plain',card.dataset.id);e.dataTransfer.effectAllowed='move'}catch(err){}
+    });
+    card.addEventListener('dragend',()=>{card.classList.remove('dragging');board.querySelectorAll('.plat-col').forEach(c=>c.classList.remove('over'));drag=null});
+  });
+  board.querySelectorAll('.plat-col').forEach(col=>{
+    col.addEventListener('dragover',e=>{e.preventDefault();col.classList.add('over')});
+    col.addEventListener('dragleave',()=>col.classList.remove('over'));
+    col.addEventListener('drop',e=>{
+      e.preventDefault();col.classList.remove('over');
+      const id=(drag&&drag.dataset.id)||(e.dataTransfer&&e.dataTransfer.getData('text/plain'));
+      const stage=col.dataset.stage;
+      if(id&&stage) foOppStage(id,stage);
+    });
+  });
+  /* Touch / pointer fallback (HTML5 drag is unreliable on phones). */
+  let hold=null, ghost=null, start=null;
+  function clearPtr(){
+    if(ghost) ghost.remove();
+    if(hold) hold.classList.remove('dragging');
+    board.querySelectorAll('.plat-col').forEach(c=>c.classList.remove('over'));
+    hold=ghost=start=null;
+  }
+  board.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse' && e.button!==0) return;
+    if(e.target.closest('select,a,button,label,input')) return;
+    const card=e.target.closest('.plat-opp');
+    if(!card) return;
+    start={x:e.clientX,y:e.clientY,card:card,pid:e.pointerId};
+  });
+  board.addEventListener('pointermove',e=>{
+    if(!start||e.pointerId!==start.pid) return;
+    const dx=e.clientX-start.x, dy=e.clientY-start.y;
+    if(!hold && Math.hypot(dx,dy)<8) return;
+    if(!hold){
+      hold=start.card; hold.classList.add('dragging');
+      try{hold.setPointerCapture(e.pointerId)}catch(err){}
+      ghost=hold.cloneNode(true); ghost.classList.add('plat-ghost');
+      ghost.style.width=hold.offsetWidth+'px'; document.body.appendChild(ghost);
+    }
+    ghost.style.left=(e.clientX-40)+'px'; ghost.style.top=(e.clientY-20)+'px';
+    board.querySelectorAll('.plat-col').forEach(c=>c.classList.remove('over'));
+    const col=colFromPoint(e.clientX,e.clientY); if(col) col.classList.add('over');
+    e.preventDefault();
+  },{passive:false});
+  function endPtr(e){
+    if(!start||e.pointerId!==start.pid) return;
+    if(hold){
+      const col=colFromPoint(e.clientX,e.clientY);
+      const id=hold.dataset.id, stage=col&&col.dataset.stage;
+      const same=stage&&stage===hold.dataset.stage;
+      clearPtr();
+      if(id&&stage&&!same) foOppStage(id,stage);
+      return;
+    }
+    start=null;
+  }
+  board.addEventListener('pointerup',endPtr);
+  board.addEventListener('pointercancel',()=>{clearPtr();});
+})();
+</script>
+"""
+
+
 PRE_MIGRATE_BACKUP = 'fieldops-pre-platform-v2.db'
 
 
@@ -244,35 +324,98 @@ def ensure_contact(conn, company_id, name, role='site', phone='', email='', titl
     return conn.execute('SELECT * FROM contacts WHERE id=?', (cur.lastrowid,)).fetchone()
 
 
-def link_job(conn, job_row):
-    """Attach a job to company and site from its customer/address strings. Idempotent."""
+def link_job(conn, job_row, company_id=None):
+    """Attach a job to a company and site. Prefer company_id; do not rematch by name.
+
+    If the job already has a company_id (or one is passed in), that company is
+    kept and jobs.customer is set to the company's canonical name. A typo in
+    the customer text cannot split off a second company. Name matching is only
+    used when the job is not yet linked.
+    """
     if job_row is None:
         return None
     if not isinstance(job_row, sqlite3.Row) and not hasattr(job_row, 'keys'):
         return None
-    customer = (job_row['customer'] or '').strip()
-    if not customer:
-        return None
     phone = (job_row['phone'] or '').strip()
     address = (job_row['address'] or '').strip()
-    co = upsert_company(conn, customer, phone=phone, billing_address=address)
+    customer = (job_row['customer'] or '').strip()
+    existing = company_id or (job_row['company_id'] if 'company_id' in job_row.keys() else None)
+    co = None
+    if existing:
+        co = conn.execute('SELECT * FROM companies WHERE id=?', (existing,)).fetchone()
+    if co is None and customer:
+        co = upsert_company(conn, customer, phone=phone, billing_address=address)
     if not co:
         return None
-    site = upsert_site(conn, co['id'], address=address, phone=phone)
+    site = upsert_site(conn, co['id'], address=address, phone=phone) if address else None
+    if site is None and job_row['site_id'] if 'site_id' in job_row.keys() else None:
+        site = conn.execute('SELECT * FROM sites WHERE id=? AND company_id=?', (job_row['site_id'], co['id'])).fetchone()
     contact = None
     if phone:
-        contact = ensure_contact(conn, co['id'], customer, role='site', phone=phone)
+        contact = ensure_contact(conn, co['id'], customer or co['name'], role='site', phone=phone)
     cid = co['id']
-    sid = site['id'] if site else None
+    sid = site['id'] if site else (job_row['site_id'] if 'site_id' in job_row.keys() else None)
     tid = contact['id'] if contact else (job_row['contact_id'] if 'contact_id' in job_row.keys() else None)
-    cur_c = job_row['company_id'] if 'company_id' in job_row.keys() else None
-    cur_s = job_row['site_id'] if 'site_id' in job_row.keys() else None
-    cur_t = job_row['contact_id'] if 'contact_id' in job_row.keys() else None
-    if cur_c != cid or cur_s != sid or (tid and cur_t != tid):
-        conn.execute(
-            'UPDATE jobs SET company_id=?, site_id=?, contact_id=COALESCE(?, contact_id) WHERE id=?',
-            (cid, sid, tid, job_row['id']))
+    conn.execute(
+        'UPDATE jobs SET company_id=?, site_id=?, contact_id=COALESCE(?, contact_id), customer=? WHERE id=?',
+        (cid, sid, tid, co['name'], job_row['id']))
     return cid, sid
+
+
+def archive_company(conn, company_id):
+    """Hide a company from default lists. Jobs, contacts, sites and opportunities stay."""
+    row = conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone()
+    if not row:
+        return None, 'Company not found'
+    conn.execute('UPDATE companies SET archived=1, updated_at=? WHERE id=?', (now_iso(), company_id))
+    return conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone(), None
+
+
+def merge_companies(conn, keep_id, drop_id):
+    """Move records from drop_id into keep_id, then remove the leftover company.
+
+    Jobs are re-linked by company_id. Sites with the same address are combined.
+    """
+    if not keep_id or not drop_id or int(keep_id) == int(drop_id):
+        return None, 'Pick two different companies'
+    keep = conn.execute('SELECT * FROM companies WHERE id=?', (keep_id,)).fetchone()
+    drop = conn.execute('SELECT * FROM companies WHERE id=?', (drop_id,)).fetchone()
+    if not keep or not drop:
+        return None, 'Company not found'
+    when = now_iso()
+    # Contacts
+    conn.execute('UPDATE contacts SET company_id=?, updated_at=? WHERE company_id=?', (keep_id, when, drop_id))
+    # Sites: reuse keep site when the address key already exists
+    for s in conn.execute('SELECT * FROM sites WHERE company_id=?', (drop_id,)).fetchall():
+        twin = None
+        if s['address_key']:
+            twin = conn.execute(
+                'SELECT * FROM sites WHERE company_id=? AND address_key=?',
+                (keep_id, s['address_key'])).fetchone()
+        if twin:
+            conn.execute('UPDATE jobs SET site_id=? WHERE site_id=?', (twin['id'], s['id']))
+            conn.execute('UPDATE opportunities SET site_id=? WHERE site_id=?', (twin['id'], s['id']))
+            conn.execute('DELETE FROM sites WHERE id=?', (s['id'],))
+        else:
+            # unique (company_id, address_key) is free after the move
+            conn.execute(
+                'UPDATE sites SET company_id=?, updated_at=? WHERE id=?',
+                (keep_id, when, s['id']))
+    conn.execute('UPDATE opportunities SET company_id=?, updated_at=? WHERE company_id=?', (keep_id, when, drop_id))
+    conn.execute(
+        'UPDATE jobs SET company_id=?, customer=? WHERE company_id=?',
+        (keep_id, keep['name'], drop_id))
+    # Leftover jobs still keyed only by the old name
+    conn.execute(
+        "UPDATE jobs SET company_id=?, customer=? WHERE company_id IS NULL AND LOWER(TRIM(customer))=?",
+        (keep_id, keep['name'], drop['name_key']))
+    conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?', (drop['name_key'],))
+    if not conn.execute('SELECT 1 FROM clients WHERE LOWER(TRIM(name))=?', (keep['name_key'],)).fetchone():
+        conn.execute(
+            'INSERT INTO clients (name,address,phone,created_at) VALUES (?,?,?,?)',
+            (keep['name'], keep['billing_address'] or '', keep['phone'] or '', when))
+    conn.execute('DELETE FROM companies WHERE id=?', (drop_id,))
+    return keep, None
 
 
 def migrate_existing(conn):
@@ -520,7 +663,8 @@ def register(fo):
                         r['id'], h(r['name']), h(r['billing_address'] or r['phone'] or ''),
                         h(' · '.join(bits))))
             body = filt + '<div class="plat-cards">' + ''.join(cards) + '</div>'
-        actions = '<a class="plat-btn plat-btn-gold" href="/customers/new">+ Company</a>'
+        actions = ('<a class="plat-btn plat-btn-ghost" href="/customers/merge">Merge duplicates</a>'
+                   '<a class="plat-btn plat-btn-gold" href="/customers/new">+ Company</a>')
         return page('Customers', body, kicker='Shared across Ops, Sales and Quote', actions=actions)
 
     @app.route('/customers/new', methods=['GET', 'POST'])
@@ -535,9 +679,10 @@ def register(fo):
                 msg = 'Name is required.'
             else:
                 conn = fo.get_db()
-                if get_company_by_key(conn, nkey(vals['name'])):
+                existing = get_company_by_key(conn, nkey(vals['name']))
+                if existing:
                     conn.close()
-                    msg = 'A company with that name already exists.'
+                    msg = 'A company with that name already exists. Open it from Customers, or use Merge duplicates if these are the same firm.'
                 else:
                     co = upsert_company(
                         conn, vals['name'], phone=vals['phone'], email=vals['email'],
@@ -664,7 +809,7 @@ def register(fo):
             body += '<div class="muted">None yet. Add an opportunity when a lead comes in.</div>'
         body += '</div>'
 
-        body += '<div class="plat-panel"><div class="plat-panel-h"><h2>Jobs</h2><a class="plat-btn plat-btn-ghost" href="/new-job?customer=%s">+ Job</a></div>' % urllib.parse.quote(co['name'])
+        body += '<div class="plat-panel"><div class="plat-panel-h"><h2>Jobs</h2><a class="plat-btn plat-btn-ghost" href="/new-job?company_id=%d&customer=%s">+ Job</a></div>' % (cid, urllib.parse.quote(co['name']))
         if jobs:
             body += '<ul class="plat-list">' + ''.join(
                 '<li><a href="/?job=%s"><b>%s</b> %s</a> <span class="plat-pill">%s</span>'
@@ -677,8 +822,93 @@ def register(fo):
         else:
             body += '<div class="muted">No jobs linked yet.</div>'
         body += '</div>'
+        body += ('<div class="plat-panel"><h2>Company record</h2>'
+                 '<p class="muted">Jobs are never deleted from this page. Archiving hides the company from the Customers list. Jobs, photos, contacts, sites and opportunities stay.</p>')
+        if co['archived']:
+            body += '<p>This company is archived.</p>'
+        else:
+            msg = 'Archive %s? Jobs will be kept.' % h(co['name'])
+            body += (
+                '<form method="post" action="/customers/%d/archive">'
+                '<button class="plat-btn plat-btn-ghost" type="submit" data-msg="%s" '
+                'onclick="return confirm(this.getAttribute(\'data-msg\'))">Archive company</button></form>'
+                % (cid, msg)
+            )
+        body += '<div class="plat-mini-actions" style="margin-top:10px"><a href="/customers/merge?drop=%d">Merge into another company</a></div></div>' % cid
         return page(co['name'], body, back='/customers', kicker='Customer',
                     actions='<a class="plat-btn plat-btn-ghost" href="/systems?client=%s">Installed systems</a>' % urllib.parse.quote(co['name']))
+
+
+    @app.route('/customers/<int:cid>/archive', methods=['POST'])
+    def customers_archive(cid):
+        gate = office_only()
+        if gate:
+            return gate
+        conn = fo.get_db()
+        _, err = archive_company(conn, cid)
+        if not err:
+            conn.commit()
+        conn.close()
+        return redirect('/customers')
+
+    @app.route('/customers/merge', methods=['GET', 'POST'])
+    def customers_merge():
+        gate = office_only()
+        if gate:
+            return gate
+        conn = fo.get_db()
+        companies = conn.execute(
+            'SELECT id,name,archived FROM companies ORDER BY name COLLATE NOCASE').fetchall()
+        msg = ''
+        if request.method == 'POST':
+            try:
+                keep_id = int(request.form.get('keep') or 0)
+                drop_id = int(request.form.get('drop') or 0)
+            except ValueError:
+                keep_id = drop_id = 0
+            if request.form.get('confirm') != 'yes':
+                keep = conn.execute('SELECT * FROM companies WHERE id=?', (keep_id,)).fetchone()
+                drop = conn.execute('SELECT * FROM companies WHERE id=?', (drop_id,)).fetchone()
+                conn.close()
+                if not keep or not drop or keep_id == drop_id:
+                    return redirect('/customers/merge')
+                body = (
+                    '<div class="plat-panel"><p>Merge <b>%s</b> into <b>%s</b>.</p>'
+                    '<p>Jobs, contacts, sites and opportunities move to %s. The other company record is removed. Jobs are not deleted.</p>'
+                    '<form method="post" action="/customers/merge">'
+                    '<input type="hidden" name="keep" value="%d"><input type="hidden" name="drop" value="%d">'
+                    '<input type="hidden" name="confirm" value="yes">'
+                    '<button class="plat-btn plat-btn-gold" type="submit">Merge now</button> '
+                    '<a class="plat-btn plat-btn-ghost" href="/customers/merge">Cancel</a></form></div>'
+                    % (h(drop['name']), h(keep['name']), h(keep['name']), keep_id, drop_id))
+                return page('Merge companies', body, back='/customers', kicker='Customers')
+            row, err = merge_companies(conn, keep_id, drop_id)
+            if err:
+                msg = err
+            else:
+                conn.commit()
+                cid = row['id']
+                conn.close()
+                return redirect('/customers/%d' % cid)
+        def sel_for(flag, label):
+            return '<label>%s</label><select name="%s" required><option value="">Pick a company</option>%s</select>' % (
+                label, flag, ''.join(
+                    '<option value="%d"%s>%s%s</option>' % (
+                        c['id'],
+                        ' selected' if str(c['id']) == str(request.values.get(flag) or '') else '',
+                        h(c['name']),
+                        ' (archived)' if c['archived'] else '')
+                    for c in companies))
+        conn.close()
+        form = (
+            '<div class="plat-panel"><p>Use this when the same customer was entered twice. Jobs stay; they move to the company you keep.</p>'
+            '<form class="plat-form" method="post">'
+            + sel_for('drop', 'Merge this duplicate')
+            + sel_for('keep', 'Into this company')
+            + '<button class="plat-btn plat-btn-gold" type="submit">Review merge</button></form></div>')
+        if msg:
+            form = '<div class="plat-msg">%s</div>' % h(msg) + form
+        return page('Merge duplicates', form, back='/customers', kicker='Customers')
 
     # ----- Contacts -----
     def _contact_form(vals, action, submit, companies, company_locked=False):
@@ -1023,26 +1253,32 @@ def register(fo):
                 o.get('contact_name') or '',
                 where,
             ) if x)
+            stage_opts = ''.join(
+                '<option value="%s"%s>%s</option>' % (sk, ' selected' if sk == o['stage'] else '', h(slab))
+                for sk, slab in OPP_STAGES)
             return (
-                '<a class="plat-card plat-opp" href="/opportunities/%d"><b>%s</b>'
-                '<div class="muted">%s</div></a>' % (o['id'], h(o['title']), h(meta))
+                '<div class="plat-card plat-opp" draggable="true" data-id="%d" data-stage="%s">'
+                '<a href="/opportunities/%d"><b>%s</b></a>'
+                '<div class="muted">%s</div>'
+                '<div class="plat-opp-move"><label class="muted">Move to</label>'
+                '<select aria-label="Move opportunity" onchange="foOppStage(%d,this.value)">%s</select></div></div>'
+                % (o['id'], h(o['stage']), o['id'], h(o['title']), h(meta), o['id'], stage_opts)
             )
 
-        # Desktop: simple columns (no drag). Phone: the filtered list.
-        cols = ''
         show_stages = OPP_STAGES if not stage else [s for s in OPP_STAGES if s[0] == stage]
         by = {}
         for o in rows:
             by.setdefault(o['stage'], []).append(o)
-        cols = '<div class="plat-board">'
+        cols = '<div class="plat-board" id="plat-board">'
         for k, lab in show_stages:
             items = by.get(k, [])
             amt = totals.get(k) or 0
-            cols += '<div class="plat-col"><div class="plat-col-h"><span>%s</span> <em>%d%s</em></div>' % (
-                h(lab), len(items), (' · ' + money(amt)) if amt else '')
-            cols += ''.join(card(o) for o in items) or '<div class="muted">None</div>'
+            cols += '<div class="plat-col" data-stage="%s"><div class="plat-col-h"><span>%s</span> <em>%d%s</em></div>' % (
+                k, h(lab), len(items), (' · ' + money(amt)) if amt else '')
+            cols += ''.join(card(o) for o in items) or '<div class="muted plat-col-empty">None</div>'
             cols += '</div>'
         cols += '</div>'
+        cols += _OPP_DND_JS
         body = stats + pills + cols
         actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a>'
         return page('Opportunities', body, kicker='Sales', actions=actions, area='sales')
@@ -1142,6 +1378,40 @@ def register(fo):
                     kicker=(co['name'] if co else 'Opportunity'), area='sales')
 
     # ----- Sales and Quote homes -----
+    @app.route('/api/opportunities/<int:oid>/stage', methods=['POST'])
+    def opportunity_stage(oid):
+        gate = office_only()
+        if gate:
+            return gate
+        data = request.get_json(silent=True) or request.form
+        stage = (data.get('stage') or '').strip()
+        if stage not in OPP_STAGE_SET:
+            return jsonify({'error': 'Unknown stage'}), 400
+        conn = fo.get_db()
+        row = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
+        if not row:
+            conn.close()
+            return jsonify({'error': 'Not found'}), 404
+        when = now_iso()
+        won_at = when if stage == 'won' else (row['won_at'] if stage == row['stage'] else None)
+        lost_at = when if stage == 'lost' else (row['lost_at'] if stage == row['stage'] else None)
+        if stage != 'won':
+            won_at = row['won_at'] if stage == 'won' else None
+        if stage == 'won':
+            won_at = row['won_at'] or when
+            lost_at = None
+        elif stage == 'lost':
+            lost_at = row['lost_at'] or when
+            won_at = None
+        else:
+            won_at = None
+            lost_at = None
+        conn.execute(
+            'UPDATE opportunities SET stage=?, updated_at=?, won_at=?, lost_at=? WHERE id=?',
+            (stage, when, won_at, lost_at, oid))
+        conn.commit(); conn.close()
+        return jsonify({'ok': True, 'id': oid, 'stage': stage})
+
     @app.route('/sales')
     def sales_home():
         gate = office_only()

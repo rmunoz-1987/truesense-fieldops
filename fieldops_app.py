@@ -217,11 +217,81 @@ def job_dict(row):
 def nice_name(n): return ' '.join((n or '').split()).title()
 def me():
     n = nice_name(session.get('name'))
-    return n if n.lower() in USERS else ''
-def is_office(): return me().lower() in OFFICE_NAMES
+    if not n: return ''
+    k = n.lower()
+    if k in USERS: return n
+    try:
+        import fieldops_users as _users
+        u = _users.active_user(k)
+        if u: return u['name']
+    except Exception:
+        pass
+    return ''
+def office_name_set():
+    names = set(OFFICE_NAMES)
+    try:
+        import fieldops_users as _users
+        names.update(_users.office_keys())
+    except Exception:
+        pass
+    return names
+def is_office():
+    k = me().lower()
+    return bool(k) and k in office_name_set()
 def can_see(job): return is_office() or ' '.join((job['tech'] or '').split()).lower() == me().lower()
-def sub_logins(): return [nice_name(k) for k in sorted(USERS) if k not in OFFICE_NAMES]
+def sub_logins():
+    names = []
+    seen = set()
+    office = office_name_set()
+    for k in sorted(USERS):
+        if k not in office:
+            n = nice_name(k)
+            names.append(n); seen.add(k)
+    try:
+        import fieldops_users as _users
+        for u in _users.active_field_users():
+            k = u['name_key']
+            if k not in seen and k not in office:
+                names.append(u['name']); seen.add(k)
+    except Exception:
+        pass
+    return names
+def office_assignees():
+    out = []
+    seen = set()
+    for k in sorted(office_name_set()):
+        if k in seen: continue
+        seen.add(k)
+        label = nice_name(k)
+        try:
+            import fieldops_users as _users
+            u = _users.active_user(k)
+            if u: label = u['name']
+        except Exception:
+            pass
+        if k in USERS or True:
+            out.append((label, label+' (office)'))
+    # Only people who can actually log in (env or active db)
+    real = []
+    for label, shown in out:
+        k = label.lower()
+        if k in USERS:
+            real.append((label, shown)); continue
+        try:
+            import fieldops_users as _users
+            if _users.active_user(k):
+                real.append((label, shown))
+        except Exception:
+            pass
+    return real
 def default_sub(): return (sub_logins() or [''])[0]
+def has_any_login():
+    if USERS: return True
+    try:
+        import fieldops_users as _users
+        return _users.has_any()
+    except Exception:
+        return False
 
 LOGIN_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Field Ops"><title>True Sense Field</title>
 <style>body{font-family:-apple-system,sans-serif;overflow-wrap:anywhere;background:#fcfcfc;color:#111;max-width:420px;margin:auto;padding:24px}
@@ -279,7 +349,7 @@ def security_headers(resp):
 @app.before_request
 def require_login():
     if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
-    if not USERS:
+    if not has_any_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
         return (jsonify({'error':'login required'}), 401) if request.path.startswith(('/api','/uploads')) else redirect('/login')
@@ -456,7 +526,7 @@ def backup_db():
     try: src.backup(out)
     finally: out.close(); src.close()
     os.replace(tmp, dst)
-    old=sorted(f for f in os.listdir(BACKUP_DIR) if f.startswith('fieldops-') and f.endswith('.db'))
+    old=sorted(f for f in os.listdir(BACKUP_DIR) if f.startswith('fieldops-') and f.endswith('.db') and f!='fieldops-pre-platform-v2.db')
     for f in old[:-BACKUP_KEEP]: os.remove(os.path.join(BACKUP_DIR, f))
     print('BACKUP saved %s (%d kept)' % (os.path.basename(dst), min(len(old), BACKUP_KEEP)), flush=True)
     return dst
@@ -665,11 +735,20 @@ html.fo-shell body:has(.plat-head) > a.fo-back,html.fo-shell body:has(.plat-head
   .plat-col{background:rgba(255,255,255,.5);border:1px solid var(--line);border-radius:14px;padding:10px;flex:1 0 186px;min-width:186px}
   .plat-col-h{white-space:nowrap}
   .plat-col .plat-card{margin-bottom:8px;min-height:72px}
+.plat-col.over{outline:2px solid var(--gold,#a49f2a);background:#fff}
+.plat-opp{position:relative;cursor:grab;touch-action:none;user-select:none}
+.plat-opp:active{cursor:grabbing}
+.plat-opp.dragging{opacity:.45}
+.plat-opp .plat-opp-move{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin-top:8px}
+.plat-opp .plat-opp-move select{width:100%;font-size:.85rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.plat-ghost{position:fixed;z-index:80;pointer-events:none;width:200px;opacity:.92;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 html[data-theme=dark]{filter:invert(.93) hue-rotate(180deg);background:#fff}
 html[data-theme=dark] img,html[data-theme=dark] video,html[data-theme=dark] canvas,html[data-theme=dark] .leaflet-container,html[data-theme=dark] iframe,html[data-theme=dark] [style*="background-image"]{filter:invert(1) hue-rotate(180deg)}
 html[data-theme=dark] .leaflet-container img{filter:none}
+.plat-link-btn{background:none;border:0;color:var(--gold,#6b6a16);padding:0;font:inherit;font-weight:650;cursor:pointer;text-decoration:underline}
+.plat-mini-actions{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:6px}
 </style>"""
 
 
@@ -708,7 +787,7 @@ def shell_tabs(path, office):
 
 def shell_links(path, office):
     area=plat_area(path)
-    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
+    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
         main=[('/sales','Home'),('/opportunities','Opportunities'),('/customers','Customers')]
     elif area=='quote':
@@ -819,7 +898,7 @@ def more_page():
     if not is_office(): return redirect('/')
     return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
         ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
-        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Week board by sub','cal'),('/calendar','Calendar','Week list','cal'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
+        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Week board by sub','cal'),('/calendar','Calendar','Week list','cal'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
 
 def me_settings_body():
     dark=theme_of(me())=='dark'
@@ -941,15 +1020,28 @@ def healthz(): return 'ok'
 
 @app.route('/login', methods=['GET','POST'])
 def login():
-    if not USERS: return render_template_string(LOGIN_HTML, setup=True), 503
+    if not has_any_login(): return render_template_string(LOGIN_HTML, setup=True), 503
     error = None
     if request.method == 'POST':
         name = nice_name(request.form.get('name'))
         pw = request.form.get('password') or ''
         expected = USERS.get(name.lower())
+        db_ok = False
+        canon = name
+        if not expected:
+            try:
+                import fieldops_users as _users
+                u, db_ok = _users.check_login(name, pw)
+                if db_ok and u:
+                    canon = u['name']
+            except Exception:
+                db_ok = False
         if login_locked(name): error = 'Too many wrong tries. Wait 15 minutes and try again.'
         elif expected and hmac.compare_digest(pw.encode(), expected.encode()):
             login_ok(name); session.clear(); session.permanent = True; session['name'] = name
+            return redirect('/')
+        elif db_ok:
+            login_ok(canon); session.clear(); session.permanent = True; session['name'] = canon
             return redirect('/')
         else:
             login_fail(name); error = 'Wrong name or password'
@@ -1314,8 +1406,16 @@ def init_db():
         conn.execute('INSERT INTO support_replies (job_id,note,created_at) VALUES (?,?,?)',(x['job_id'],x['note'],x['created_at']))
         conn.execute('DELETE FROM job_updates WHERE id=?',(x['id'],))
     try:
+        import fieldops_users as _users
+        _users.init_schema(conn)
+    except Exception:
+        app.logger.exception('users schema failed')
+        raise
+    try:
         import fieldops_platform as _plat
         _plat.init_and_migrate(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
+        snap = os.path.join(BACKUP_DIR, 'fieldops-pre-platform-v2.db')
+        print('PLATFORM_MIGRATE backup=%s' % ('yes' if os.path.exists(snap) else 'no'), flush=True)
     except Exception:
         app.logger.exception('platform migrate failed')
         raise
@@ -1428,7 +1528,9 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <datalist id="cl-list"></datalist>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
 <input type="text" id="n-title" placeholder="Title" oninput="this.dataset.auto=''">
-<input type="text" id="n-customer" placeholder="Customer" list="cl-list" onchange="pickClient()">
+<input type="hidden" id="n-company_id" value="">
+<select id="n-customer-pick" style="width:100%;padding:14px;border:1px solid #ccc;border-radius:10px;font-size:1rem;background:#fff;margin:4px 0" onchange="pickCompany(this)"><option value="">Customer: choose or type a new name</option></select>
+<input type="text" id="n-customer" placeholder="New customer name" list="cl-list" onchange="pickClient()" oninput="if(this.value)document.getElementById('n-company_id').value=''">
 <input type="text" id="n-address" placeholder="Address">
 <input type="tel" id="n-phone" placeholder="Customer phone">
 <select id="n-tech" style="width:100%;padding:14px;border:1px solid var(--border);border-radius:10px;margin:8px 0;font-size:1rem;background:#fff">{% for v,l in techs %}<option value="{{ v }}">{{ l }}</option>{% else %}<option value="">No subs set in Render</option>{% endfor %}</select>
@@ -1598,12 +1700,17 @@ async function quickFill(){try{QK=await (await fetch('/api/quick')).json()}catch
 const n=k=>document.getElementById('n-'+k);if(!n('id').value)n('id').value=QK.next_id;if(!n('date').value)n('date').value=QK.today;
 const lt=localStorage.getItem('fo_last_tech');if(lt&&[...n('tech').options].some(o=>o.value===lt))n('tech').value=lt;
 const ty=localStorage.getItem('fo_last_type');if(ty&&!n('title').value&&[...n('type').options].some(o=>o.value===ty)){n('type').value=ty;tplOpts()}
-document.getElementById('cl-list').innerHTML=QK.clients.map(c=>'<option value="'+esc(c.name)+'"></option>').join('');markQuick()}
+document.getElementById('cl-list').innerHTML=QK.clients.map(c=>'<option value="'+esc(c.name)+'"></option>').join('');
+const sel=document.getElementById('n-customer-pick');
+if(sel){const cur=sel.value;sel.innerHTML='<option value="">Customer: choose or type a new name</option>'+QK.clients.map(c=>'<option value="'+esc(String(c.id||c.name))+'" data-name="'+esc(c.name)+'">'+esc(c.name)+'</option>').join('');if(cur)sel.value=cur}
+markQuick()}
 function markQuick(){const t=document.getElementById('n-type').value;document.querySelectorAll('.qa').forEach(b=>{b.classList.toggle('gray',b.dataset.t!==t)})}
-function quickType(t){const n=k=>document.getElementById('n-'+k);n('type').value=t;tplOpts();markQuick();autoTitle();n('customer').focus()}
+function quickType(t){const n=k=>document.getElementById('n-'+k);n('type').value=t;tplOpts();markQuick();autoTitle();(document.getElementById('n-customer-pick')||n('customer')).focus()}
 function autoTitle(){const n=k=>document.getElementById('n-'+k);const t=n('title');if(!t.value||t.dataset.auto==='1'){const c=n('customer').value.trim();t.value=n('type').value+(c?' - '+c:'');t.dataset.auto='1'}}
+function applyCompany(c){const n=k=>document.getElementById('n-'+k);if(!c)return;n('customer').value=c.name;n('company_id').value=c.id?String(c.id):'';if(!n('address').value)n('address').value=c.address||'';if(!n('phone').value)n('phone').value=c.phone||'';autoTitle()}
+function pickCompany(sel){const id=sel.value;const c=(QK&&QK.clients||[]).find(x=>String(x.id)===String(id)||x.name===id);applyCompany(c);if(!id){document.getElementById('n-company_id').value=''}}
 function pickClient(){const n=k=>document.getElementById('n-'+k);const c=(QK&&QK.clients||[]).find(x=>x.name.toLowerCase()===n('customer').value.trim().toLowerCase());
-if(c){if(!n('address').value)n('address').value=c.address;if(!n('phone').value)n('phone').value=c.phone}autoTitle()}
+if(c){applyCompany(c);const sel=document.getElementById('n-customer-pick');if(sel&&c.id)sel.value=String(c.id)}else{n('company_id').value=''}autoTitle()}
 function goSearch(){const q=(document.getElementById('q').value||'').trim();if(q.length>1)location.href='/search?q='+encodeURIComponent(q);else{document.getElementById('q').value='';load()}}
 function toggleNew(){tplOpts();const o=document.getElementById('office');o.classList.toggle('hidden');if(!o.classList.contains('hidden')){quickFill();o.scrollIntoView({behavior:'smooth'});document.getElementById('n-id').focus()}}
 async function load(){const q=(document.getElementById('q').value||'').trim();
@@ -2085,19 +2192,20 @@ fd.append('checklist',JSON.stringify(currentJob.checklist||[]));fd.append('signa
 const r=await fetch('/api/jobs/'+currentJob.id+'/complete',{method:'POST',body:fd});
 if(r.ok){const d=await r.json().catch(()=>({}));alert(currentJob.job_type==='Office Task'?'Task done':d.status==='review'?'Job finished. The office will review it.':'Job finished');showList()}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}};
 async function addJob(){const v=k=>document.getElementById('n-'+k).value.trim();
-const body={id:v('id'),title:v('title'),customer:v('customer'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
+const body={id:v('id'),title:v('title'),customer:v('customer'),company_id:v('company_id'),address:v('address'),phone:v('phone'),tech:v('tech'),scope:v('scope'),scheduled_date:v('date'),checklist:v('checklist'),job_type:v('type')};
 if(!body.id||!body.title){alert('Job ID and title are required');return}
+if(!body.customer){alert('Pick or type a customer');return}
 const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
 ['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';location.href='/?job='+encodeURIComponent(body.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 {const td=document.getElementById('today-date');if(td)td.textContent=new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})}
-if(VIEW==='new'){tplOpts();quickFill();const QS=new URLSearchParams(location.search);['customer','address'].forEach(k=>{const v=QS.get(k);if(v)document.getElementById('n-'+k).value=v});const qt=QS.get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()}else load();
+if(VIEW==='new'){tplOpts();quickFill().then(()=>{const QS=new URLSearchParams(location.search);['customer','address'].forEach(k=>{const v=QS.get(k);if(v)document.getElementById('n-'+k).value=v});const cid=QS.get('company_id');if(cid){document.getElementById('n-company_id').value=cid;const sel=document.getElementById('n-customer-pick');if(sel){sel.value=cid;pickCompany(sel)}}else if(QS.get('customer'))pickClient();const qt=QS.get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()})}else load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
 
 @app.route('/')
 def index(view='today'):
-    techs=[(n,n) for n in sub_logins()]+[(nice_name(k),nice_name(k)+' (office)') for k in sorted(USERS) if k in OFFICE_NAMES]
+    techs=[(n,n) for n in sub_logins()]+office_assignees()
     tpls=[]
     if is_office():
         conn=get_db(); tpls=[{'id':r['id'],'name':r['name'],'job_type':r['job_type'] or '','items':json.loads(r['items'] or '[]')} for r in conn.execute('SELECT * FROM checklist_templates ORDER BY name').fetchall()]; conn.close()
@@ -2165,11 +2273,30 @@ def create_job():
     chk = json.dumps([{'text': x, 'done': False} for x in (lines or (DEFAULT_CHECKLIST if jt not in NO_CLOSING_STEPS else []))])
     tech = nice_name(d.get('tech')) or default_sub()
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
-    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                 (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
+    customer=(d.get('customer') or '').strip()
+    company_id=None
+    raw_cid=d.get('company_id')
+    if raw_cid not in (None,''):
+        try: company_id=int(raw_cid)
+        except (TypeError,ValueError): company_id=None
     try:
         import fieldops_platform as _plat
-        _plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone())
+        if company_id:
+            co=conn.execute('SELECT * FROM companies WHERE id=?',(company_id,)).fetchone()
+            if not co: conn.close(); return jsonify({'error':'Customer not found'}),400
+            customer=co['name']
+        elif customer:
+            co=_plat.get_company_by_key(conn, _plat.nkey(customer))
+            if co:
+                company_id=co['id']
+                customer=co['name']
+    except Exception as e:
+        app.logger.warning('resolve company failed: %s', e)
+    conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type,company_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (jid,title,customer,(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt,company_id))
+    try:
+        import fieldops_platform as _plat
+        _plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone(), company_id=company_id)
     except Exception as e:
         app.logger.warning('link job failed: %s', e)
     conn.commit(); conn.close()
@@ -2183,7 +2310,12 @@ def quick_info():
     for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?',(pre+'%',)):
         try: top=max(top,int(r['id'][len(pre):]))
         except ValueError: pass
-    cl=[{'name':r['name'],'address':r['address'] or '','phone':r['phone'] or ''} for r in conn.execute('SELECT name,address,phone FROM clients ORDER BY name')]
+    cl=[]
+    try:
+        for r in conn.execute("SELECT id,name,billing_address,phone FROM companies WHERE IFNULL(archived,0)=0 ORDER BY name"):
+            cl.append({'id':r['id'],'name':r['name'],'address':r['billing_address'] or '','phone':r['phone'] or ''})
+    except Exception:
+        cl=[{'id':None,'name':r['name'],'address':r['address'] or '','phone':r['phone'] or ''} for r in conn.execute('SELECT name,address,phone FROM clients ORDER BY name')]
     conn.close(); return jsonify({'next_id':pre+'%04d'%(top+1),'clients':cl,'today':today_local().isoformat()})
 
 @app.route('/api/jobs/<job_id>/type', methods=['POST'])
@@ -2887,7 +3019,7 @@ input{width:100%;padding:12px;border:1px solid #e5e5e5;border-radius:10px;margin
 <div class="muted" style="margin-top:4px">{{ active|length }} active &middot; {{ done|length + surveys|length }} completed</div>
 <div style="margin-top:4px;font-weight:600">Total: {{ (jobs|sum(attribute='hours'))|round(2) }} hrs</div></div>
 {% if office %}<a class="btn" id="sys-link" href="/systems?client={{ client|urlencode }}">Installed systems and open issues</a>{% endif %}<a class="btn" href="/print/client?name={{ client|urlencode }}" target="_blank">Print Summary</a>
-{% if office %}<form method="post" action="/clients/delete" onsubmit="return confirm('Delete this client and ALL of its jobs, photos and notes? This cannot be undone.')"><input type="hidden" name="name" value="{{ client }}"><button class="btn" type="submit" style="width:100%;border:0;background:#b00020;color:#fff;font-size:1rem">Delete Client</button></form>{% endif %}
+{% if office %}<a class="btn" href="/clients/remove?name={{ client|urlencode }}" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;border:1px solid #b00020;color:#b00020;background:#fff">Remove company record</a>{% endif %}
 <div class="folder">Active Jobs</div>{% for j in active %}{{ jobcard(j, true) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
 <div class="folder">Completed Surveys</div>{% for j in surveys %}{{ jobcard(j, false) }}{% else %}<div class="muted" style="margin-bottom:12px">None</div>{% endfor %}
 <div class="folder">Completed Jobs</div>{% for j in done %}{{ jobcard(j, false) }}{% else %}<div class="muted">None</div>{% endfor %}
@@ -4994,20 +5126,40 @@ def to_order():
         if d['need']: jobs.append(d)
     return render_template_string(ORDER_HTML, jobs=jobs, total=sum(len(j['need']) for j in jobs))
 
-@app.route('/clients/delete', methods=['POST'])
+@app.route('/clients/delete', methods=['GET','POST'])
+@app.route('/clients/remove', methods=['GET','POST'])
 def delete_client():
-    if not is_office(): return ('',403)
-    k=ckey(request.form.get('name'))
-    if not k: return redirect('/clients')
+    """Remove the company/client record only. Jobs, photos and notes are kept."""
+    if not is_office(): return redirect('/')
+    name=(request.values.get('name') or '').strip()
+    k=ckey(name)
+    if not k: return redirect('/customers')
     conn=get_db()
-    for row in conn.execute('SELECT id FROM jobs WHERE LOWER(TRIM(customer))=?',(k,)).fetchall():
-        for ph in conn.execute('SELECT filename FROM photos WHERE job_id=?',(row['id'],)).fetchall():
-            try: os.remove(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(ph['filename'])))
-            except OSError: pass
-        for t in ('photos','job_updates','invoice_drafts','followups','msg_drafts','job_hours','material_requests'): conn.execute(f'DELETE FROM {t} WHERE job_id=?',(row['id'],))
-    conn.execute('DELETE FROM jobs WHERE LOWER(TRIM(customer))=?',(k,))
-    conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,)); conn.commit(); conn.close()
-    return redirect('/clients')
+    co=None
+    try:
+        import fieldops_platform as _plat
+        co=_plat.get_company_by_key(conn, k)
+    except Exception:
+        co=None
+    jobs=conn.execute('SELECT COUNT(*) AS n FROM jobs WHERE company_id=? OR (company_id IS NULL AND LOWER(TRIM(customer))=?)',(co['id'] if co else -1, k)).fetchone()['n']
+    if request.method=='GET' or request.form.get('confirm')!='yes':
+        conn.close()
+        body='<div class="fo-card"><p>This removes the company record for <b>%s</b>.</p><p>Jobs stay in Field Ops. Nothing is cascade-deleted: this will not delete the %d job%s, photos or notes.</p>'%(h(name), jobs, '' if jobs==1 else 's')
+        if not jobs:
+            body+='<p class="muted">There are no jobs linked to this company.</p>'
+        body+='<form method="post" action="/clients/remove"><input type="hidden" name="name" value="%s"><input type="hidden" name="confirm" value="yes"><button class="big-btn" type="submit" style="background:#b00020">Remove company record</button></form>'%h(name)
+        body+='<a class="big-btn gray" href="%s">Cancel</a></div>'%('/customers/%d'%co['id'] if co else '/customers')
+        return ops_page('Remove company', body, back='/customers')
+    # Confirmed: archive company, drop legacy clients row, keep jobs.
+    try:
+        import fieldops_platform as _plat
+        if co:
+            _plat.archive_company(conn, co['id'])
+    except Exception as e:
+        app.logger.warning('archive company failed: %s', e)
+    conn.execute('DELETE FROM clients WHERE LOWER(TRIM(name))=?',(k,))
+    conn.commit(); conn.close()
+    return redirect('/customers')
 
 @app.route('/clients/add', methods=['POST'])
 def add_client():
@@ -6490,6 +6642,8 @@ def serve():
 
 import fieldops_platform
 fieldops_platform.register(sys.modules[__name__])
+import fieldops_users
+fieldops_users.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
