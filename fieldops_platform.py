@@ -488,11 +488,11 @@ def rename_company(conn, company_id, new_name):
 
 
 SHARED_PATHS = ('/customers', '/clients', '/contacts', '/sites', '/search', '/systems')
-SKIP_AREA_PATHS = ('/login', '/logout', '/hub/', '/s/', '/uploads/', '/healthz', '/static/', '/sw.js', '/offline', '/api/', '/manifest.webmanifest')
+SKIP_AREA_PATHS = ('/login', '/logout', '/hub/', '/q/', '/s/', '/uploads/', '/healthz', '/static/', '/sw.js', '/offline', '/api/', '/manifest.webmanifest')
 
 def is_estimate_path(path):
     path = path or ''
-    if path == '/quote' or path.startswith('/quote/'):
+    if path == '/quote' or path.startswith('/quote/') or path.startswith('/quotes') or path.startswith('/catalog'):
         return True
     # Only the job or portal estimate routes, never a shared path that happens to contain the letters.
     if path.startswith('/job/') or path.startswith('/hub/'):
@@ -1356,20 +1356,21 @@ def register(fo):
             'amount': ('%g' % row['amount']) if row['amount'] else '', 'notes': row['notes'] or '',
         }
         form = _opp_form(vals, '/opportunities/%d' % oid, 'Save opportunity', companies, contacts, sites)
-        extra = '<div class="plat-panel"><h2>Next step</h2><div class="muted">A later step will turn an accepted quote into a job automatically. For now you can start a job with this customer and site filled in. Nothing is sent to the client.</div>'
+        extra = '<div class="plat-panel"><h2>Next step</h2><div class="muted">Start a quote from this opportunity. Prices stay in the office until you share the client link. Nothing is sent from the app.</div>'
+        extra += '<a class="plat-btn plat-btn-gold" href="/quotes/new?opportunity_id=%d">Start quote</a>' % oid
         if row['job_id']:
-            extra += '<p>Linked job: <a href="/?job=%s">%s</a></p>' % (urllib.parse.quote(row['job_id']), h(row['job_id']))
+            extra += ' <a class="plat-btn plat-btn-ghost" href="/?job=%s">Open job %s</a>' % (urllib.parse.quote(row['job_id']), h(row['job_id']))
         else:
             q = urllib.parse.urlencode({
-                't': 'Survey',
+                't': 'Install',
                 'customer': (co['name'] if co else ''),
                 'address': (site['address'] if site else ''),
                 'phone': (contact['phone'] if contact and contact['phone'] else (co['phone'] if co else '')),
                 'title': row['title'],
+                'company_id': str(row['company_id'] or ''),
                 'opp': str(oid),
             })
-            extra += '<a class="plat-btn plat-btn-gold" href="/new-job?%s">Start a job from this</a>' % h(q)
-            extra += ' <a class="plat-btn plat-btn-ghost" href="/quote">Go to estimates</a>'
+            extra += ' <a class="plat-btn plat-btn-ghost" href="/new-job?%s">Start a job from this</a>' % h(q)
         extra += '</div>'
         conn.close()
         if msg:

@@ -348,7 +348,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not has_any_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -505,6 +505,9 @@ def offline_page(): return OFFLINE_HTML
 @app.after_request
 def add_tap_css(resp):
     try:
+        # /healthz must stay a plain "ok" for Render. Public quote and share links keep their own markup.
+        if request.path=='/healthz' or request.path.startswith(('/q/','/s/')):
+            return resp
         if resp.mimetype=='text/html' and not resp.direct_passthrough and resp.status_code<400 or resp.mimetype=='text/html' and resp.status_code==503:
             h=resp.get_data(as_text=True)
             if 'id="tap-css"' not in h:
@@ -791,7 +794,7 @@ def shell_links(path, office):
     if area=='sales':
         main=[('/sales','Home'),('/opportunities','Opportunities'),('/customers','Customers')]
     elif area=='quote':
-        main=[('/quote','Estimates'),('/customers','Customers')]
+        main=[('/quote','Estimates'),('/catalog','Catalog'),('/customers','Customers')]
     else:
         main=[('/','Today'),('/jobs','Jobs'),('/schedule','Schedule'),('/customers','Customers')]
     def on_url(u):
@@ -1408,6 +1411,8 @@ def init_db():
     try:
         import fieldops_users as _users
         _users.init_schema(conn)
+        import fieldops_quote as _quote
+        _quote.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -6644,6 +6649,8 @@ import fieldops_platform
 fieldops_platform.register(sys.modules[__name__])
 import fieldops_users
 fieldops_users.register(sys.modules[__name__])
+import fieldops_quote
+fieldops_quote.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
