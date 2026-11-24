@@ -1485,6 +1485,8 @@ def init_db():
         _qboimp.init_schema(conn)
         import fieldops_security as _sec
         _sec.init_schema(conn)
+        import fieldops_areas as _areas
+        _areas.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -6812,6 +6814,8 @@ import fieldops_qbo_import
 fieldops_qbo_import.register(sys.modules[__name__])
 import fieldops_security
 fieldops_security.register(sys.modules[__name__])
+import fieldops_areas
+fieldops_areas.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
