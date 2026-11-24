@@ -14,7 +14,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 _CACHE = {'at': 0, 'users': {}}
 CACHE_SECS = 2
-ROLES = (('field', 'Field'), ('office', 'Office'))
+ROLES = (('field', 'Field'), ('office', 'Office'), ('estimator', 'Estimator'))
+ROLE_LABELS = dict(ROLES)
+
+
+def role_label(role):
+    return ROLE_LABELS.get(role or '', (role or 'Field').title())
+
 
 
 def nkey(name):
@@ -98,6 +104,9 @@ def active_user(name_key):
 def office_keys():
     return {k for k, u in _load().items() if u['active'] and u['role'] == 'office'}
 
+def estimator_keys():
+    return {k for k, u in _load().items() if u['active'] and u['role'] == 'estimator'}
+
 
 def active_field_users():
     return [u for u in _load().values() if u['active'] and u['role'] == 'field']
@@ -134,8 +143,8 @@ def add_user(conn, name, role, password, created_by, env_keys=None):
     key = nkey(name)
     if not key:
         return None, 'Name is required.'
-    if role not in ('field', 'office'):
-        return None, 'Role must be Field or Office.'
+    if role not in ROLE_LABELS:
+        return None, 'Role must be Field, Office, or Estimator.'
     ok, err = password_ok(password)
     if not ok:
         return None, err
@@ -179,8 +188,8 @@ def set_active(conn, user_id, active, actor_key=None):
 
 
 def set_role(conn, user_id, role, actor_key=None):
-    if role not in ('field', 'office'):
-        return 'Role must be Field or Office.'
+    if role not in ROLE_LABELS:
+        return 'Role must be Field, Office, or Estimator.'
     row = conn.execute('SELECT * FROM app_users WHERE id=?', (user_id,)).fetchone()
     if not row:
         return 'User not found.'
@@ -225,7 +234,7 @@ def register(fo):
                 body += (
                     '<li><b>%s</b> <span class="plat-pill">%s</span>'
                     '<div class="muted">Set in Render. Password is not shown. Role comes from OFFICE_NAMES.</div></li>'
-                    % (h(e['name']), 'Office' if e['role'] == 'office' else 'Field'))
+                    % (h(e['name']), role_label(e['role'])))
             body += '</ul>'
         else:
             body += '<div class="muted">No Render NAME_PASSWORD logins are set.</div>'
@@ -236,7 +245,7 @@ def register(fo):
             for r in db_rows:
                 st = 'Active' if r['active'] else 'Deactivated'
                 body += '<li><b>%s</b> <span class="plat-pill">%s</span> <span class="muted">%s</span>' % (
-                    h(r['name']), 'Office' if r['role'] == 'office' else 'Field', st)
+                    h(r['name']), role_label(r['role']), st)
                 if r['active']:
                     body += (
                         '<div class="plat-mini-actions">'
@@ -260,7 +269,7 @@ def register(fo):
             '<h2 style="margin-top:0">Add user</h2>'
             '<label>Name</label><input name="name" required maxlength="80" autocomplete="off">'
             '<div class="plat-row"><div><label>Role</label><select name="role">'
-            '<option value="field">Field</option><option value="office">Office</option>'
+            '<option value="field">Field</option><option value="office">Office</option><option value="estimator">Estimator</option>'
             '</select></div></div>'
             '<label>Password</label><input name="password" type="password" required autocomplete="new-password">'
             '<div class="muted">At least 10 characters, mix letters with numbers or symbols.</div>'

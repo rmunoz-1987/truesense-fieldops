@@ -238,8 +238,20 @@ def office_name_set():
 def is_office():
     k = me().lower()
     return bool(k) and k in office_name_set()
+def is_estimator():
+    k = me().lower()
+    if not k or is_office():
+        return False
+    try:
+        import fieldops_users as _users
+        u = _users.active_user(k)
+        return bool(u and u.get('role')=='estimator')
+    except Exception:
+        return False
+def may_estimate():
+    return is_office() or is_estimator()
 def can_see(job):
-    if is_office(): return True
+    if is_office() or is_estimator(): return True
     mek=(me() or '').lower()
     if ' '.join((job['tech'] or '').split()).lower()==mek: return True
     fn=globals().get('ops_sub_on_job')
@@ -361,7 +373,7 @@ def require_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
         return (jsonify({'error':'login required'}), 401) if request.path.startswith(('/api','/uploads')) else redirect('/login')
-    if not is_office() and request.path not in ('/agreement', '/agreement/sign', '/logout') and not request.path.startswith('/agreement/copy/'):
+    if not is_office() and not is_estimator() and request.path not in ('/agreement', '/agreement/sign', '/logout') and not request.path.startswith('/agreement/copy/'):
         conn=get_db(); blocked=agreement_required(conn) and not signed_current(conn, me()); conn.close()
         if blocked: return (jsonify({'error':'Sign the Subcontractor Agreement first'}), 403) if request.path.startswith(('/api','/uploads')) else redirect('/agreement')
 
@@ -677,6 +689,7 @@ html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var
 .fo-kpi.hot b{color:#b3261e}.fo-cap{display:block;font-style:normal;color:var(--muted);font-size:.72rem;margin-top:2px}
 .fo-empty{background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:16px;color:var(--muted);text-align:center}
 html.fo-shell body:has(.plat-head) > a.fo-back,html.fo-shell body:has(.plat-head) > h1{display:none!important}
+html.fo-estimator .fo-switch,html.fo-estimator .fo-fab-btn{display:none!important}
 /* Platform record pages */
 .plat-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 20px;margin:8px 0 18px}
 .plat-kicker{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
@@ -839,8 +852,10 @@ def initials_of(name):
     if len(parts)==1: return parts[0][:2].upper()
     return (parts[0][0]+parts[-1][0]).upper()
 
-def more_tool_groups(office=True):
+def more_tool_groups(office=True, estimator=False):
     """Grouped More links as icon + label rows. No money items for subs."""
+    if estimator:
+        return [('Work', [('/floor-plans','Floor Plans','plan'),('/sales','Sales pipeline','chart'),('/catalog','Catalog','box')])]
     if not office:
         return [('For you', [('/floor-plans','Floor Plans','plan'),('/me','My settings','me'),('/agreement','Agreement','pen'),('/my-schedule','My schedule','cal')])]
     return [
@@ -861,18 +876,19 @@ def more_tool_groups(office=True):
         ]),
     ]
 
-def more_tool_items(office=True):
+def more_tool_items(office=True, estimator=False):
     items=[]
-    for _g, rows in more_tool_groups(office):
+    for _g, rows in more_tool_groups(office, estimator=estimator):
         items.extend(rows)
     return items
 
-def more_path_prefixes(office=True):
+def more_path_prefixes(office=True, estimator=False):
     prefs=['/more']
-    for u,_,_ in more_tool_items(office):
+    for u,_,_ in more_tool_items(office, estimator=estimator):
         if u not in prefs:
             prefs.append(u)
-    for extra in ('/quotes','/catalog','/money','/opportunities','/tasks'):
+    extras=('/quotes','/catalog','/opportunities','/tasks') if estimator else ('/quotes','/catalog','/money','/opportunities','/tasks')
+    for extra in extras:
         if extra not in prefs:
             prefs.append(extra)
     return prefs
@@ -883,17 +899,26 @@ def path_in_prefixes(path, prefixes):
             return True
     return False
 
-def more_back_html(path, office):
+def more_back_html(path, office, estimator=False):
     """Phone-only Back to More on every page opened from the More tab."""
-    if not office or path=='/more' or path.startswith('/more/'):
+    if (not office and not estimator) or path=='/more' or path.startswith('/more/'):
         return ''
-    if not path_in_prefixes(path, more_path_prefixes(True)):
+    prefs=more_path_prefixes(office, estimator=estimator)
+    if not path_in_prefixes(path, prefs):
         return ''
     return '<a class="fo-more-back" href="/more">&larr; Back</a>'
 
-def phone_tab_items(path, office):
-    """At most four phone tabs. Office: Today, Jobs, Customers, More. Subs: My Jobs, Floor Plans, Help."""
-    if office:
+def phone_tab_items(path, office, estimator=False):
+    """At most four phone tabs. Office: Today, Jobs, Customers, More. Estimator: Today, Quotes, Customers, More. Subs: My Jobs, Floor Plans, Help."""
+    if estimator:
+        tabs=[('/','Today','today'),('/quote','Quotes','note'),('/customers','Customers','clients'),('/more','More','more')]
+        groups={
+            'today':('/',),
+            'note':('/quote','/quotes'),
+            'clients':('/customers','/clients','/contacts','/sites','/systems'),
+            'more': tuple(more_path_prefixes(False, estimator=True)),
+        }
+    elif office:
         tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/customers','Customers','clients'),('/more','More','more')]
         groups={
             'today':('/',),
@@ -917,9 +942,9 @@ def phone_tab_items(path, office):
     html+='</nav>'
     return html
 
-def more_list_html(office=True):
+def more_list_html(office=True, estimator=False):
     parts=[]
-    for group, rows in more_tool_groups(office):
+    for group, rows in more_tool_groups(office, estimator=estimator):
         parts.append('<section class="fo-more-group"><h2>%s</h2><div class="fo-more-rows">'%h(group))
         for u,lab,ico in rows:
             parts.append('<a class="fo-more-row" href="%s">%s<span>%s</span></a>'%(h(u),ICONS.get(ico,''),h(lab)))
@@ -942,7 +967,17 @@ def shell_tabs(path, office):
         return False
     return ''.join('<a href="%s" class="%s"%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(u,'on' if on(k) else '',' aria-current="page"' if on(k) else '',ICONS[k],lab) for u,lab,k in tabs)
 
-def shell_links(path, office):
+def shell_links(path, office, estimator=False):
+    if estimator:
+        main=[('/','Today'),('/quote','Quotes'),('/customers','Customers'),('/sales','Sales'),('/floor-plans','Floor Plans'),('/catalog','Catalog')]
+        def est_on(u):
+            if u=='/' and path=='/': return True
+            if u!='/' and (path==u or path.startswith(u.rstrip('/')+'/')): return True
+            if u=='/customers' and path.startswith(('/clients','/contacts','/sites','/systems')): return True
+            if u=='/quote' and path.startswith('/quotes'): return True
+            if u=='/sales' and path.startswith(('/opportunities','/tasks')): return True
+            return False
+        return ''.join('<a href="%s" class="%s"%s>%s</a>'%(h(u),'on' if est_on(u) else '',' aria-current="page"' if est_on(u) else '',h(lab)) for u,lab in main)
     area=plat_area(path)
     more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/tickets','Service tickets'),('/compliance','Sub compliance'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
@@ -968,7 +1003,7 @@ def shell_links(path, office):
     html+='</div></details>'
     return html
 
-def shell_html(path, office, q=''):
+def shell_html(path, office, q='', estimator=False):
     who=me() or ''
     search_btn=('<button class="fo-icon-btn ghost fo-search-btn" type="button" aria-label="Search" onclick="foSearch()">%s</button>'%ICONS['search'])
     search_form=('<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search customers, jobs, notes" aria-label="Search" autocomplete="off"></form>'%(ICONS['search'], h(q)))
@@ -977,15 +1012,15 @@ def shell_html(path, office, q=''):
                '<button type="button" id="fo-theme" onclick="foTheme(document.documentElement.getAttribute(&quot;data-theme&quot;)===&quot;dark&quot;?&quot;light&quot;:&quot;dark&quot;)">Dark mode</button>'
                '<button type="button" onclick="foLogout()">Log out</button>'
                '</div></details>'%(h(who), h(initials_of(who)), '<a href="/settings">Office settings</a>' if office else ''))
-    tabs=phone_tab_items(path, office)
-    back=more_back_html(path, office)
-    if not office:
+    tabs=phone_tab_items(path, office, estimator=estimator)
+    back=more_back_html(path, office, estimator=estimator)
+    if not office and not estimator:
         top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
              +search_btn+search_form+'<div class="fo-tools">'+user_menu+'</div></header>')
         return top, tabs
     area=plat_area(path)
     switch=''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if area==k else '',lab) for k,u,lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')))
-    links=shell_links(path, office)
+    links=shell_links(path, office, estimator=estimator)
     top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
          '<nav class="fo-switch" aria-label="Area">%s</nav>'
          '<nav class="fo-links" aria-label="Main">%s</nav>'
@@ -1027,8 +1062,14 @@ SHELL_SKIP = ('/design/','/hub/','/s/','/p/','/help-photo/','/print/','/agreemen
 def apply_shell(html, path):
     if 'id="shell-css"' in html or not me() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
     office=is_office()
-    top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
-    cls='fo-shell' if office else 'fo-phone-shell'
+    estimator=is_estimator()
+    top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '', estimator=estimator)
+    if office:
+        cls='fo-shell'
+    elif estimator:
+        cls='fo-shell fo-estimator'
+    else:
+        cls='fo-phone-shell'
     html=html.replace('<html','<html class="%s" data-theme="%s"'%(cls, theme_of(me())),1)
     html=html.replace('</head>',SHELL_CSS+'</head>',1)
     i=html.find('>',html.find('<body'))+1
@@ -1066,12 +1107,15 @@ def money_page():
 
 @app.route('/more')
 def more_page():
+    if is_estimator():
+        return ops_page('More', more_list_html(False, estimator=True), back=False)
     if not is_office(): return redirect('/')
     return ops_page('More', more_list_html(True), back=False)
 
 def me_settings_body():
     dark=theme_of(me())=='dark'
-    return ('<div class="fo-card" style="margin-bottom:12px"><b style="margin:0">%s</b><small>%s</small></div>'%(h(me()),'Office' if is_office() else 'Sub')+
+    role_lab='Office' if is_office() else ('Estimator' if is_estimator() else 'Sub')
+    return ('<div class="fo-card" style="margin-bottom:12px"><b style="margin:0">%s</b><small>%s</small></div>'%(h(me()),role_lab)+
             '<button id="fo-theme" class="big-btn gray" onclick="foTheme(document.documentElement.getAttribute(\'data-theme\')===\'dark\'?\'light\':\'dark\')">%s</button>'%('Dark mode is on' if dark else 'Dark mode is off'))
 
 @app.route('/settings', methods=['GET','POST'])
@@ -1174,8 +1218,43 @@ def utc_day(iso):
 
 # ---------- Today dashboard ----------
 def week_start(d): return d-timedelta(days=d.weekday())
+def estimator_today_payload():
+    """Quotes to finish, surveys still open, and follow-ups due."""
+    conn=get_db(); ti=today_local().isoformat()
+    quotes=[]
+    for r in conn.execute(
+        """SELECT q.id,q.title,q.status,q.total,q.updated_at,c.name AS company
+           FROM quotes q LEFT JOIN companies c ON c.id=q.company_id
+           WHERE IFNULL(q.status,'draft') IN ('draft','')
+           ORDER BY q.updated_at DESC LIMIT 40"""):
+        quotes.append({
+            'id': r['id'], 'title': r['title'] or 'Quote', 'status': r['status'] or 'draft',
+            'total': r['total'] or 0, 'company': r['company'] or '',
+            'href': '/quotes/%d'%r['id'],
+            'detail': (r['company'] or '') + ((' · '+money(r['total'])) if r['total'] else ''),
+        })
+    surveys=[]
+    for r in conn.execute("SELECT id,title,customer,address,status FROM jobs WHERE job_type='Survey' AND status!='completed' ORDER BY created_at DESC LIMIT 40"):
+        surveys.append({
+            'id': r['id'], 'title': r['title'] or r['id'], 'customer': r['customer'] or '',
+            'address': r['address'] or '', 'status': r['status'],
+            'href': '/?job='+urllib.parse.quote(r['id']),
+            'detail': r['customer'] or r['address'] or r['id'],
+        })
+    follow=[]
+    try:
+        for r in conn.execute("SELECT id,note,due,job_id FROM followups WHERE done=0 AND due<=? ORDER BY due LIMIT 40",(ti,)):
+            href=('/?job='+urllib.parse.quote(r['job_id'])) if r['job_id'] else '/sales'
+            follow.append({'id': r['id'], 'title': r['note'] or 'Follow-up', 'detail': 'Due '+str(r['due'] or ''), 'href': href})
+    except Exception:
+        follow=[]
+    conn.close()
+    return {'quotes': quotes, 'surveys': surveys, 'followups': follow}
+
 @app.route('/api/today')
 def api_today():
+    if is_estimator():
+        return jsonify(estimator_today_payload())
     if not is_office(): return jsonify({'error':'Office only'}),403
     conn=get_db(); t=today_local(); ti=t.isoformat(); mo=ti[:7]
     try: make_reminders(conn)
@@ -1203,6 +1282,10 @@ def api_today():
     def add(n,title,detail,icon,href,btn,tone=''):
         if n: acts.append({'n':n,'title':title,'detail':detail,'icon':ICONS[icon],'href':href,'btn':btn,'tone':tone})
     if help_: add(len(help_),'Sub needs help',', '.join((r['customer'] or r['id']) for r in help_[:3]),'alert',one(help_,'help')['href'],'Help','red')
+    ready_est=list(conn.execute("SELECT q.id,q.title,c.name AS company FROM quotes q LEFT JOIN companies c ON c.id=q.company_id WHERE q.status='ready' ORDER BY q.updated_at DESC"))
+    if ready_est:
+        href=('/quotes/%d'%ready_est[0]['id']) if len(ready_est)==1 else '/quote'
+        add(len(ready_est),'Ready for Roland',', '.join((r['title'] or r['company'] or 'Quote') for r in ready_est[:3]),'note',href,'Open','red')
     add(len(sign),'Needs your signature',', '.join(nice_name(r['sub']) for r in sign[:3])+' signed the agreement','pen','/agreement#pending','Sign','red')
     if review: o=one(review,'review'); add(len(review),'Needs review',', '.join((r['customer'] or r['id']) for r in review[:3]),'check',o['href'],'Review')
     add(len(ready),'Ready to invoice',', '.join((r['customer'] or r['job_id']) for r in ready[:3]),'money','/qbo','Export')
@@ -1769,9 +1852,29 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
   <div class="sub">Field Ops</div>{% if office %}<div id="today-date" class="muted" style="font-size:.9rem;margin-top:2px"></div>{% endif %}
   <div style="font-size:.85rem;color:#666;margin-top:4px">{{ name }} &middot; <a href="/logout" style="color:#666" onclick="if(!confirm('Log out?'))return false;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout');localStorage.removeItem('fo-q')}catch(e){}">Log out</a></div>
 </div>
-<div id="home"{% if office %} class="dash"{% endif %}>
-{% if office %}<main>
-{% if office and view=='today' %}<div id="today">
+<div id="home"{% if office or estimator %} class="dash"{% endif %}>
+{% if office or estimator %}<main>
+{% if estimator and view=='today' %}<div id="est-today">
+<div class="fo-hello"><h1>Hello, {{ name }}</h1><div class="muted">Quotes, surveys and follow-ups.</div>
+<p class="fo-phone-only fo-phone-primary-wrap"><a class="big-btn" href="/quotes/new">New quote</a></p>
+<p class="fo-desk-only fp-today-actions" style="margin-top:10px"><a class="big-btn" href="/quotes/new" style="display:inline-flex;width:auto;min-width:180px;text-decoration:none;padding:12px 18px">New quote</a> <a class="big-btn gray" href="/new-job?t=Survey" style="display:inline-flex;width:auto;min-width:180px;text-decoration:none;padding:12px 18px">New survey</a></p>
+</div>
+<h2 class="fo-h">Quotes to finish</h2><div id="est-quotes"><div class="fo-skel" style="height:68px;margin-bottom:10px"></div></div>
+<h2 class="fo-h">Surveys pending</h2><div id="est-surveys"><div class="fo-skel" style="height:68px;margin-bottom:10px"></div></div>
+<h2 class="fo-h">Follow-ups</h2><div id="est-follow"><div class="fo-skel" style="height:68px;margin-bottom:10px"></div></div>
+</div>
+<script>
+(function(){
+function estRow(x){const a=document.createElement('a');a.className='fo-act';a.href=x.href||'#';const t=document.createElement('div');t.className='fo-at';const b=document.createElement('b');b.textContent=x.title||'Item';const s=document.createElement('small');s.textContent=x.detail||'';t.append(b,s);a.appendChild(t);return a;}
+function estList(id,items,empty){const n=document.getElementById(id);if(!n)return;n.innerHTML='';if(!items||!items.length){n.className='fo-empty';n.textContent=empty;return;}n.className='';items.forEach(function(x){n.appendChild(estRow(x));});}
+fetch('/api/today').then(function(r){return r.json()}).then(function(d){
+estList('est-quotes',d.quotes,'No quotes to finish.');
+estList('est-surveys',d.surveys,'No surveys pending.');
+estList('est-follow',d.followups,'No follow-ups due.');
+}).catch(function(){estList('est-quotes',[],'Could not load quotes.');});
+})();
+</script>
+{% elif office and view=='today' %}<div id="today">
 <div class="fo-hello"><h1 id="fo-hello">Hello, {{ name }}</h1><div class="muted" id="fo-hello2">Loading your day...</div>
 <div class="fp-today-actions fo-desk-only" style="margin-top:10px"><a href="/floor-plans" class="big-btn" style="display:inline-flex;width:auto;min-width:180px;text-decoration:none;padding:12px 18px">Floor Plans</a></div>
 <p class="fo-phone-only fo-phone-primary-wrap"><a class="big-btn" href="/new-job">New job</a></p></div>
@@ -1783,19 +1886,19 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <section class="fo-desk-today"><h2 class="fo-h">Subs on the clock</h2><div id="fo-live"></div>
 <h2 class="fo-h">Recent activity</h2><div id="fo-feed"></div></section>
 </div>{% endif %}
-<div{% if view in ('new','today') %} style="display:none"{% endif %}>
+{% if office %}<div{% if view in ('new','today') %} style="display:none"{% endif %}>
 <p class="fo-phone-only fo-phone-primary-wrap">{% if office %}<a class="big-btn" href="/new-job">New job</a>{% endif %}</p>
 <div class="tiles tiles4"><button class="tile t-active" data-f="active" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/></svg></span><b id="t-active">0</b><span class="tl">Active Jobs</span></button><button class="tile t-help" data-f="help" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg></span><b id="t-help">0</b><span class="tl">Needs Help</span></button><button class="tile t-surveys" data-f="surveys" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><b id="t-surveys">0</b><span class="tl">Surveys Pending</span></button><button class="tile t-today" data-f="today" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span><b id="t-today">0</b><span class="tl">Scheduled Today</span></button></div>
 <button class="big-btn gray" id="f-all" style="display:none" onclick="setF('')">All Jobs</button>
 <div class="mgrid main"><a href="/new-job" class="mbtn prime"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New Job</span></a><a href="/floor-plans" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10M8 7h.01M12 7h.01M16 7h.01"/></svg><span>Floor Plans</span></a><a href="/clients" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2 .4 3.4 2 4 4.5"/></svg><span>Clients &amp; Surveys</span></a><a href="/calendar" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg><span>Calendar</span></a><a href="/to-order" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.5h11.6L22 7H6"/></svg><span>To Order</span></a><a href="/techs" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/></svg><span>Subs</span></a><a href="/history" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg><span>Job History</span></a></div>
 <details class="more-box"><summary>Other lists</summary><div class="tiles"><button class="tile" data-f="progress" onclick="setF(this.dataset.f)"><b id="t-progress">0</b>In Progress</button><button class="tile" data-f="review" onclick="setF(this.dataset.f)"><b id="t-review">0</b>Needs Review</button><button class="tile" data-f="invoice" onclick="setF(this.dataset.f)"><b id="t-invoice">0</b>Ready to Invoice</button><button class="tile" data-f="follow" onclick="setF(this.dataset.f)"><b id="t-follow">0</b>Follow-ups Due</button><button class="tile" data-f="texts" onclick="setF(this.dataset.f)"><b id="t-texts">0</b>Texts to Review</button><button class="tile" id="tile-docs" onclick="location.href='/techs'"><b id="t-docs">0</b>Sub Docs Due</button><button class="tile" id="tile-sign" onclick="location.href='/agreement#pending'"><b id="t-sign">0</b>Needs Your Signature</button></div></details>
 <details class="more-box"><summary>More tools</summary><div class="mgrid small"><a href="/schedule" class="big-btn gray">Schedule</a><a href="/checklists" class="big-btn gray">Checklists</a><a href="/agreement" class="big-btn gray">Agreement</a><a href="/revenue" class="big-btn gray">Revenue</a><a href="/timelog" class="big-btn gray">Time Log</a><a href="/safety" class="big-btn gray">Safety</a><a href="/qbo" class="big-btn gray">QuickBooks</a><a href="/reports" class="big-btn gray">Reports</a><a href="/plans" class="big-btn gray">Service Plans</a><a href="/equipment" class="big-btn gray">Equipment</a><a href="/stock" class="big-btn gray">Stock{% if low_n %} <span style="background:#c62828;color:#fff;border-radius:8px;padding:0 6px">{{ low_n }} low</span>{% endif %}</a></div></details>
-</div>{% endif %}
-{% if not office %}<div class="mgrid main fo-desk-only" style="margin:8px 0 12px"><a href="/floor-plans" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10M8 7h.01M12 7h.01M16 7h.01"/></svg><span>Floor Plans</span></a></div>{% endif %}
-{% if not office and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
-{% if not office %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
+</div>{% endif %}{% endif %}
+{% if not office and not estimator %}<div class="mgrid main fo-desk-only" style="margin:8px 0 12px"><a href="/floor-plans" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10M8 7h.01M12 7h.01M16 7h.01"/></svg><span>Floor Plans</span></a></div>{% endif %}
+{% if not office and not estimator and agr %}{% if agr.signed %}<a href="/agreement" style="display:block;text-align:center;color:#666;margin:6px 0">My signed Subcontractor Agreement (v{{ agr.version }})</a>{% else %}<a href="/agreement" class="big-btn" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:8px 0">Please sign the Subcontractor Agreement (v{{ agr.version }})</a>{% endif %}{% endif %}
+{% if not office and not estimator %}<button id="push-btn" class="big-btn hidden" onclick="pushOn()">Turn on job alerts</button><div id="push-hint" class="hidden" style="text-align:center;color:#666;margin:6px 0">For job alerts on iPhone: tap Share, then Add to Home Screen, then open Field Ops from your home screen.</div>{% endif %}
 <div id="search-box" class="row" style="align-items:center{% if view=='new' %};display:none{% endif %}"><input type="search" id="q" placeholder="Search client, address, job, note, serial" onkeydown="if(event.key==='Enter')goSearch()"><button class="big-btn gray" style="flex:0 0 90px" onclick="goSearch()">Search</button></div>
-{% if office and view=='new' %}<div id="office" class="job"><a href="/jobs" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:0 0 8px">&larr; Back</a><h2 style="margin:4px 0 8px">New Job</h2>
+{% if (office or estimator) and view=='new' %}<div id="office" class="job"><a href="{% if estimator %}/{% else %}/jobs{% endif %}" class="big-btn gray" style="display:block;text-align:center;text-decoration:none;box-sizing:border-box;margin:0 0 8px">&larr; Back</a><h2 style="margin:4px 0 8px">New Job</h2>
 <div class="row" style="flex-wrap:wrap;gap:6px">{% for t in job_types %}<button class="big-btn gray qa" style="flex:1 1 45%" data-t="{{ t }}" onclick="quickType(this.dataset.t)">+ {{ t }}</button>{% endfor %}</div>
 <datalist id="cl-list"></datalist>
 <input type="text" id="n-id" placeholder="Job ID (e.g. TS-2026-0144)">
@@ -1856,7 +1959,7 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 <div class="ptitle" style="font-size:1.2rem">5. Site Contact</div><input type="text" id="sv-contact_name" placeholder="Contact name"><input type="tel" id="sv-contact_phone" placeholder="Contact phone"><a id="sv-call" class="big-btn gray" style="display:none">Call Contact</a>
 {% if office %}<div id="sv-expect" class="muted" style="margin:6px 0"></div><div class="ptitle">Rough Materials &amp; Labor (office only)</div><textarea id="sv-office" rows="3" placeholder="Rough materials and labor notes"></textarea>{% endif %}
 <button class="big-btn hidden" id="sv-save" onclick="saveSurvey()">Save Changes</button>
-{% if office %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button><button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
+{% if office or estimator %}<button id="sv-edit" class="big-btn hidden" style="background:#6a1b9a;font-size:1.3rem" onclick="svEditing=true;renderKelly()">Edit Survey</button>{% endif %}{% if office %}<button id="sv-tojob" class="big-btn green hidden" style="font-size:1.3rem" onclick="surveyToJob()">Create Job from Survey</button>{% endif %}
 {% if office %}<div id="kelly-box"><div id="kelly-note" style="font-weight:700;font-size:1.1rem;color:#6a1b9a;text-align:center"></div></div>{% endif %}</div></div>
 <div id="sec-review">{% if office %}<div id="review-box" class="job hidden" style="border:2px solid #e69500;background:#fffaf0"><div style="font-weight:700;font-size:1.2rem;color:#b26a00">Needs Review</div>
 <div id="review-info" style="margin:4px 0"></div><div class="muted">Check the photos, as-built and notes on this job. Approve makes the invoice draft. Nothing is sent.</div>
@@ -2416,7 +2519,7 @@ document.querySelectorAll('#survey-card input,#survey-card textarea').forEach(e=
 document.getElementById('sv-add').classList.toggle('hidden',lock);document.getElementById('sv-save').classList.toggle('hidden',!(done&&svEditing));
 const ed=document.getElementById('sv-edit');if(ed)ed.classList.toggle('hidden',!lock);const tj=document.getElementById('sv-tojob');if(tj)tj.classList.toggle('hidden',!lock);
 const n=document.getElementById('kelly-note');if(n)n.textContent=currentJob.kelly_at?'Sent to Kelly \u00b7 '+currentJob.kelly_at:'';
-if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);const la=lock&&!{{ office|tojson }};document.getElementById('update-note').classList.toggle('hidden',la);document.getElementById('log-add').classList.toggle('hidden',la);renderDevices()}
+if(currentJob.job_type==='Survey')document.getElementById('finish').classList.toggle('hidden',done);const la=lock&&!({{ office|tojson }}||{{ estimator|tojson }});document.getElementById('update-note').classList.toggle('hidden',la);document.getElementById('log-add').classList.toggle('hidden',la);renderDevices()}
 function fillSurvey(){svEditing=false;devType='';devSel=null;devMove=null;devUndo=[];renderKelly();const s=currentJob.survey||{};SV_TEXT.forEach(k=>document.getElementById('sv-'+k).value=s[k]||'');
 if(!s.site_conditions)document.getElementById('sv-site_conditions').value=legacyCond(s);const o=document.getElementById('sv-office');if(o)o.value=currentJob.survey_office||'';const ex=document.getElementById('sv-expect');if(ex)ex.textContent=(s.timeline||s.budget||s.decision_maker)?'Earlier entry (office only): Timeline '+(s.timeline||'-')+' \u00b7 Budget '+(s.budget||'-')+' \u00b7 Decision maker '+(s.decision_maker||'-'):'';svCall()}
 async function saveSurvey(quiet){const s=Object.assign({},currentJob.survey||{});SV_TEXT.forEach(k=>s[k]=document.getElementById('sv-'+k).value);
@@ -2478,6 +2581,7 @@ const r=await fetch('/api/jobs',{method:'POST',headers:{'Content-Type':'applicat
 if(r.ok){try{localStorage.setItem('fo_last_tech',body.tech);localStorage.setItem('fo_last_type',body.job_type)}catch(e){}
 ['id','title','customer','address','phone','scope','date','checklist'].forEach(k=>document.getElementById('n-'+k).value='');document.getElementById('n-title').dataset.auto='';location.href='/?job='+encodeURIComponent(body.id)}else{const e=await r.json().catch(()=>({}));alert(e.error||'Error')}}
 {const td=document.getElementById('today-date');if(td)td.textContent=new Date().toLocaleDateString([], {weekday:'long',month:'long',day:'numeric'})}
+if(VIEW==='new' && {{ estimator|tojson }}){quickType('Survey');document.querySelectorAll('#office .qa').forEach(function(b){if(b.dataset.t!=='Survey')b.style.display='none'});var typ=document.getElementById('n-type');if(typ){typ.value='Survey';typ.querySelectorAll('option').forEach(function(o){if(o.value!=='Survey')o.remove()});typ.disabled=true;}}
 if(VIEW==='new'){tplOpts();quickFill().then(()=>{const QS=new URLSearchParams(location.search);['customer','address'].forEach(k=>{const v=QS.get(k);if(v)document.getElementById('n-'+k).value=v});const cid=QS.get('company_id');if(cid){document.getElementById('n-company_id').value=cid;const sel=document.getElementById('n-customer-pick');if(sel){sel.value=cid;pickCompany(sel)}}else if(QS.get('customer'))pickClient();const qt=QS.get('t');if(qt)quickType(qt);else document.getElementById('n-id').focus()})}else load();
 const qj=new URLSearchParams(location.search).get('job');if(qj)openJob(qj);
 </script></body></html>'''
@@ -2493,12 +2597,12 @@ def index(view='today'):
         conn=get_db(); low_n=len(low_stock(conn)); conn.close()
     if not is_office():
         conn=get_db(); a=current_agreement(conn); agr={'version':a['version'],'signed':signed_current(conn, me())}; conn.close()
-    if view=='today' and not is_office(): view='home'
-    return render_template_string(HTML, view=view, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
+    if view=='today' and not is_office() and not is_estimator(): view='home'
+    return render_template_string(HTML, view=view, safety_items=SAFETY_ITEMS, def_tpl=DEFAULT_TEMPLATE, agr=agr, name=me(), office=is_office(), estimator=is_estimator(), techs=techs, statuses=STATUSES, job_types=JOB_TYPES, obstacles=SURVEY_OBSTACLES, dev_types=DEVICE_TYPES, tpls=tpls, low_n=low_n)
 
 @app.route('/new-job')
 def new_job_page():
-    if not is_office(): return redirect('/')
+    if not may_estimate(): return redirect('/')
     return index(view='new')
 
 @app.route('/history')
@@ -2539,18 +2643,25 @@ def create_job():
     jid=(d.get('id') or '').strip(); title=(d.get('title') or '').strip()
     if not jid or not title: return jsonify({'error':'Job ID and title are required'}),400
     conn=get_db()
-    if not is_office(): conn.close(); return jsonify({'error':'office only'}),403
+    if is_estimator():
+        jt_chk=(d.get('job_type') or '').strip()
+        if jt_chk and jt_chk!='Survey':
+            conn.close(); return jsonify({'error':'Estimators can create surveys only.'}),403
+    elif not is_office():
+        conn.close(); return jsonify({'error':'office only'}),403
     if conn.execute('SELECT 1 FROM jobs WHERE id=?',(jid,)).fetchone():
         conn.close(); return jsonify({'error':'That Job ID already exists'}),409
     lines = [x.strip() for x in (d.get('checklist') or '').splitlines() if x.strip()]
     sd = (d.get('scheduled_date') or '').strip() or today_local().isoformat()
     jt = (d.get('job_type') or '').strip(); jt = jt if jt in JOB_TYPES else 'Install'
+    if is_estimator():
+        jt='Survey'
     if not lines:
         t = conn.execute('SELECT items FROM checklist_templates WHERE LOWER(name)=? ORDER BY id LIMIT 1',(DEFAULT_TEMPLATE.get(jt,'').lower(),)).fetchone()
         try: lines = [x for x in json.loads(t['items']) if str(x).strip()] if t else []
         except Exception: lines = []
     chk = json.dumps([{'text': x, 'done': False} for x in (lines or (DEFAULT_CHECKLIST if jt not in NO_CLOSING_STEPS else []))])
-    tech = nice_name(d.get('tech')) or default_sub()
+    tech = nice_name(d.get('tech')) or (me() if is_estimator() else default_sub())
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
     customer=(d.get('customer') or '').strip()
     company_id=None
@@ -2584,7 +2695,7 @@ def create_job():
 
 @app.route('/api/quick')
 def quick_info():
-    if not is_office(): return jsonify({'error':'office only'}),403
+    if not may_estimate(): return jsonify({'error':'office only'}),403
     conn=get_db(); y=today_local().year; pre='TS-%d-'%y; top=0
     for r in conn.execute('SELECT id FROM jobs WHERE id LIKE ?',(pre+'%',)):
         try: top=max(top,int(r['id'][len(pre):]))
@@ -2696,7 +2807,7 @@ def job_updates(job_id):
     if not row: conn.close(); return ('',404)
     if not can_see(row): conn.close(); return jsonify({'error':'not your job'}),403
     if request.method=='POST':
-        if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
+        if row['job_type']=='Survey' and row['status']=='completed' and not may_estimate(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
         note=((request.get_json(silent=True) or {}).get('note') or '').strip()[:2000]
         if not note: conn.close(); return jsonify({'error':'note required'}),400
         conn.execute('INSERT INTO job_updates (job_id,author,note,created_at) VALUES (?,?,?,?)',(job_id,me(),note,now_local_str())); conn.commit()
@@ -2853,7 +2964,7 @@ def upload_photos(job_id):
     if err: conn.close(); return err
     ptype=request.form.get('type','')
     if ptype not in PHOTO_TYPES and not (ptype in SURVEY_PHOTO_TYPES and row['job_type']=='Survey'): conn.close(); return jsonify({'error':'bad photo label'}),400
-    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
+    if row['job_type']=='Survey' and row['status']=='completed' and not may_estimate(): conn.close(); return jsonify({'error':'survey is complete; office can edit'}),403
     save_photos(conn, job_id, request.files.getlist('photos'), ptype, datetime.utcnow().isoformat()); conn.commit()
     photos=[dict(p) for p in conn.execute("SELECT filename,photo_type FROM photos WHERE job_id=? AND photo_type NOT IN ('blueprint','help','plan','devphoto','daily','matreq','ticket') ORDER BY id",(job_id,)).fetchall()]; conn.close()
     return jsonify({'ok':True,'photos':photos})
@@ -2877,7 +2988,7 @@ def survey_edit_row(conn, job_id):
     row,err=own_job(conn, job_id)
     if err: return None, err
     if row['job_type']=='Office Task': return None, (jsonify({'error':'not for Office Task jobs'}),400)
-    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): return None, (jsonify({'error':'survey is complete; office can edit'}),403)
+    if row['job_type']=='Survey' and row['status']=='completed' and not may_estimate(): return None, (jsonify({'error':'survey is complete; office can edit'}),403)
     return row, None
 
 @app.route('/api/jobs/<job_id>/plans', methods=['POST'])
@@ -6041,7 +6152,7 @@ def plan_meta_save(job_id):
 
 def design_can_edit(row):
     if row['job_type']=='Office Task': return False
-    if row['job_type']=='Survey' and row['status']=='completed' and not is_office(): return False
+    if row['job_type']=='Survey' and row['status']=='completed' and not may_estimate(): return False
     return True
 
 DESIGN_CSS = r'''<style>
@@ -7022,6 +7133,8 @@ import fieldops_favorites
 fieldops_favorites.register(sys.modules[__name__])
 import fieldops_floorplans
 fieldops_floorplans.register(sys.modules[__name__])
+import fieldops_estimator
+fieldops_estimator.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

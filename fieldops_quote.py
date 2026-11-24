@@ -460,6 +460,29 @@ def quote_totals(lines, selected=None, tax_amount=None, discount_amount=None):
         'total': total,
     }
 
+def quote_cost_totals(lines):
+    """Cost, sell, margin and markup for the quote builder (office and estimator)."""
+    cost = 0.0
+    sell = 0.0
+    for ln in lines or []:
+        if (ln.get('kind') or 'item') not in ('item', ''):
+            continue
+        try:
+            qty = float(ln.get('qty') or 0)
+        except (TypeError, ValueError):
+            qty = 0
+        try:
+            cost += qty * float(ln.get('cost') or 0)
+        except (TypeError, ValueError):
+            pass
+        sell += line_amount(ln)
+    cost = round(cost, 2)
+    sell = round(sell, 2)
+    margin = round(sell - cost, 2)
+    margin_pct = round((margin / sell) * 100, 1) if sell else 0.0
+    markup_pct = round((margin / cost) * 100, 1) if cost else 0.0
+    return {'cost': cost, 'sell': sell, 'margin': margin, 'margin_pct': margin_pct, 'markup_pct': markup_pct}
+
 
 def import_catalog_csv(conn, text, created_by=''):
     """Return (added, updated, errors). Sell defaults to cost plus 25 percent."""
@@ -859,7 +882,7 @@ def register(fo):
     def office_only():
         if not fo.me():
             return redirect('/login')
-        if not fo.is_office():
+        if not fo.may_estimate():
             return redirect('/')
         return None
 
@@ -891,7 +914,7 @@ def register(fo):
         else:
             body += '<div class="plat-cards">'
             for r in rows:
-                lab = {'draft': 'Draft', 'sent': 'Link ready', 'accepted': 'Accepted'}.get(r['status'] or 'draft', r['status'])
+                lab = {'draft': 'Draft', 'ready': 'Ready for Roland', 'sent': 'Link ready', 'accepted': 'Accepted'}.get(r['status'] or 'draft', r['status'])
                 opened = ''
                 if r['open_count']:
                     opened = ' · Opened %d time%s' % (r['open_count'], '' if r['open_count'] == 1 else 's')
@@ -913,6 +936,10 @@ def register(fo):
         conn = fo.get_db()
         msg = ''
         if request.method == 'POST':
+            if not fo.is_office():
+                conn.close()
+                import fieldops_estimator as _est
+                return _est.forbidden_response()
             action = request.form.get('action') or 'add'
             if action == 'add':
                 name = (request.form.get('name') or '').strip()
@@ -972,12 +999,16 @@ def register(fo):
         sql += ' ORDER BY active DESC, name COLLATE NOCASE'
         rows = conn.execute(sql, args).fetchall()
         conn.close()
-        body = '<p class="muted">Cost and sell stay in the office. Default markup is 25 percent when sell is left blank. Prices are copied onto a quote and then frozen, so a later catalog change does not change a quote already written.</p>'
+        if fo.is_office():
+            body = '<p class="muted">Cost and sell stay in the office. Default markup is 25 percent when sell is left blank. Prices are copied onto a quote and then frozen, so a later catalog change does not change a quote already written.</p>'
+        else:
+            body = '<p class="muted">Cost, markup and sell are shown so you can write quotes. Adding or editing catalog items is office-only. Star a favorite from the quote builder.</p>'
         body += (
             '<form class="plat-filter" method="get" action="/catalog">'
             '<input type="search" name="q" value="%s" placeholder="Search the catalog">'
             '<button class="plat-btn plat-btn-ghost" type="submit">Search</button></form>' % h(q))
-        body += (
+        if fo.is_office():
+            body += (
             '<div class="plat-panel"><h2>Add item</h2>'
             '<form class="plat-form cat-row" method="post">'
             '<input type="hidden" name="action" value="add">'
@@ -988,7 +1019,7 @@ def register(fo):
             '<label>Cost $<input name="cost" type="number" step="0.01" min="0"></label>'
             '<label>Sell $<input name="sell" type="number" step="0.01" min="0" placeholder="cost + 25%"></label>'
             '<button class="plat-btn plat-btn-gold" type="submit">Add</button></form></div>')
-        body += (
+            body += (
             '<div class="plat-panel"><h2>Import CSV</h2>'
             '<p class="muted">Header row required. Columns: name, cost, sell (optional), sku, unit, category. If sell is blank, it is set to cost plus 25 percent.</p>'
             '<form class="plat-form" method="post" action="/catalog/import" enctype="multipart/form-data">'
@@ -997,6 +1028,15 @@ def register(fo):
         if rows:
             body += '<div class="plat-panel"><h2>Items</h2><div class="cat-list">'
             for r in rows:
+                if not fo.is_office():
+                    body += (
+                        '<div class="cat-row" style="padding:8px 0;border-bottom:1px solid var(--line,#eee)">'
+                        '<div><b>%s</b> <span class="muted">%s</span></div>'
+                        '<div>Cost %s · Sell %s%s</div></div>' % (
+                            h(r['name']), h(((r['sku'] or '')+' '+ (r['unit'] or '')).strip()),
+                            money(r['cost'] or 0), money(r['sell'] or 0),
+                            '' if r['active'] else ' · off'))
+                    continue
                 body += (
                     '<form class="plat-form cat-row" method="post">'
                     '<input type="hidden" name="action" value="save"><input type="hidden" name="id" value="%d">'
@@ -1025,6 +1065,9 @@ def register(fo):
         gate = office_only()
         if gate:
             return gate
+        if not fo.is_office():
+            import fieldops_estimator as _est
+            return _est.forbidden_response()
         f = request.files.get('file')
         if not f or not f.filename:
             return redirect('/catalog')
@@ -1179,6 +1222,29 @@ def register(fo):
             'function foUnstarCat(btn){const id=btn.getAttribute("data-key");fetch("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"catalog",item_key:String(id),on:false})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})}).then(function(res){if(!res.ok){alert((res.d&&res.d.error)||"Could not save favorite");return;}var wrap=btn.closest(".fav-chip-wrap");if(wrap)wrap.remove()}).catch(function(){alert("Could not save favorite")})}'
             '</script>'
         )
+        ct = quote_cost_totals(lines)
+        terms = get_default_terms(conn) or ''
+        form += (
+            '<div class="plat-panel" id="quote-margin">'
+            '<h2>Cost, markup and margin</h2>'
+            '<p>Cost <b id="qm-cost">%s</b> · Sell <b id="qm-sell">%s</b> · Margin <b id="qm-margin">%s</b> '
+            '(<span id="qm-mpct">%s</span>%% of sell) · Markup <span id="qm-upct">%s</span>%% on cost</p></div>'
+            '<div class="plat-panel"><h2>Terms</h2>'
+            '<p class="muted">Terms are set by the office and are copied onto a client link when the office sends it. They are read-only here.</p>'
+            '<div style="white-space:pre-wrap;max-height:240px;overflow:auto">%s</div></div>'
+            '<script>(function(){function n(v){var x=parseFloat(v);return isFinite(x)?x:0}'
+            'function money(v){var s=Math.abs(v).toFixed(2);return (v<0?"-":"")+"$"+s.replace(/\B(?=(\d{3})+(?!\d))/g,",")}'
+            'function qm(){var cost=0,sell=0;document.querySelectorAll("[data-line]").forEach(function(row){'
+            'var qty=n((row.querySelector("[name=line_qty]")||{}).value);'
+            'cost+=qty*n((row.querySelector("[name=line_cost]")||{}).value);'
+            'sell+=qty*n((row.querySelector("[name=line_sell]")||{}).value)});'
+            'var margin=sell-cost;var mp=sell?(margin/sell*100):0;var up=cost?(margin/cost*100):0;'
+            'function el(id,tx){var n=document.getElementById(id);if(n)n.textContent=tx}'
+            'el("qm-cost",money(cost));el("qm-sell",money(sell));el("qm-margin",money(margin));'
+            'el("qm-mpct",mp.toFixed(1));el("qm-upct",up.toFixed(1));}'
+            'var f=document.getElementById("quote-form");if(f)f.addEventListener("input",qm);'
+            '})();</script>'
+        ) % (money(ct['cost']), money(ct['sell']), money(ct['margin']), ct['margin_pct'], ct['markup_pct'], h(terms))
         return form
 
     # Fix checkbox: HTML forms only send checked boxes, so optional flags by index can drift.
@@ -1265,7 +1331,21 @@ def register(fo):
             if err:
                 msg = err
             else:
+                if fo.is_estimator() and (row['status'] or '')=='ready':
+                    conn.execute("UPDATE quotes SET status='draft', updated_at=? WHERE id=?", (now_iso(), qid))
                 conn.commit(); msg = 'Saved. Prices on this quote stay as you saved them.'
+                row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
+        elif request.method == 'POST' and request.form.get('action') in ('link', 'revoke_link') and fo.is_estimator():
+            conn.close()
+            import fieldops_estimator as _est
+            return _est.forbidden_response()
+        elif request.method == 'POST' and request.form.get('action') == 'ready_for_roland':
+            if (row['status'] or '') == 'accepted':
+                msg = 'This quote was already accepted.'
+            else:
+                conn.execute("UPDATE quotes SET status='ready', updated_at=? WHERE id=?", (now_iso(), qid))
+                conn.commit()
+                msg = 'Marked Ready for Roland. Nothing was sent to the client.'
                 row = conn.execute('SELECT * FROM quotes WHERE id=?', (qid,)).fetchone()
         elif request.method == 'POST' and request.form.get('action') == 'link':
             row = ensure_token(conn, qid)
@@ -1302,37 +1382,48 @@ def register(fo):
             # The editor form needs action=save. I'll add a hidden via wrapping... patch: editor doesn't include action.
             body = body.replace('<form class="plat-form" method="post" action="/quotes/%d" id="quote-form">' % qid,
                                 '<form class="plat-form" method="post" action="/quotes/%d" id="quote-form"><input type="hidden" name="action" value="save">' % qid)
-        # Link + tracking
-        body += '<div class="plat-panel"><h2>Client link</h2>'
-        if row['token']:
-            url = request.host_url.rstrip('/') + '/q/' + row['token']
-            body += '<p>Copy this link and send it yourself. The app never emails or texts the client.</p>'
-            body += '<input readonly value="%s" onclick="this.select()">' % h(url)
-            if row['open_count']:
-                body += '<p>Opened %d time%s. First opened %s.</p>' % (
-                    row['open_count'], '' if row['open_count'] == 1 else 's',
-                    h((row['opened_at'] or '')[:19].replace('T', ' ')))
+        # Link + tracking. Estimators cannot send a client link.
+        if fo.is_estimator():
+            body += '<div class="plat-panel"><h2>Ready for Roland</h2>'
+            if (row['status'] or '')=='ready':
+                body += '<p>This quote is marked Ready for Roland and will show in office Needs you. Nothing was sent to the client. Saving again will put it back to Draft.</p>'
             else:
-                body += '<p class="muted">Not opened yet.</p>'
-            revoked = ''
-            exp = ''
-            try:
-                revoked = (row['token_revoked_at'] or '') if 'token_revoked_at' in row.keys() else ''
-                exp = (row['token_expires_at'] or '') if 'token_expires_at' in row.keys() else ''
-            except Exception:
-                pass
-            if revoked:
-                body += '<p class="muted">This link was turned off on %s.</p>' % h(revoked[:19].replace('T', ' '))
-            elif exp:
-                body += '<p class="muted">Link expires %s.</p>' % h(exp[:10])
-            if row['token'] and not revoked:
-                body += ('<form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_link">'
-                         '<button class="plat-btn plat-btn-ghost" type="submit">Turn off link</button></form>')
-        if row['status'] != 'accepted':
-            body += ('<form method="post"><input type="hidden" name="action" value="link">'
-                     '<button class="plat-btn plat-btn-gold" type="submit">%s</button></form>' % (
-                         'Make client link' if not row['token'] else 'Refresh link status')) + (' <a class="plat-btn plat-btn-ghost" href="/quotes/%d/print" target="_blank">Print</a>' % qid)
-        body += '</div>'
+                body += '<p>Sending a client link is office-only. Mark this Ready for Roland when the quote is done so it shows in office Needs you.</p>'
+            if (row['status'] or '')!='accepted':
+                body += ('<form method="post"><input type="hidden" name="action" value="ready_for_roland">'
+                         '<button class="plat-btn plat-btn-gold" type="submit">Ready for Roland</button></form>')
+            body += '</div>'
+        if not fo.is_estimator():
+            body += '<div class="plat-panel"><h2>Client link</h2>'
+            if row['token']:
+                url = request.host_url.rstrip('/') + '/q/' + row['token']
+                body += '<p>Copy this link and send it yourself. The app never emails or texts the client.</p>'
+                body += '<input readonly value="%s" onclick="this.select()">' % h(url)
+                if row['open_count']:
+                    body += '<p>Opened %d time%s. First opened %s.</p>' % (
+                        row['open_count'], '' if row['open_count'] == 1 else 's',
+                        h((row['opened_at'] or '')[:19].replace('T', ' ')))
+                else:
+                    body += '<p class="muted">Not opened yet.</p>'
+                revoked = ''
+                exp = ''
+                try:
+                    revoked = (row['token_revoked_at'] or '') if 'token_revoked_at' in row.keys() else ''
+                    exp = (row['token_expires_at'] or '') if 'token_expires_at' in row.keys() else ''
+                except Exception:
+                    pass
+                if revoked:
+                    body += '<p class="muted">This link was turned off on %s.</p>' % h(revoked[:19].replace('T', ' '))
+                elif exp:
+                    body += '<p class="muted">Link expires %s.</p>' % h(exp[:10])
+                if row['token'] and not revoked:
+                    body += ('<form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_link">'
+                             '<button class="plat-btn plat-btn-ghost" type="submit">Turn off link</button></form>')
+            if row['status'] != 'accepted':
+                body += ('<form method="post"><input type="hidden" name="action" value="link">'
+                         '<button class="plat-btn plat-btn-gold" type="submit">%s</button></form>' % (
+                             'Make client link' if not row['token'] else 'Refresh link status')) + (' <a class="plat-btn plat-btn-ghost" href="/quotes/%d/print" target="_blank">Print</a>' % qid)
+            body += '</div>'
         body += '<div class="plat-panel"><h2>Versions</h2>'
         if versions:
             body += '<ul class="plat-list">' + ''.join(

@@ -304,13 +304,13 @@ def register(fo):
         favs.init_schema(conn)
         rows = jobs_with_plans(conn, fo, q)
         conn.close()
-        return fo.ops_page('Floor Plans', list_html(fo, rows, q, office=fo.is_office()), back='/')
+        return fo.ops_page('Floor Plans', list_html(fo, rows, q, office=fo.may_estimate()), back='/')
 
     @app.route('/floor-plans/new', methods=['GET', 'POST'])
     def floor_plans_new():
         if not fo.me():
             return redirect('/login')
-        if not fo.is_office():
+        if not fo.may_estimate():
             return redirect('/floor-plans')
         conn = fo.get_db()
         msg = ''

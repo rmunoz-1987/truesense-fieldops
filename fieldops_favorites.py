@@ -91,7 +91,7 @@ def register(fo):
         if on is None:
             on = payload.get('favorite', True)
         on = bool(on)
-        if kind == 'catalog' and not fo.is_office():
+        if kind == 'catalog' and not fo.may_estimate():
             return jsonify({'error': 'office only'}), 403
         if kind not in KINDS:
             return jsonify({'error': 'Unknown favorite type.'}), 400

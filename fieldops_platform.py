@@ -540,7 +540,7 @@ def register(fo):
     def office_only():
         if not fo.me():
             return redirect('/login')
-        if not fo.is_office():
+        if not fo.may_estimate():
             return redirect('/')
         return None
 
@@ -556,7 +556,7 @@ def register(fo):
 
     @app.before_request
     def _plat_area():
-        if not fo.me() or not fo.is_office():
+        if not fo.me() or not fo.may_estimate():
             return
         area, sticky = area_from_request(
             request.path, session.get('fo_area'), request.args.get('area'))

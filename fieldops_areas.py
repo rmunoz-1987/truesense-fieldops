@@ -715,7 +715,7 @@ def register(fo):
 
     @app.route('/api/jobs/<job_id>/areas/count-into-quote', methods=['POST'])
     def areas_count_quote(job_id):
-        if not fo.is_office():
+        if not fo.may_estimate():
             return jsonify({'error': 'Office only.'}), 403
         conn, row, err = _edit_job(job_id)
         if err:
@@ -733,7 +733,7 @@ def register(fo):
 
     @app.route('/api/jobs/<job_id>/areas/map-symbol', methods=['POST'])
     def areas_map_symbol(job_id):
-        if not fo.is_office():
+        if not fo.may_estimate():
             return jsonify({'error': 'Office only.'}), 403
         conn, row, err = _edit_job(job_id)
         if err:
@@ -770,7 +770,7 @@ def register(fo):
 
     @app.route('/opportunities/<int:oid>/design')
     def opportunity_design(oid):
-        if not fo.is_office():
+        if not fo.may_estimate():
             return redirect('/')
         conn = fo.get_db()
         opp = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
