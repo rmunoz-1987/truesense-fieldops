@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, send_from_directory, render_template_string, session, redirect
-import re, sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request, urllib.parse, math, time
+import re, sqlite3, os, shutil, uuid, hmac, hashlib, json, threading, urllib.request, urllib.parse, math, time, sys
 from datetime import timedelta
 try:
     from zoneinfo import ZoneInfo
@@ -512,39 +512,59 @@ ICONS = {
 }
 
 SHELL_CSS = """<style id="shell-css">
-:root{--brand:#7a7a12;--gold:#baa205;--gold2:#dab703;--accent:#a49f2a;--ink:#1d1f14;--muted:#6b6d60;--line:#ececE6;--soft:#f7f6ef;--card:#fff;
---shadow:0 1px 2px rgba(29,31,20,.06),0 4px 16px rgba(29,31,20,.07);--r:16px}
-html.fo-shell{background:#fff;padding:66px 0 calc(92px + env(safe-area-inset-bottom));scroll-padding-top:76px}
-html.fo-shell body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,"Helvetica Neue",Arial,sans-serif!important;color:var(--ink);background:#fff!important;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+:root{--brand:#7a7a12;--gold:#baa205;--gold2:#dab703;--accent:#a49f2a;--ink:#1d1f14;--muted:#6b6d60;--line:#ecece6;--soft:#f7f6ef;--card:#fff;
+--shadow:0 1px 2px rgba(29,31,20,.06),0 8px 24px rgba(29,31,20,.06);--r:16px;
+--display:"Palatino Linotype",Palatino,"Book Antiqua",Georgia,"Times New Roman",serif;
+--text:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+html.fo-shell{--fo-head:172px;background:var(--soft);padding:calc(var(--fo-head) + env(safe-area-inset-top)) 0 32px;scroll-padding-top:calc(var(--fo-head) + 12px)}
+html.fo-shell body{font-family:var(--text)!important;color:var(--ink);background:var(--soft)!important;-webkit-font-smoothing:antialiased;overflow-x:hidden;max-width:1280px!important;margin:0 auto!important;padding-left:16px!important;padding-right:16px!important}
 html.fo-shell .header{display:none}
 html.fo-shell body>img[alt="True Sense Security"],html.fo-shell body>a>img[alt="True Sense Security"]{display:none!important}
-.fo-tabs a.fo-rail-logo{display:none}
 html.fo-shell .fo-back{display:inline-flex;align-items:center;width:auto;min-height:44px;padding:10px 18px;font-size:1rem;margin:0 0 4px}
 html.fo-shell #search-box{display:none!important}
-.fo-top{position:fixed;top:0;left:0;right:0;height:60px;z-index:45;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;padding:0 12px}
-.fo-logo{flex:0 0 auto;display:flex;align-items:center}.fo-logo img{height:30px;width:auto;display:block}
-.fo-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:0 12px;height:44px;margin:0}
-.fo-search svg{flex:0 0 20px;width:20px;height:20px;color:var(--muted)}.fo-search input{border:0!important;background:transparent!important;outline:0;font-size:16px;width:100%;padding:0!important;margin:0!important;height:42px;color:var(--ink);box-shadow:none!important}
-.fo-tabs{position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
-.fo-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 4px;border-radius:12px;color:var(--muted);text-decoration:none;font-size:.74rem;font-weight:650;min-height:52px;justify-content:center}
-.fo-tabs a.on{color:var(--brand)}.fo-tabs a.on svg{stroke-width:2.4}.fo-tabs a.on span.fo-dot{background:var(--gold)}
-.fo-tabs a span.fo-dot{width:22px;height:3px;border-radius:3px;background:transparent;margin-top:1px}
-
-.fo-fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:46;width:62px;height:62px;border-radius:50%;border:0;background:linear-gradient(145deg,var(--gold2),var(--brand));color:#fff;box-shadow:0 8px 24px rgba(122,122,18,.38);display:flex;align-items:center;justify-content:center}
-.fo-fab svg{width:30px;height:30px;stroke-width:2.6}
+html.fo-shell h1,html.fo-shell h2,html.fo-shell .plat-title,html.fo-shell .fo-hello h1{font-family:var(--display)}
+.fo-top{position:fixed;top:0;left:0;right:0;z-index:45;background:rgba(255,255,255,.94);backdrop-filter:saturate(1.4) blur(12px);-webkit-backdrop-filter:saturate(1.4) blur(12px);border-bottom:1px solid var(--line);
+display:grid;grid-template-columns:auto 1fr auto;grid-template-areas:"logo switch tools" "links links links" "search search search";gap:8px 12px;align-items:center;padding:8px 12px calc(8px);padding-top:calc(8px + env(safe-area-inset-top))}
+.fo-logo{grid-area:logo;display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--ink);min-height:44px}
+.fo-logo img{height:24px;width:auto;display:block}
+.fo-word{display:none;font-family:var(--display);font-size:1.15rem;letter-spacing:.01em}
+.fo-switch{grid-area:switch;display:inline-flex;background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:3px;gap:2px;justify-self:start;flex-shrink:0;white-space:nowrap}
+.fo-switch a{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 9px;border-radius:999px;text-decoration:none;color:var(--muted);font-weight:700;font-size:.8rem;white-space:nowrap}
+.fo-switch a.on{background:var(--brand);color:#fff}
+.fo-links{grid-area:links;display:flex;gap:2px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;min-height:40px;align-items:center}
+.fo-links::-webkit-scrollbar{display:none}
+.fo-links a,.fo-links summary{display:inline-flex;align-items:center;min-height:40px;padding:0 12px;color:var(--ink);text-decoration:none;font-weight:650;font-size:.95rem;white-space:nowrap;border-bottom:3px solid transparent;background:none;border-radius:0;cursor:pointer;font-family:inherit}
+.fo-links a.on{border-bottom-color:var(--accent);color:var(--brand)}
+.fo-search{grid-area:search;display:flex;align-items:center;gap:8px;background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:0 14px;height:42px;margin:0}
+.fo-search svg{flex:0 0 18px;width:18px;height:18px;color:var(--muted)}
+.fo-search input{border:0!important;background:transparent!important;outline:0;font-size:16px;width:100%;padding:0!important;margin:0!important;height:40px;color:var(--ink);box-shadow:none!important}
+.fo-tools{grid-area:tools;display:flex;align-items:center;gap:8px}
+.fo-icon-btn{width:42px;height:42px;border-radius:50%;border:0;background:var(--brand);color:#fff;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;text-decoration:none}
+.fo-icon-btn svg{width:22px;height:22px;stroke-width:2.4}
+.fo-icon-btn.ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.fo-avatar{width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:var(--soft);color:var(--brand);font-weight:800;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;cursor:pointer;font-size:.85rem}
+.fo-user{position:relative}
+.fo-user summary{list-style:none}.fo-user summary::-webkit-details-marker{display:none}
+.fo-user-menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:200px;padding:8px;z-index:50}
+.fo-user-menu a,.fo-user-menu button{display:block;width:100%;text-align:left;background:none;border:0;padding:12px 12px;border-radius:10px;font:inherit;font-weight:650;color:var(--ink);text-decoration:none;cursor:pointer}
+.fo-user-menu a:hover,.fo-user-menu button:hover{background:var(--soft)}
+.fo-more{position:relative;display:inline-flex}
+.fo-more summary{list-style:none}.fo-more summary::-webkit-details-marker{display:none}
+.fo-more-menu{position:absolute;left:0;top:calc(100% + 4px);background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:220px;padding:8px;z-index:50;display:flex;flex-direction:column}
+.fo-more-menu a{border:0;min-height:44px;border-radius:10px;padding:0 12px}
+.fo-more-menu a:hover{background:var(--soft)}
 .fo-veil{position:fixed;inset:0;background:rgba(20,21,14,.38);z-index:70;opacity:0;pointer-events:none;transition:opacity .2s}
 .fo-veil.on{opacity:1;pointer-events:auto}
-.fo-sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:#fff;border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 30px rgba(0,0,0,.15);max-width:640px;margin:0 auto}
-.fo-sheet{visibility:hidden}.fo-sheet.on{transform:none;visibility:visible}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
-.fo-sheet h3{margin:4px 0 10px;font-size:1.1rem}.fo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fo-sheet{position:fixed;left:0;right:0;bottom:0;z-index:71;background:#fff;border-radius:22px 22px 0 0;padding:10px 16px calc(18px + env(safe-area-inset-bottom));transform:translateY(105%);transition:transform .28s cubic-bezier(.2,.8,.2,1);box-shadow:0 -10px 30px rgba(0,0,0,.15);max-width:640px;margin:0 auto;visibility:hidden}
+.fo-sheet.on{transform:none;visibility:visible}.fo-grab{width:44px;height:5px;border-radius:5px;background:#ddd;margin:0 auto 10px}
+.fo-sheet h3{margin:4px 0 10px;font-size:1.15rem;font-family:var(--display)}.fo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .fo-tile{display:flex;align-items:center;gap:10px;padding:16px 14px;border-radius:14px;background:var(--soft);border:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:700;font-size:1rem;min-height:60px;text-align:left;width:100%;font-family:inherit}
 .fo-tile svg{flex:0 0 24px;color:var(--brand)}
-.fo-seg{display:flex;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;margin:0 auto 12px;max-width:480px}
+.fo-seg{display:flex;background:var(--soft);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;margin:0 auto 12px;max-width:520px}
 .fo-seg a{flex:1;text-align:center;padding:10px 6px;border-radius:10px;color:var(--muted);text-decoration:none;font-weight:700}.fo-seg a.on{background:#fff;color:var(--ink);box-shadow:var(--shadow)}
-/* shared premium look for existing pages */
-html.fo-shell .job,html.fo-shell .card{border:1px solid var(--line)!important;border-radius:var(--r)!important;box-shadow:var(--shadow)}
-html.fo-shell .big-btn,html.fo-shell .btn{border-radius:14px!important;font-weight:700;letter-spacing:.1px}
-html.fo-shell .big-btn:not(.gray):not(.green):not(.stop):not(.red){background:linear-gradient(145deg,var(--gold),var(--brand))}
+html.fo-shell .job,html.fo-shell .card{border:1px solid var(--line)!important;border-radius:var(--r)!important;box-shadow:var(--shadow);background:#fff}
+html.fo-shell .big-btn,html.fo-shell .btn,html.fo-shell .plat-btn{border-radius:14px!important;font-weight:700;letter-spacing:.1px;min-height:48px}
+html.fo-shell .big-btn:not(.gray):not(.green):not(.stop):not(.red){background:linear-gradient(145deg,var(--gold),var(--brand));color:#fff}
 html.fo-shell input,html.fo-shell select,html.fo-shell textarea{border-radius:12px!important;font-family:inherit}
 html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var(--line)}
 .fo-page-h{display:flex;align-items:center;gap:10px;margin:4px 0 12px}.fo-page-h h1{margin:0}
@@ -553,14 +573,14 @@ html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var
 .fo-card svg{color:var(--brand)}.fo-card b{display:block;font-size:1.08rem;margin-top:8px}.fo-card small{display:block;color:var(--muted);margin-top:2px;font-size:.86rem}
 .fo-skel{background:linear-gradient(90deg,#f0efe8 0,#faf9f4 40%,#f0efe8 80%);background-size:200% 100%;animation:fo-shim 1.2s linear infinite;border-radius:12px}
 @keyframes fo-shim{to{background-position:-200% 0}}
-.fo-hello h1{font-size:1.6rem;margin:2px 0 2px;letter-spacing:-.3px}.fo-hello{margin-bottom:12px}
+.fo-hello h1{font-size:2rem;margin:2px 0 2px;letter-spacing:-.3px;font-weight:500}.fo-hello{margin-bottom:12px}
 .fo-prog{margin:0 0 14px}.fo-bar{display:flex;height:12px;border-radius:12px;background:#eeede4;overflow:hidden}.fo-bar i{display:block;height:100%;transition:width .6s ease}
 .fo-legend{display:flex;gap:16px;margin-top:6px;color:var(--muted);font-size:.9rem}.fo-legend b{color:var(--ink)}
 .fo-kpis{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px}
 .fo-kpi{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px;text-decoration:none;color:var(--ink);min-height:108px;position:relative;overflow:hidden}
 .fo-kpi small{display:block;color:var(--muted);font-weight:650;font-size:.85rem}.fo-kpi b{display:block;font-size:1.9rem;letter-spacing:-.5px;margin-top:4px;line-height:1.1}
 .fo-kpi.hot b{color:#b3261e}.fo-spark{display:block;width:100%;height:30px;margin-top:6px}
-.fo-h{font-size:1.1rem!important;color:var(--ink)!important;border:0!important;margin:22px 0 10px!important;letter-spacing:-.2px}
+.fo-h{font-size:1.2rem!important;color:var(--ink)!important;border:0!important;margin:22px 0 10px!important;letter-spacing:-.2px;font-family:var(--display)!important;font-weight:500!important}
 .fo-act{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:12px;margin-bottom:10px;color:var(--ink);text-decoration:none;min-height:64px}
 .fo-ai{flex:0 0 42px;height:42px;border-radius:12px;background:var(--soft);color:var(--brand);display:flex;align-items:center;justify-content:center;font-size:1.3rem}
 .fo-act.red .fo-ai{background:#fdecea;color:#b3261e}.fo-act.ok .fo-ai{background:#e8f5e9;color:#2e7d32}
@@ -571,59 +591,177 @@ html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var
 .fo-row{padding:12px 4px;border-bottom:1px solid var(--line);cursor:pointer}.fo-row:last-child{border-bottom:0}
 .fo-pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:#2e7d32;margin-right:8px;box-shadow:0 0 0 0 rgba(46,125,50,.5);animation:fo-pl 1.8s infinite}
 @keyframes fo-pl{70%{box-shadow:0 0 0 10px rgba(46,125,50,0)}100%{box-shadow:0 0 0 0 rgba(46,125,50,0)}}
-@media(min-width:900px){.fo-kpis{grid-template-columns:repeat(4,1fr)}#today{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}#today>.fo-hello,#today>.fo-prog,#today>.fo-kpis{grid-column:1/-1}}
 .fo-kpi.hot b{color:#b3261e}.fo-cap{display:block;font-style:normal;color:var(--muted);font-size:.72rem;margin-top:2px}
 .fo-empty{background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:16px;color:var(--muted);text-align:center}
-
 @keyframes fo-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 html.fo-shell body>*:not(.fo-sh){animation:fo-in .28s ease both}
-/* desktop: left rail */
-@media(min-width:900px){
- html.fo-shell{padding:76px 0 28px 232px}
- .fo-top{left:232px;height:64px;padding:0 22px}.fo-top .fo-logo{display:none}.fo-search{max-width:620px}
- .fo-tabs{top:0;bottom:0;right:auto;width:232px;flex-direction:column;justify-content:flex-start;border-top:0;border-right:1px solid var(--line);padding:16px 12px;gap:4px;background:#fff}
- .fo-tabs a{flex:0 0 auto;flex-direction:row;justify-content:flex-start;gap:12px;padding:12px 14px;font-size:1rem;min-height:48px}
- .fo-tabs a.on{background:var(--soft)}.fo-tabs a span.fo-dot{display:none}
- .fo-tabs a.fo-rail-logo{display:block;padding:4px 10px 18px}.fo-rail-logo img{height:40px;width:auto}
- .fo-fab{bottom:28px;right:28px}
- .fo-cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+
+html.fo-shell body:has(.plat-head) > a.fo-back,html.fo-shell body:has(.plat-head) > h1{display:none!important}
+/* Platform record pages */
+.plat-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 20px;margin:8px 0 18px}
+.plat-kicker{font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin-bottom:4px}
+.plat-title{font-family:var(--display);font-weight:500;font-size:clamp(2rem,5vw,2.8rem);line-height:1.05;margin:0;letter-spacing:-.01em}
+.plat-dot{color:var(--accent)}
+.plat-actions{display:flex;flex-wrap:wrap;gap:8px}
+.plat-btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 18px;border-radius:999px;font-weight:700;text-decoration:none;border:0;cursor:pointer;font-size:1rem;font-family:inherit}
+.plat-btn-gold{background:linear-gradient(145deg,var(--gold),var(--brand));color:#fff}
+.plat-btn-ghost{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.plat-msg{background:#fff;border:1px solid var(--line);border-left:5px solid var(--accent);border-radius:12px;padding:12px 14px;margin:0 0 14px}
+.plat-cards{display:grid;grid-template-columns:1fr;gap:12px}
+.plat-card{display:block;background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;color:var(--ink);text-decoration:none;min-height:88px}
+.plat-card b{display:block;font-size:1.08rem;color:var(--ink)}
+.plat-panel{background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin:0 0 14px}
+.plat-panel h2{margin:0 0 10px;font-size:1.25rem;font-weight:500}
+.plat-panel-h{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.plat-panel-h h2{margin:0}
+.plat-list{list-style:none;margin:0;padding:0}
+.plat-list li{padding:10px 0;border-bottom:1px solid var(--line)}
+.plat-list li:last-child{border-bottom:0}
+.plat-list a{color:var(--ink);text-decoration:none}
+.plat-pill{display:inline-block;background:var(--soft);border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:.78rem;font-weight:700;margin-left:6px}
+.plat-form label{display:block;font-weight:700;margin:10px 0 4px}
+.plat-form input,.plat-form select,.plat-form textarea{width:100%;padding:12px 12px;border:1px solid var(--line);border-radius:12px;font-size:1rem;background:#fff;box-sizing:border-box}
+.plat-row{display:grid;grid-template-columns:1fr;gap:10px}
+.plat-filter{display:flex;gap:8px;margin:0 0 14px}
+.plat-filter input{flex:1;padding:12px 14px;border:1px solid var(--line);border-radius:999px;font-size:16px;background:#fff}
+.plat-empty{background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:20px;color:var(--muted);text-align:center}
+.plat-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 0 16px}
+.plat-stat{background:#fff;border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px;text-decoration:none;color:var(--ink);display:block}
+.plat-stat small{display:block;color:var(--muted);font-weight:700;font-size:.8rem;letter-spacing:.04em;text-transform:uppercase}
+.plat-stat b{display:block;font-family:var(--display);font-weight:500;font-size:1.7rem;margin-top:4px}
+.plat-pills{display:flex;gap:6px;overflow-x:auto;padding:0 0 12px;-webkit-overflow-scrolling:touch}
+.plat-pill-link{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--ink);text-decoration:none;font-weight:700;white-space:nowrap;font-size:.9rem}
+.plat-pill-link em{font-style:normal;color:var(--muted)}
+.plat-pill-link.on{background:var(--brand);color:#fff;border-color:var(--brand)}
+.plat-pill-link.on em{color:#fff}
+.plat-board{display:flex;flex-direction:column;gap:16px}
+.plat-col-h{display:flex;justify-content:space-between;font-weight:700;margin:0 0 8px}
+.plat-col-h em{font-style:normal;color:var(--muted);font-weight:650}
+.plat-mini-actions{margin-top:4px;font-size:.9rem}
+.plat-mini-actions a{color:var(--brand);font-weight:700;text-decoration:none}
+.plat-grid-2{display:grid;grid-template-columns:1fr;gap:12px}
+@media(min-width:700px){
+  .plat-cards{grid-template-columns:repeat(2,1fr)}
+  .plat-stats{grid-template-columns:repeat(3,1fr)}
+  .plat-row{grid-template-columns:1fr 1fr}
+  .plat-grid-2{grid-template-columns:1fr 1fr}
 }
-/* dark mode: invert the page once at the root (fixed overlays keep working), re-invert media */
+.fo-more-desk{display:none}
+@media(min-width:980px){
+  .fo-more-phone{display:none!important}
+  .fo-more-desk{display:inline-flex}
+}
+@media(min-width:980px){
+  html.fo-shell{--fo-head:72px;padding-left:0;padding-right:0}
+  html.fo-shell body{padding-left:28px!important;padding-right:28px!important}
+  .fo-top{grid-template-columns:auto auto 1fr minmax(200px,420px) auto;grid-template-areas:"logo switch links search tools";padding:10px 22px;align-items:center}
+  .fo-word{display:inline}
+  .fo-logo img{height:32px}
+  .fo-links{overflow:visible}
+  .fo-search{max-width:420px;justify-self:end;width:100%}
+  .fo-switch a{min-height:34px;padding:0 14px}
+  .fo-kpis{grid-template-columns:repeat(4,1fr)}
+  #today{display:grid;grid-template-columns:1fr 1fr;column-gap:24px}#today>.fo-hello,#today>.fo-prog,#today>.fo-kpis{grid-column:1/-1}
+  .fo-cards{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+  .plat-cards{grid-template-columns:repeat(3,1fr)}
+  .plat-board{display:flex;flex-direction:row;gap:12px;align-items:flex-start;overflow-x:auto;padding-bottom:8px}
+  .plat-col{background:rgba(255,255,255,.5);border:1px solid var(--line);border-radius:14px;padding:10px;flex:1 0 186px;min-width:186px}
+  .plat-col-h{white-space:nowrap}
+  .plat-col .plat-card{margin-bottom:8px;min-height:72px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 html[data-theme=dark]{filter:invert(.93) hue-rotate(180deg);background:#fff}
 html[data-theme=dark] img,html[data-theme=dark] video,html[data-theme=dark] canvas,html[data-theme=dark] .leaflet-container,html[data-theme=dark] iframe,html[data-theme=dark] [style*="background-image"]{filter:invert(1) hue-rotate(180deg)}
 html[data-theme=dark] .leaflet-container img{filter:none}
-@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 </style>"""
 
+
+def plat_area(path=''):
+    path = path or (request.path if request else '/')
+    try:
+        if hasattr(sys.modules[__name__], 'plat_area_of'):
+            return sys.modules[__name__].plat_area_of(path)
+    except Exception:
+        pass
+    a = (request.args.get('area') if request else None) or ''
+    if a in ('ops','sales','quote'): return a
+    if path.startswith(('/sales','/opportunities','/opportunity')): return 'sales'
+    if path.startswith('/quote') or '/estimate' in path: return 'quote'
+    saved = (session.get('fo_area') if session else None) or ''
+    if path.startswith(('/customers','/contacts','/sites','/search','/systems')) and saved in ('ops','sales','quote'):
+        return saved
+    return 'ops'
+
+def initials_of(name):
+    parts=[x for x in (name or '').split() if x]
+    if not parts: return 'TS'
+    if len(parts)==1: return parts[0][:2].upper()
+    return (parts[0][0]+parts[-1][0]).upper()
+
 def shell_tabs(path, office):
+    # Kept for compatibility. Office chrome now uses shell_links().
     if office:
-        tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/clients','Clients','clients'),('/money','Money','money'),('/more','More','more')]
-        groups={'today':('/',),'jobs':('/jobs','/schedule','/calendar','/new-job','/history'),'clients':('/clients','/print/client'),'money':('/money','/revenue','/reports','/qbo','/timelog'),
-                'more':('/more','/techs','/stock','/checklists','/safety','/agreement','/settings','/equipment','/plans','/to-order')}
+        tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/customers','Customers','clients'),('/money','Money','money'),('/more','More','more')]
+        groups={'today':('/',),'jobs':('/jobs','/schedule','/calendar','/new-job','/history'),'clients':('/customers','/clients','/contacts','/sites','/print/client'),'money':('/money','/revenue','/reports','/qbo','/timelog'),
+                'more':('/more','/techs','/stock','/checklists','/safety','/agreement','/settings','/equipment','/plans','/to-order','/orders')}
     else:
         tabs=[('/','My Jobs','jobs'),('/my-schedule','Schedule','cal'),('/me','Me','me')]
         groups={'jobs':('/','/job/'),'cal':('/my-schedule',),'me':('/me','/agreement')}
     def on(k):
-        for p in groups.get(k,()):
-            if (p=='/' and path=='/') or (p!='/' and (path==p or path.startswith(p.rstrip('/')+'/'))): return True
+        for p_ in groups.get(k,()):
+            if (p_=='/' and path=='/') or (p_!='/' and (path==p_ or path.startswith(p_.rstrip('/')+'/'))): return True
         return False
     return ''.join('<a href="%s" class="%s"%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(u,'on' if on(k) else '',' aria-current="page"' if on(k) else '',ICONS[k],lab) for u,lab,k in tabs)
 
+def shell_links(path, office):
+    area=plat_area(path)
+    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
+    if area=='sales':
+        main=[('/sales','Home'),('/opportunities','Opportunities'),('/customers','Customers')]
+    elif area=='quote':
+        main=[('/quote','Estimates'),('/customers','Customers')]
+    else:
+        main=[('/','Today'),('/jobs','Jobs'),('/schedule','Schedule'),('/customers','Customers')]
+    def on_url(u):
+        if u=='/' and path=='/': return True
+        if u!='/' and (path==u or path.startswith(u.rstrip('/')+'/')): return True
+        if u=='/customers' and path.startswith(('/clients','/contacts','/sites','/systems')): return True
+        if u=='/jobs' and path.startswith(('/history','/calendar','/new-job')): return True
+        if u=='/opportunities' and path.startswith('/opportunity'): return True
+        if u=='/quote' and '/estimate' in path: return True
+        if u=='/sales' and path=='/sales': return True
+        return False
+    html=''.join('<a href="%s" class="%s"%s>%s</a>'%(h(u),'on' if on_url(u) else '',' aria-current="page"' if on_url(u) else '',h(lab)) for u,lab in main)
+    more_on=any((path==u or path.startswith(u.rstrip('/')+'/')) for u,_ in more)
+    html+='<a class="fo-more-phone %s" href="/more">More</a>'%('on' if path.startswith('/more') or more_on else '')
+    html+='<details class="fo-more fo-more-desk"><summary class="%s">More</summary><div class="fo-more-menu">'%('on' if more_on else '')
+    html+=''.join('<a href="%s">%s</a>'%(h(u),h(lab)) for u,lab in more)
+    html+='</div></details>'
+    return html
+
 def shell_html(path, office, q=''):
-    top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"></a>'
-         '<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search clients, jobs, notes, serials" aria-label="Search" autocomplete="off"></form></header>')%(ICONS['search'],h(q))
+    area=plat_area(path)
+    switch=''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if area==k else '',lab) for k,u,lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')))
+    links=shell_links(path, office)
+    who=me() or ''
+    top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
+         '<nav class="fo-switch" aria-label="Area">%s</nav>'
+         '<nav class="fo-links" aria-label="Main">%s</nav>'
+         '<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search customers, jobs, notes" aria-label="Search" autocomplete="off"></form>'
+         '<div class="fo-tools"><button class="fo-icon-btn" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>'
+         '<details class="fo-user"><summary class="fo-avatar" title="%s">%s</summary><div class="fo-user-menu">'
+         '<a href="/me">My settings</a><a href="/settings">Office settings</a>'
+         '<button type="button" id="fo-theme" onclick="foTheme(document.documentElement.getAttribute(&quot;data-theme&quot;)===&quot;dark&quot;?&quot;light&quot;:&quot;dark&quot;)">Dark mode</button>'
+         '<button type="button" onclick="foLogout()">Log out</button>'
+         '</div></details></div></header>')%(switch, links, ICONS['search'], h(q), ICONS['plus'], h(who), h(initials_of(who)))
     seg=''
     if office and path in ('/jobs','/schedule','/calendar'):
         seg='<div class="fo-seg fo-sh">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
-    tabs='<nav class="fo-tabs fo-sh" aria-label="Main"><a class="fo-rail-logo" href="/" style="min-height:0;padding:4px 10px 18px"><img src="/static/logo.png" alt="True Sense Security"></a>'+shell_tabs(path, office)+'</nav>'
-    fab=sheet=''
-    if office:
-        fab='<button class="fo-fab fo-sh" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>'%ICONS['plus']
-        items=[('/new-job?t=Install','Install','tool'),('/new-job?t=Service','Service','repeat'),('/new-job?t=Survey','Survey','eye'),('/new-job?t=Office Task','Office Task','note'),
-               ('/clients','Client','clients'),('/stock','Stock Item','box'),('/plans','Service Plan','cal'),('/equipment','Equipment','shield')]
-        sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
-               ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('t=')[1]) if '?t=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
-    return top+seg, tabs+fab+sheet
+    items=[('/new-job?t=Install','Install','tool'),('/new-job?t=Service','Service','repeat'),('/new-job?t=Survey','Survey','eye'),('/new-job?t=Office Task','Office Task','note'),
+           ('/customers/new','Company','clients'),('/opportunities/new','Opportunity','pen'),('/stock','Stock Item','box'),('/plans','Service Plan','cal'),('/equipment','Equipment','shield')]
+    sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
+           ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('t=')[1]) if '?t=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
+    return top+seg, sheet
 
 SHELL_JS = """<script id="shell-js">
 function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);v.classList.toggle('on',on)}
@@ -1182,6 +1320,12 @@ def init_db():
     for x in conn.execute("SELECT id,job_id,note,created_at FROM job_updates WHERE author='Tech Support'").fetchall():
         conn.execute('INSERT INTO support_replies (job_id,note,created_at) VALUES (?,?,?)',(x['job_id'],x['note'],x['created_at']))
         conn.execute('DELETE FROM job_updates WHERE id=?',(x['id'],))
+    try:
+        import fieldops_platform as _plat
+        _plat.init_and_migrate(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
+    except Exception:
+        app.logger.exception('platform migrate failed')
+        raise
     conn.commit(); conn.close()
 
 init_db()
@@ -2030,6 +2174,11 @@ def create_job():
     if not tech: conn.close(); return jsonify({'error':'Pick a sub for this job'}),400
     conn.execute('INSERT INTO jobs (id,title,customer,address,scope,status,tech,created_at,phone,checklist,scheduled_date,created_by,job_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                  (jid,title,(d.get('customer') or '').strip(),(d.get('address') or '').strip(),(d.get('scope') or '').strip(),'assigned',tech,datetime.utcnow().isoformat(),(d.get('phone') or '').strip(),chk,sd,me(),jt))
+    try:
+        import fieldops_platform as _plat
+        _plat.link_job(conn, conn.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone())
+    except Exception as e:
+        app.logger.warning('link job failed: %s', e)
     conn.commit(); conn.close()
     push_to_sub(tech,'New job: '+title,(d.get('customer') or '').strip()+' - '+nice_day(sd),'/?job='+jid)
     return jsonify({'ok':True,'id':jid}),201
@@ -3469,6 +3618,15 @@ def job_part_undo(job_id, mid):
 def clients_page():
     conn=get_db(); name=request.args.get('name')
     if not is_office() and (name is None or not tech_has_client(conn, name)): conn.close(); return redirect('/')
+    if is_office() and name is None:
+        conn.close(); return redirect('/customers')
+    if is_office() and name:
+        try:
+            import fieldops_platform as _plat
+            co=_plat.get_company_by_key(conn, ckey(name))
+            if co: conn.close(); return redirect('/customers/%d'%co['id'])
+        except Exception:
+            pass
     if name is None:
         groups={}
         for c in conn.execute('SELECT name,address FROM clients').fetchall():
@@ -4863,11 +5021,25 @@ def add_client():
     if not is_office(): return redirect('/')
     n=(request.form.get('name') or '').strip()
     if n:
+        addr=(request.form.get('address') or '').strip(); phone=(request.form.get('phone') or '').strip()
         conn=get_db()
         if not conn.execute('SELECT 1 FROM clients WHERE LOWER(TRIM(name))=?',(ckey(n),)).fetchone():
-            conn.execute('INSERT INTO clients (name,address,phone,created_at) VALUES (?,?,?,?)',(n,(request.form.get('address') or '').strip(),(request.form.get('phone') or '').strip(),datetime.utcnow().isoformat())); conn.commit()
-        conn.close()
-    return redirect('/clients')
+            conn.execute('INSERT INTO clients (name,address,phone,created_at) VALUES (?,?,?,?)',(n,addr,phone,datetime.utcnow().isoformat()))
+        try:
+            import fieldops_platform as _plat
+            co=_plat.upsert_company(conn, n, phone=phone, billing_address=addr)
+            if co and addr: _plat.upsert_site(conn, co['id'], address=addr, phone=phone)
+            if co and phone: _plat.ensure_contact(conn, co['id'], n, role='bill_to', phone=phone)
+        except Exception as e:
+            app.logger.warning('add client company sync failed: %s', e)
+        conn.commit(); conn.close()
+        try:
+            import fieldops_platform as _plat
+            conn=get_db(); co=_plat.get_company_by_key(conn, ckey(n)); conn.close()
+            if co: return redirect('/customers/%d'%co['id'])
+        except Exception:
+            pass
+    return redirect('/customers')
 
 @app.route('/api/jobs/<job_id>/reassign', methods=['POST'])
 def reassign_job(job_id):
@@ -6322,6 +6494,9 @@ def serve():
             for k,v in {'bind':'0.0.0.0:%d'%port,'workers':1,'worker_class':'gthread','threads':8,'timeout':120,'keepalive':5,'accesslog':'-'}.items(): self.cfg.set(k,v)
         def load(self): return app
     _G().run()
+
+import fieldops_platform
+fieldops_platform.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
