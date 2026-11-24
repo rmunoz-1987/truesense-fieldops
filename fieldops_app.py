@@ -238,7 +238,15 @@ def office_name_set():
 def is_office():
     k = me().lower()
     return bool(k) and k in office_name_set()
-def can_see(job): return is_office() or ' '.join((job['tech'] or '').split()).lower() == me().lower()
+def can_see(job):
+    if is_office(): return True
+    mek=(me() or '').lower()
+    if ' '.join((job['tech'] or '').split()).lower()==mek: return True
+    fn=globals().get('ops_sub_on_job')
+    if callable(fn):
+        try: return bool(fn(job['id'], mek))
+        except Exception: return False
+    return False
 def sub_logins():
     names = []
     seen = set()
@@ -348,7 +356,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/co/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not has_any_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -506,7 +514,7 @@ def offline_page(): return OFFLINE_HTML
 def add_tap_css(resp):
     try:
         # /healthz must stay a plain "ok" for Render. Public quote and share links keep their own markup.
-        if request.path=='/healthz' or request.path.startswith(('/q/','/s/')):
+        if request.path=='/healthz' or request.path.startswith(('/q/','/co/','/s/')):
             return resp
         if resp.mimetype=='text/html' and not resp.direct_passthrough and resp.status_code<400 or resp.mimetype=='text/html' and resp.status_code==503:
             h=resp.get_data(as_text=True)
@@ -795,7 +803,7 @@ def shell_tabs(path, office):
 
 def shell_links(path, office):
     area=plat_area(path)
-    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
+    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
         main=[('/sales','Home'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
     elif area=='quote':
@@ -906,7 +914,7 @@ def more_page():
     if not is_office(): return redirect('/')
     return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
         ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
-        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Week board by sub','cal'),('/calendar','Calendar','Week list','cal'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
+        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Crew board, day week fortnight and month','cal'),('/calendar','Calendar','Month view of the same board','cal'),('/costing','Job costing','Sale, labor, materials and profit','money'),('/timesheets','Timesheets','Weekly approval and sub-pay CSV','clock'),('/change-orders','Change orders','Priced extras the client can accept','note'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
 
 def me_settings_body():
     dark=theme_of(me())=='dark'
@@ -936,15 +944,28 @@ def me_page():
 def my_schedule():
     if not me(): return redirect('/login')
     if is_office(): return redirect('/schedule')
-    conn=get_db(); rows=[r for r in conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date,'9999')").fetchall() if can_see(r)]; conn.close()
+    conn=get_db(); rows=[r for r in conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY COALESCE(scheduled_date,'9999')").fetchall() if can_see(r)]
     t=today_local(); days=[(t+timedelta(days=i)) for i in range(14)]; body=''
-    late=[r for r in rows if r['scheduled_date'] and r['scheduled_date']<t.isoformat()]
+    by_day={}
+    try:
+        for s in conn.execute("SELECT job_id, day FROM job_slots WHERE day>=? AND day<=?",(t.isoformat(),(t+timedelta(days=13)).isoformat())):
+            by_day.setdefault(s['day'], set()).add(s['job_id'])
+    except Exception:
+        pass
+    conn.close()
+    late=[r for r in rows if (r['scheduled_date'] and r['scheduled_date']<t.isoformat())]
     if late: body+='<h2>Past due</h2>'+''.join(sched_card(r) for r in late)
+    seen_ids=set()
+    jobs_by_id={r['id']:r for r in rows}
     for d in days:
         js=[r for r in rows if r['scheduled_date']==d.isoformat()]
+        for jid in by_day.get(d.isoformat(), ()):
+            if jid in jobs_by_id and all(x['id']!=jid for x in js):
+                js.append(jobs_by_id[jid])
         lab='Today' if d==t else ('Tomorrow' if d==t+timedelta(days=1) else d.strftime('%a %b ')+str(d.day))
         body+='<h2>%s</h2>'%lab+(''.join(sched_card(r) for r in js) or '<div class="muted" style="margin:0 0 6px">Nothing scheduled</div>')
-    nd=[r for r in rows if not r['scheduled_date']]
+    slotted=set().union(*by_day.values()) if by_day else set()
+    nd=[r for r in rows if not r['scheduled_date'] and r['id'] not in slotted]
     if nd: body+='<h2>No date yet</h2>'+''.join(sched_card(r) for r in nd)
     return ops_page('My Schedule', body, back=False)
 def sched_card(r):
@@ -1427,6 +1448,8 @@ def init_db():
         _quote.init_schema(conn)
         import fieldops_crm as _crm
         _crm.init_schema(conn)
+        import fieldops_ops as _ops
+        _ops.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -3593,6 +3616,12 @@ def qbo_page():
             link=(f.get('pay_link') or '').strip()[:500]
             if link and not link.startswith('https://'): msg='The pay link must start with https://'
             else: conn.execute('UPDATE jobs SET pay_link=? WHERE id=?',(link or None,f.get('job'))); msg='Pay link saved' if link else 'Pay link removed'
+        elif a=='ops_draft':
+            fn=globals().get('ops_qbo_post')
+            if callable(fn):
+                try: msg=fn(conn, f) or msg
+                except Exception:
+                    app.logger.exception('ops qbo draft failed'); msg='Could not save that draft.'
         conn.commit()
     drafts=conn.execute('SELECT d.job_id,d.created_at FROM invoice_drafts d ORDER BY d.created_at DESC').fetchall()
     q={r['job_id']:r for r in conn.execute('SELECT * FROM qbo_queue').fetchall()}
@@ -3634,6 +3663,12 @@ def qbo_page():
     for st,title in (('queued','Waiting for the bot'),('error','Problems'),('created','In QuickBooks, not paid'),('paid','Paid')):
         xs=[x for x in q.values() if x['status']==st]
         if xs: body+='<h2>%s</h2>'%title+''.join(row_html(x) for x in sorted(xs,key=lambda x:x['updated_at'] or '',reverse=True))
+    extra_fn=globals().get('ops_qbo_extra')
+    if callable(extra_fn):
+        try:
+            conn2=get_db(); body+=extra_fn(conn2) or ''; conn2.close()
+        except Exception:
+            app.logger.exception('ops qbo extra failed')
     return ops_page('QuickBooks Export', body, msg=msg)
 
 @app.route('/api/qbo/pending')
@@ -3643,13 +3678,25 @@ def qbo_pending():
     st=request.args.get('status','queued')
     if st not in ('queued','created'): return jsonify({'error':'status must be queued or created'}),400
     conn=get_db(); rows=conn.execute('SELECT * FROM qbo_queue WHERE status=? ORDER BY queued_at',(st,)).fetchall(); conn.close()
-    return jsonify([dict(json.loads(r['payload'] or '{}'),status=r['status'],qbo_invoice_id=r['qbo_invoice_id'],queued_at=r['queued_at']) for r in rows])
+    existing=[dict(json.loads(r['payload'] or '{}'),status=r['status'],qbo_invoice_id=r['qbo_invoice_id'],queued_at=r['queued_at']) for r in rows]
+    fn=globals().get('ops_qbo_pending')
+    if callable(fn):
+        try: existing=fn(request.args.get('kind') or 'final', st, existing)
+        except Exception:
+            app.logger.exception('ops qbo pending failed')
+    return jsonify(existing)
 
 @app.route('/api/qbo/result', methods=['POST'])
 def qbo_result():
     bad=sync_key_ok()
     if bad: return bad
     d=request.get_json(silent=True) or {}; jid=str(d.get('job_id') or ''); st=d.get('status')
+    fn=globals().get('ops_qbo_result')
+    if callable(fn) and d.get('draft_id'):
+        res=fn(d)
+        if res=='ok': return jsonify({'ok':True})
+        if res=='draft not found': return jsonify({'error':res}),404
+        return jsonify({'error':res or 'bad request'}),400
     if st not in ('created','paid','error'): return jsonify({'error':'status must be created, paid or error'}),400
     conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=?',(jid,)).fetchone()
     if not x: conn.close(); return jsonify({'error':'job not in queue'}),404
@@ -3814,6 +3861,8 @@ CAL_HTML = '''<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewp
 @app.route('/calendar')
 def calendar_page():
     if not is_office(): return redirect('/')
+    fn=globals().get('ops_calendar_page')
+    if callable(fn): return fn()
     t=today_local()
     try: start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
     except ValueError: start=t
@@ -3987,6 +4036,8 @@ td.addEventListener('drop',e=>{e.preventDefault();td.classList.remove('hot');con
 @app.route('/schedule')
 def schedule_page():
     if not is_office(): return redirect('/')
+    fn=globals().get('ops_schedule_page')
+    if callable(fn): return fn()
     t=today_local()
     try: start=datetime.strptime(request.args.get('start',''),'%Y-%m-%d').date()
     except ValueError: start=t
@@ -4007,7 +4058,19 @@ def schedule_job(job_id):
         except ValueError: return jsonify({'error':'bad date'}),400
     if not tech: return jsonify({'error':'tech required'}),400
     conn=get_db(); old=conn.execute('SELECT * FROM jobs WHERE id=?',(job_id,)).fetchone()
-    n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount; conn.commit(); conn.close()
+    n=conn.execute('UPDATE jobs SET scheduled_date=?,tech=? WHERE id=?',(sd or None,tech,job_id)).rowcount
+    try:
+        import fieldops_ops as _ops
+        existing=list(conn.execute('SELECT * FROM job_slots WHERE job_id=?',(job_id,)))
+        if not sd:
+            conn.execute('DELETE FROM job_slots WHERE job_id=?',(job_id,))
+        elif len(existing)==1:
+            _ops.upsert_slot(conn, job_id, sd, tech, existing[0]['start_time'], existing[0]['end_time'], existing[0]['id'])
+        elif not existing:
+            _ops.upsert_slot(conn, job_id, sd, tech)
+    except Exception:
+        app.logger.exception('slot sync from schedule API failed')
+    conn.commit(); conn.close()
     if n and old:
         if ckey(old['tech'])!=ckey(tech):
             push_to_sub(tech,'New job: '+(old['title'] or job_id),(old['customer'] or '')+' - '+nice_day(sd),'/?job='+job_id)
@@ -6667,6 +6730,8 @@ import fieldops_quote
 fieldops_quote.register(sys.modules[__name__])
 import fieldops_crm
 fieldops_crm.register(sys.modules[__name__])
+import fieldops_ops
+fieldops_ops.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
