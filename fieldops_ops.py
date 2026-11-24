@@ -978,12 +978,29 @@ function foSubmit(){if(!drawn){alert("Please sign in the box");return false}docu
         x = conn.execute('SELECT * FROM qbo_drafts WHERE id=?', (draft_id,)).fetchone()
         if not x:
             conn.close(); return 'draft not found'
-        conn.execute(
-            'UPDATE qbo_drafts SET status=?, qbo_invoice_id=COALESCE(?,qbo_invoice_id), doc_number=COALESCE(?,doc_number), note=?, updated_at=? WHERE id=?',
-            (st,
-             (str(d['qbo_invoice_id'])[:40] if d.get('qbo_invoice_id') else None),
-             (str(d['doc_number'])[:40] if d.get('doc_number') else None),
-             str(d.get('note') or '')[:300], now_iso(), draft_id))
+        pick = getattr(fo, 'pick_pay_link', None)
+        link = pick(d) if callable(pick) else str(d.get('pay_link') or d.get('invoiceLink') or '').strip()[:500]
+        if link is None or (link and not str(link).startswith('https://')):
+            conn.close(); return 'pay_link must be https'
+        link = link or ''
+        if 'pay_link' in {r[1] for r in conn.execute('PRAGMA table_info(qbo_drafts)')}:
+            conn.execute(
+                'UPDATE qbo_drafts SET status=?, qbo_invoice_id=COALESCE(?,qbo_invoice_id), doc_number=COALESCE(?,doc_number), note=?, pay_link=COALESCE(?,pay_link), updated_at=? WHERE id=?',
+                (st,
+                 (str(d['qbo_invoice_id'])[:40] if d.get('qbo_invoice_id') else None),
+                 (str(d['doc_number'])[:40] if d.get('doc_number') else None),
+                 str(d.get('note') or '')[:300], (link or None), now_iso(), draft_id))
+        else:
+            conn.execute(
+                'UPDATE qbo_drafts SET status=?, qbo_invoice_id=COALESCE(?,qbo_invoice_id), doc_number=COALESCE(?,doc_number), note=?, updated_at=? WHERE id=?',
+                (st,
+                 (str(d['qbo_invoice_id'])[:40] if d.get('qbo_invoice_id') else None),
+                 (str(d['doc_number'])[:40] if d.get('doc_number') else None),
+                 str(d.get('note') or '')[:300], now_iso(), draft_id))
+        if link and st in ('created', 'paid'):
+            conn.execute('UPDATE jobs SET pay_link=? WHERE id=?', (link, x['job_id']))
+        if st == 'paid':
+            conn.execute('UPDATE jobs SET paid_at=COALESCE(paid_at,?) WHERE id=?', (now_iso(), x['job_id']))
         conn.commit(); conn.close()
         return 'ok'
 

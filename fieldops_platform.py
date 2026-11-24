@@ -840,6 +840,11 @@ def register(fo):
                 body += fo.crm_block('company', cid, company_id=cid)
             except Exception:
                 fo.app.logger.exception('crm company block failed')
+        if hasattr(fo, 'portal_company_html'):
+            try:
+                body += fo.portal_company_html(conn, cid)
+            except Exception:
+                fo.app.logger.exception('portal company block failed')
         return page(co['name'], body, back='/customers', kicker='Customer',
                     actions='<a class="plat-btn plat-btn-ghost" href="/systems?client=%s">Installed systems</a>' % urllib.parse.quote(co['name']))
 

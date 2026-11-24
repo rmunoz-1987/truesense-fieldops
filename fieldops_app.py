@@ -356,7 +356,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/co/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/p/') or request.path.startswith('/co/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not has_any_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -514,7 +514,7 @@ def offline_page(): return OFFLINE_HTML
 def add_tap_css(resp):
     try:
         # /healthz must stay a plain "ok" for Render. Public quote and share links keep their own markup.
-        if request.path=='/healthz' or request.path.startswith(('/q/','/co/','/s/')):
+        if request.path=='/healthz' or request.path.startswith(('/q/','/p/','/co/','/s/')):
             return resp
         if resp.mimetype=='text/html' and not resp.direct_passthrough and resp.status_code<400 or resp.mimetype=='text/html' and resp.status_code==503:
             h=resp.get_data(as_text=True)
@@ -870,7 +870,7 @@ def theme_of(user):
         return 'dark' if r and r['value']=='dark' else 'light'
     except Exception: return 'light'
 
-SHELL_SKIP = ('/design/','/hub/','/s/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
+SHELL_SKIP = ('/design/','/hub/','/s/','/p/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
 def apply_shell(html, path):
     if 'id="shell-css"' in html or not me() or not is_office() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
     office=True; top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
@@ -1479,6 +1479,8 @@ def init_db():
         _tix.init_schema(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
         import fieldops_plans as _plans
         _plans.init_schema(conn)
+        import fieldops_portal as _portal
+        _portal.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -3747,8 +3749,10 @@ def qbo_result():
     if st not in ('created','paid','error'): return jsonify({'error':'status must be created, paid or error'}),400
     conn=get_db(); x=conn.execute('SELECT * FROM qbo_queue WHERE job_id=?',(jid,)).fetchone()
     if not x: conn.close(); return jsonify({'error':'job not in queue'}),404
-    link=str(d.get('pay_link') or '').strip()[:500]
-    if link and not link.startswith('https://'): conn.close(); return jsonify({'error':'pay_link must be https'}),400
+    pick=globals().get('pick_pay_link')
+    link=pick(d) if callable(pick) else str(d.get('pay_link') or d.get('invoiceLink') or '').strip()[:500]
+    if link is None or (link and not str(link).startswith('https://')): conn.close(); return jsonify({'error':'pay_link must be https'}),400
+    link=link or ''
     tot=d.get('total'); bal=d.get('balance')
     conn.execute('UPDATE qbo_queue SET status=?,qbo_invoice_id=COALESCE(?,qbo_invoice_id),doc_number=COALESCE(?,doc_number),total=COALESCE(?,total),balance=COALESCE(?,balance),note=?,updated_at=? WHERE job_id=?',
                  (st,(str(d['qbo_invoice_id'])[:40] if d.get('qbo_invoice_id') else None),(str(d['doc_number'])[:40] if d.get('doc_number') else None),(fnum(tot) if tot is not None else None),(fnum(bal) if bal is not None else None),str(d.get('note') or '')[:300],now_local_str(),jid))
@@ -6791,6 +6795,8 @@ import fieldops_compliance
 fieldops_compliance.register(sys.modules[__name__])
 import fieldops_plans
 fieldops_plans.register(sys.modules[__name__])
+import fieldops_portal
+fieldops_portal.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
