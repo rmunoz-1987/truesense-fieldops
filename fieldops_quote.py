@@ -722,6 +722,7 @@ def decorate_client_lines(row, selected=None):
         item['idx'] = i
         kind = item.get('kind') or 'item'
         item['kind'] = kind
+        item['qty_rate_label'] = ''
         qv = item.get('qty')
         if kind in ('text', 'subtotal', 'group', 'tax', 'discount') or qv in (None, ''):
             item['qty_label'] = '' if kind != 'item' else ''
@@ -737,6 +738,11 @@ def decorate_client_lines(row, selected=None):
             amt = line_amount(item)
             item['amt_value'] = amt
             item['amount_label'] = money(amt)
+            qty_l = item.get('qty_label') or ''
+            if qty_l:
+                item['qty_rate_label'] = 'Qty %s x %s' % (qty_l, money(item['rate']))
+            else:
+                item['qty_rate_label'] = money(item['rate'])
         elif kind == 'text':
             item['show_rate'] = False
             item['rate'] = 0
@@ -1345,12 +1351,57 @@ details.terms[open] summary:after{content:"Hide"}
 .check{display:flex;gap:10px;align-items:flex-start;margin:12px 0;font-size:1.05rem}
 .check input{width:28px;height:28px;margin:0;flex:0 0 28px}
 .foot{margin-top:28px;text-align:center;color:#6b6d60;font-size:.9rem}
+.ln-foot{display:none}
+.est-block{min-width:0;max-width:100%}
+.est-card{min-width:0;max-width:100%;overflow-x:hidden}
+@media screen and (max-width:600px){
+  .wrap{padding:16px 14px 40px;overflow-x:hidden}
+  .addr-grid{grid-template-columns:1fr !important}
+  .est-table{table-layout:auto;border-collapse:collapse}
+  .est-table thead{display:none}
+  .est-table tbody,.est-table{display:block;width:100%}
+  .est-table tr.kind-item,.est-table tr.kind-text,.est-table tr.kind-group{
+    display:block;width:100%;padding:14px 0;border-bottom:1px solid #eee;background:transparent
+  }
+  .est-table tr.kind-item td,.est-table tr.kind-text td,.est-table tr.kind-group td{
+    display:block;width:100%;border:0;padding:0;text-align:left;white-space:normal
+  }
+  .est-table tr.kind-item td.qty,.est-table tr.kind-item td.rate,.est-table tr.kind-item td.amt,
+  .est-table tr.kind-text td.qty,.est-table tr.kind-text td.rate,.est-table tr.kind-text td.amt,
+  .est-table tr.kind-group td.qty,.est-table tr.kind-group td.rate,.est-table tr.kind-group td.amt{display:none}
+  .ln-name{font-weight:700;font-size:1.05rem}
+  .desc{margin-top:6px}
+  .ln-foot{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:8px;width:100%}
+  .ln-meta{color:#333;font-size:1rem;min-width:0;overflow-wrap:anywhere}
+  .ln-amt{font-weight:700;font-size:1.05rem;white-space:nowrap;text-align:right;margin-left:auto}
+  .est-table tr.kind-subtotal,.est-table tr.kind-tax,.est-table tr.kind-discount{
+    display:flex;justify-content:space-between;align-items:baseline;gap:12px;width:100%;
+    padding:12px 0;border-bottom:1px solid #eee;background:#fafaf6;font-weight:700
+  }
+  .est-table tr.kind-subtotal td,.est-table tr.kind-tax td,.est-table tr.kind-discount td{
+    border:0;padding:0;white-space:normal;background:transparent
+  }
+  .est-table tr.kind-subtotal td.qty,.est-table tr.kind-subtotal td.rate,
+  .est-table tr.kind-tax td.qty,.est-table tr.kind-tax td.rate,
+  .est-table tr.kind-discount td.qty,.est-table tr.kind-discount td.rate{display:none}
+  .est-table tr.kind-subtotal td.amt,.est-table tr.kind-tax td.amt,.est-table tr.kind-discount td.amt{
+    display:block;text-align:right;font-weight:800;white-space:nowrap;margin-left:auto
+  }
+  .totals{width:100%;padding-top:4px}
+  .breakdown{width:100%;font-size:1.05rem;gap:8px 12px}
+  .breakdown b{justify-self:end}
+  .total{display:flex;justify-content:space-between;align-items:baseline;width:100%;margin-top:8px;padding-top:10px;border-top:2px solid #a49f2a}
+  .total:before{content:"Total";font-size:1.15rem;font-weight:700}
+  .deposit{display:flex;justify-content:space-between;align-items:baseline;width:100%;gap:12px;margin-top:10px}
+  .deposit b{white-space:nowrap;margin-left:auto}
+}
 @media print{
   body{background:#fff}
   .noprint{display:none !important}
   .wrap{max-width:none;padding:0}
   details.terms{border:0}
   details.terms summary:after{display:none}
+  .ln-foot{display:none !important}
 }
 </style></head><body>
 <div class="wrap">
@@ -1367,7 +1418,7 @@ details.terms[open] summary:after{content:"Hide"}
 <h1>{{ q.title }}</h1>
 {% if company %}<div>Prepared for <b>{{ company }}</b></div>{% endif %}
 {% if bill_to or ship_to %}
-<div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="card addr-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
   {% if bill_to %}<div><div class="muted">Bill to</div><div class="pre">{{ bill_to }}</div></div>{% endif %}
   {% if ship_to %}<div><div class="muted">Ship to / job site</div><div class="pre">{{ ship_to }}</div></div>{% endif %}
 </div>
@@ -1377,18 +1428,21 @@ details.terms[open] summary:after{content:"Hide"}
 {% if accepted %}
 <div class="ok">Approved by {{ q.accepted_name }} on {{ q.accepted_at[:10] }}. Total {{ money(q.total) }}.</div>
 {% endif %}
+<section class="est-block">
 <h2>Estimate</h2>
-<div class="card">
-<table>
-<tr><th>Item</th><th class="qty">Qty</th><th class="rate">Rate</th><th class="amt">Amount</th></tr>
+<div class="card est-card">
+<table class="est-table">
+<thead><tr><th>Item</th><th class="qty">Qty</th><th class="rate">Rate</th><th class="amt">Amount</th></tr></thead>
+<tbody>
 {% for ln in lines %}
 <tr class="kind-{{ ln.kind or 'item' }}">
-<td>{% if ln.optional and not accepted and ln.kind == 'item' %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" form="est-form" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% if ln.optional %} <em class="addon-tag">Add-on</em>{% endif %}{% endif %}{% if ln.description and ln.description != ln.name %}<div class="desc">{{ ln.description }}</div>{% endif %}</td>
+<td class="item">{% if ln.optional and not accepted and ln.kind == 'item' %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" form="est-form" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span class="ln-name">{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}<span class="ln-name">{{ ln.name }}</span>{% if ln.optional %} <em class="addon-tag">Add-on</em>{% endif %}{% endif %}{% if ln.description and ln.description != ln.name %}<div class="desc">{{ ln.description }}</div>{% endif %}{% if (ln.kind or 'item') == 'item' %}<div class="ln-foot"><span class="ln-meta">{{ ln.qty_rate_label }}</span><span class="ln-amt">{{ ln.amount_label }}</span></div>{% endif %}</td>
 <td class="qty">{{ ln.qty_label }}</td>
 <td class="rate">{% if ln.show_rate %}{{ money(ln.rate) }}{% endif %}</td>
 <td class="amt" data-amt="{{ ln.amt_value }}" data-kind="{{ ln.kind }}">{{ ln.amount_label }}</td>
 </tr>
 {% endfor %}
+</tbody>
 </table>
 <div class="totals" data-tax="{{ totals.tax }}" data-discount="{{ totals.discount }}" data-deposit-min="{{ deposit_min }}">
   <div class="breakdown">
@@ -1401,6 +1455,7 @@ details.terms[open] summary:after{content:"Hide"}
   <div class="muted" id="tot-note">This is the total for the items above{% if has_addons and not accepted %}, including any optional add-ons you tick{% endif %}. The balance is due upon completion, net 15.</div>
 </div>
 </div>
+</section>
 {% if clarifications %}
 <h2>Clarifications</h2>
 <div class="card pre">{{ clarifications }}</div>

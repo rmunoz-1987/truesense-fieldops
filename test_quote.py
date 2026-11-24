@@ -175,6 +175,49 @@ class QuoteTests(unittest.TestCase):
         html=self.c.get('/catalog').get_data(as_text=True)
         self.assertIn('class="on">Quote</a>', html)
 
+    def test_client_lines_stack_on_phones_and_stay_tabular_for_print(self):
+        conn = fo.get_db()
+        co = plat.upsert_company(conn, 'Phone Layout Co')
+        long_desc = (
+            'Labor - Alarm Service: Replace CR123A batteries in five (5) DSC Neo wireless '
+            'motion sensors, relocate up to two (2) motion sensors obstructed by shelving '
+            'to an optimal coverage location, remount, test sensor communication and walk-test '
+            'all serviced zones.'
+        )
+        row, err = quote.save_quote(conn, {
+            'title': 'Service call', 'company_id': co['id'],
+            'lines': [
+                {'name': 'Materials:Consumables', 'qty': 5, 'cost': 2, 'sell': 3.85,
+                 'description': 'Materials - CR123A 3V lithium battery for wireless motion sensors'},
+                {'name': 'Labor:T&M Labor Standard', 'qty': 1, 'cost': 80, 'sell': 150,
+                 'description': long_desc},
+                {'name': 'Subtotal', 'kind': 'subtotal', 'amount': 169.25},
+            ],
+        }, created_by='Roland')
+        self.assertIsNone(err)
+        sent = quote.ensure_token(conn, row['id'])
+        token = sent['token']
+        conn.commit(); conn.close()
+        html = self.c.get('/q/' + token).get_data(as_text=True)
+        printed = self.c.get('/q/' + token + '/print').get_data(as_text=True)
+        self.login()
+        office = self.c.get('/quotes/%d/print' % row['id'])
+        self.assertEqual(office.status_code, 200)
+        office_html = office.get_data(as_text=True)
+        for page in (html, printed, office_html):
+            self.assertIn('est-block', page)
+            self.assertIn('ln-foot', page)
+            self.assertIn('Qty 5 x $3.85', page)
+            self.assertIn('Qty 1 x $150.00', page)
+            self.assertIn(long_desc, page)
+            self.assertIn('@media screen and (max-width:600px)', page)
+            self.assertIn('.ln-foot{display:none !important}', page)
+            self.assertNotIn('—', page)
+        # The stacked layout is screen-only; the print page still has the table columns.
+        self.assertIn('<th class="qty">Qty</th>', printed)
+        self.assertIn('<th class="rate">Rate</th>', printed)
+
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
