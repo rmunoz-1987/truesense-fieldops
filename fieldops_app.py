@@ -335,7 +335,7 @@ def login_ok(name):
     with LOGIN_LOCK: LOGIN_FAILS.pop('n:'+name.lower(), None)
 
 # ---- CSRF: browser writes must come from this site (Origin / Referer check) ----
-CSRF_EXEMPT = ('/api/qbo/pending', '/api/qbo/result', '/api/qbo/import-estimates', '/api/qbo-monthly', '/api/tech-support/reply')
+CSRF_EXEMPT = ('/api/qbo/pending', '/api/qbo/result', '/api/qbo/import-estimates', '/api/qbo-monthly', '/api/tech-support/reply', '/api/office/backup')
 @app.before_request
 def csrf_check():
     if request.method in ('GET','HEAD','OPTIONS') or request.path in CSRF_EXEMPT or request.path.startswith('/api/material-requests/'): return
@@ -356,7 +356,7 @@ def security_headers(resp):
 
 @app.before_request
 def require_login():
-    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result', '/api/qbo/import-estimates') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/p/') or request.path.startswith('/co/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
+    if request.path in ('/login', '/healthz', '/sw.js', '/outbox.js', '/manifest.webmanifest', '/offline', '/api/qbo/pending', '/api/qbo/result', '/api/qbo/import-estimates', '/api/office/backup') or request.path.startswith('/static/') or request.path.startswith('/help-photo/') or request.path.startswith('/hub/') or request.path.startswith('/q/') or request.path.startswith('/p/') or request.path.startswith('/co/') or request.path.startswith('/s/') or request.path.startswith('/agreement/view/') or request.path.startswith('/api/material-requests/') or request.path in ('/api/tech-support/reply', '/api/qbo-monthly'): return
     if not has_any_login():
         return (render_template_string(LOGIN_HTML, setup=True), 503) if not request.path.startswith('/api') else (jsonify({'error':'Add user passwords in Render'}), 503)
     if not me():
@@ -6816,6 +6816,8 @@ import fieldops_security
 fieldops_security.register(sys.modules[__name__])
 import fieldops_areas
 fieldops_areas.register(sys.modules[__name__])
+import fieldops_backup
+fieldops_backup.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()
