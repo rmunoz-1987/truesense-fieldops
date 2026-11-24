@@ -207,7 +207,15 @@ def areas_payload(conn, row, fo=None, present=False, walk=False, plan_base=''):
             items.append({'id': r['id'], 'name': r['name']})
     except Exception:
         items = []
+    fav_devices = []
+    try:
+        import fieldops_favorites as _fav
+        if fo:
+            fav_devices = _fav.list_for(conn, _fav.user_key(fo), 'device')
+    except Exception:
+        fav_devices = []
     return {
+        'favorites_devices': fav_devices,
         'area_notes': notes_of(conn, job_id),
         'area_photos': by_fn,
         'area_counts': {fn: sum(1 for d in devs if d.get('plan') == fn)

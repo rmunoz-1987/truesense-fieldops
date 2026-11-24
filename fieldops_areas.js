@@ -401,4 +401,70 @@
   renderNotes();
   renderScaleBtn();
   requestAnimationFrame(function(){ if (typeof fit==='function'){ vb=null; fit(); draw(); } });
+
+
+  /* Favorite devices: pin to the front of the tray. Star or long-press to toggle. */
+  (function favTray(){
+    const orig = window.trayInit;
+    if (typeof orig !== 'function') return;
+    window.FO_FAVS = window.FO_FAVS || {};
+    window.FO_FAVS.devices = D.favorites_devices || window.FO_FAVS.devices || [];
+    function favSet(){ return window.FO_FAVS.devices || []; }
+    function isFav(t){ return favSet().indexOf(t) >= 0; }
+    function star(on){
+      return on
+        ? '<span class="pd-fav on" title="Favorite">&#9733;</span>'
+        : '<span class="pd-fav" title="Add to favorites">&#9734;</span>';
+    }
+    function toggleFav(typ, ev){
+      if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+      const want = !isFav(typ);
+      fetch('/api/favorites', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({kind:'device', item_key: typ, on: want})
+      }).then(r => r.json().then(d => ({ok:r.ok, d}))).then(res => {
+        if (!res.ok) { alert((res.d && res.d.error) || 'Could not save favorite'); return; }
+        window.FO_FAVS.devices = res.d.devices || [];
+        D.favorites_devices = window.FO_FAVS.devices;
+        window.trayInit();
+      }).catch(() => alert('Could not save favorite'));
+    }
+    window.trayInit = function(){
+      const t = $('pd-tray');
+      if (!t || typeof TYPES === 'undefined') { if (orig) orig(); return; }
+      const fav = favSet();
+      const ordered = TYPES.slice().sort((a,b) => {
+        const fa = fav.indexOf(a[0]), fb = fav.indexOf(b[0]);
+        if (fa >= 0 && fb < 0) return -1;
+        if (fb >= 0 && fa < 0) return 1;
+        if (fa >= 0 && fb >= 0) return fa - fb;
+        return 0;
+      });
+      t.innerHTML = ordered.map(x => {
+        const on = isFav(x[0]);
+        return '<button class="pd-tool'+(on?' is-fav':'')+'" data-t="'+esc(x[0])+'">'+star(on)+symHtml(x[0],34)+'<span>'+esc(x[0])+'</span></button>';
+      }).join('');
+      t.querySelectorAll('.pd-tool').forEach(b => {
+        b.addEventListener('pointerdown', e => {
+          if (e.target && e.target.closest && e.target.closest('.pd-fav')) {
+            toggleFav(b.getAttribute('data-t'), e);
+            return;
+          }
+          if (typeof trayDown === 'function') trayDown(e, b);
+        });
+        let hold = null;
+        b.addEventListener('pointerdown', e => {
+          if (e.target && e.target.closest && e.target.closest('.pd-fav')) return;
+          hold = setTimeout(() => { hold = null; toggleFav(b.getAttribute('data-t')); }, 550);
+        });
+        ['pointerup','pointercancel','pointerleave'].forEach(ev => b.addEventListener(ev, () => { if (hold) { clearTimeout(hold); hold = null; } }));
+      });
+      if (typeof trayTA === 'function') trayTA();
+    };
+    const style = document.createElement('style');
+    style.textContent = '.pd-tool{position:relative}.pd-fav{position:absolute;top:2px;right:4px;font-size:14px;color:#8a8b7a;line-height:1}.pd-fav.on{color:#a49f2a}.pd-tool.is-fav{outline:2px solid #a49f2a;outline-offset:-2px;border-radius:10px}';
+    document.head.appendChild(style);
+    if (typeof window.trayInit === 'function') window.trayInit();
+  })();
+
 })();

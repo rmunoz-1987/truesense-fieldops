@@ -1015,6 +1015,16 @@ def register(fo):
         return redirect('/catalog')
 
     def _editor(conn, vals, action, submit, companies, catalog, contacts=None, sites=None):
+        fav_ids = []
+        try:
+            import fieldops_favorites as _fav
+            if fo.me():
+                fav_ids = [str(x) for x in _fav.list_for(conn, _fav.user_key(fo), 'catalog')]
+        except Exception:
+            fav_ids = []
+        order = {k: i for i, k in enumerate(fav_ids)}
+        fav_items = [c for c in catalog if str(c['id']) in order]
+        fav_items.sort(key=lambda c: order.get(str(c['id']), 999))
         lines = vals.get('lines') or []
         if not lines:
             lines = [{'name': '', 'qty': 1, 'cost': '', 'sell': '', 'optional': False}]
@@ -1074,8 +1084,27 @@ def register(fo):
                     h(ln.get('kind') or 'item'), h(amt_s),
                     '1' if ln.get('taxable') else '',
                     i, ' checked' if ln.get('optional') else ''))
+        fav_chips = ''
+        for c in fav_items:
+            lab = h(c['name'] or '')
+            if c['sell']:
+                lab = lab + ' · ' + money(c['sell'])
+            fav_chips += (
+                '<span class="fav-chip-wrap">'
+                '<button type="button" class="plat-btn plat-btn-ghost fav-chip" data-id="%s" data-sell="%s" data-cost="%s" data-unit="%s" data-name="%s" onclick="foAddFav(this)">%s</button>'
+                '<button type="button" class="fav-btn on" data-kind="catalog" data-key="%s" title="Remove favorite" onclick="foUnstarCat(this)">&#9733;</button></span>'
+                % (c['id'], c['sell'] or 0, c['cost'] or 0, h(c['unit'] or ''), h(c['name'] or ''), lab, c['id'])
+            )
+        fav_block = (
+            '<div id="fav-catalog" class="fav-catalog">'
+            '<div class="muted">Favorite parts and labor</div>'
+            '<div id="fav-chips" class="fav-chips">' + fav_chips + '</div>'
+            '<button type="button" class="plat-btn plat-btn-ghost" onclick="foStarPicked()">Star selected item</button>'
+            '</div>'
+        )
         form += (
             '</div>'
+            + fav_block +
             '<div class="plat-row" style="align-items:flex-end"><div style="flex:2"><label>Add from catalog</label>'
             '<select id="cat-pick"><option value="">Pick an item</option>%s</select></div>'
             '<button class="plat-btn plat-btn-ghost" type="button" onclick="foAddCat()">Add item</button></div>'
@@ -1108,6 +1137,20 @@ def register(fo):
             + '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="line_optional" value="\'+n+\'" style="width:auto"> Optional add-on the client can tick</label>\';'
             'box.appendChild(d);s.value=""}</script>'
         ) % (cat_opts, h(submit))
+        form += (
+            '<style>.fav-catalog{margin:14px 0 8px}.fav-chips{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}'
+            '.fav-chip-wrap{display:inline-flex;align-items:center;gap:0;border:1px solid #ecece6;border-radius:10px;overflow:hidden;background:#fff}'
+            '.fav-chip-wrap .fav-chip{border:0;border-radius:0;margin:0}'
+            '.fav-chip-wrap .fav-btn{width:40px;height:40px;border:0;background:#f7f6ea;color:#a49f2a;cursor:pointer}'
+            '</style>'
+            '<script>'
+            'function foAddFav(btn){const box=document.getElementById("quote-lines");const n=box.querySelectorAll("[data-line]").length;const d=document.createElement("div");d.className="plat-panel";d.style.cssText="margin:8px 0;padding:12px";d.setAttribute("data-line","");const name=(btn.getAttribute("data-name")||"").replace(/"/g,"&quot;");'
+            'd.innerHTML="<label>Item</label><input name=\\"line_name\\" value=\\""+name+"\\"><label>Description</label><textarea name=\\"line_description\\" rows=\\"3\\"></textarea><div class=\\"plat-row\\"><div><label>Qty</label><input name=\\"line_qty\\" type=\\"number\\" step=\\"any\\" min=\\"0\\" value=\\"1\\"></div><div><label>Cost $</label><input name=\\"line_cost\\" type=\\"number\\" step=\\"0.01\\" min=\\"0\\" value=\\""+(btn.getAttribute("data-cost")||"")+"\\"></div><div><label>Rate $</label><input name=\\"line_sell\\" type=\\"number\\" step=\\"any\\" min=\\"0\\" value=\\""+(btn.getAttribute("data-sell")||"")+"\\"></div></div><input type=\\"hidden\\" name=\\"line_catalog_id\\" value=\\""+(btn.getAttribute("data-id")||"")+"\\"><input type=\\"hidden\\" name=\\"line_unit\\" value=\\""+(btn.getAttribute("data-unit")||"")+"\\"><input type=\\"hidden\\" name=\\"line_kind\\" value=\\"item\\"><input type=\\"hidden\\" name=\\"line_amount\\"><input type=\\"hidden\\" name=\\"line_taxable\\"><label style=\\"display:flex;gap:8px;align-items:center\\"><input type=\\"checkbox\\" name=\\"line_optional\\" value=\\""+n+"\\" style=\\"width:auto\\"> Optional add-on the client can tick</label>";'
+            'box.appendChild(d)}'
+            'function foStarPicked(){const s=document.getElementById("cat-pick");if(!s||!s.value){alert("Pick an item first");return;}fetch("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"catalog",item_key:String(s.value),on:true})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})}).then(function(res){if(!res.ok){alert((res.d&&res.d.error)||"Could not save favorite");return;}location.reload()}).catch(function(){alert("Could not save favorite")})}'
+            'function foUnstarCat(btn){const id=btn.getAttribute("data-key");fetch("/api/favorites",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"catalog",item_key:String(id),on:false})}).then(function(r){return r.json().then(function(d){return {ok:r.ok,d:d}})}).then(function(res){if(!res.ok){alert((res.d&&res.d.error)||"Could not save favorite");return;}var wrap=btn.closest(".fav-chip-wrap");if(wrap)wrap.remove()}).catch(function(){alert("Could not save favorite")})}'
+            '</script>'
+        )
         return form
 
     # Fix checkbox: HTML forms only send checked boxes, so optional flags by index can drift.
