@@ -803,7 +803,7 @@ def shell_tabs(path, office):
 
 def shell_links(path, office):
     area=plat_area(path)
-    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
+    more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/tickets','Service tickets'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
         main=[('/sales','Home'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
     elif area=='quote':
@@ -913,7 +913,7 @@ def money_page():
 def more_page():
     if not is_office(): return redirect('/')
     return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
-        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/checklists','Checklists','Job templates','check'),
+        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/tickets','Service tickets','Call and portal intake queue','alert'),('/checklists','Checklists','Job templates','check'),
         ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Crew board, day week fortnight and month','cal'),('/calendar','Calendar','Month view of the same board','cal'),('/costing','Job costing','Sale, labor, materials and profit','money'),('/timesheets','Timesheets','Weekly approval and sub-pay CSV','clock'),('/change-orders','Change orders','Priced extras the client can accept','note'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
 
 def me_settings_body():
@@ -1044,6 +1044,13 @@ def api_today():
                 acts.append(a)
         except Exception:
             app.logger.exception('crm today actions failed')
+    tix_fn=globals().get('tickets_today_actions')
+    if callable(tix_fn):
+        try:
+            for a in (tix_fn(conn, ti) or []):
+                acts.append(a)
+        except Exception:
+            app.logger.exception('ticket today actions failed')
     conn.close()
     hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
     return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
@@ -1450,6 +1457,8 @@ def init_db():
         _crm.init_schema(conn)
         import fieldops_ops as _ops
         _ops.init_schema(conn)
+        import fieldops_tickets as _tix
+        _tix.init_schema(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -6702,6 +6711,12 @@ def systems_page():
             body+='<table class="dv"><tr><th>Device</th><th>Type</th><th>Floor</th><th>Part #</th></tr>'+''.join('<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>'%(h(d.get('label') or '-'),h(d['type']),h(x['names'].get(d['plan'],'')),h(d.get('part') or '-')) for d in x['devs'])+'</table></details>'
         if s['eq']:
             body+='<h2>Equipment records</h2><table class="dv"><tr><th>Device</th><th>Model</th><th>Installed</th><th>Warranty</th></tr>'+''.join('<tr><td><a href="/equipment/%d">%s</a></td><td>%s</td><td>%s</td><td>%s</td></tr>'%(e['id'],h(e['device'] or '-'),h(e['model'] or '-'),h(e['install_date'] or '-'),h(e['warranty_end'] or '-')) for e in s['eq'])+'</table>'
+        tix_fn=globals().get('tickets_site_html')
+        if callable(tix_fn):
+            try:
+                body+=tix_fn(customer=client, address=s['addr'])
+            except Exception:
+                app.logger.exception('ticket history on systems failed')
         body+='</div>'
     return ops_page('Installed systems: '+client, body, back='/clients?name='+urllib.parse.quote(client))
 
@@ -6732,6 +6747,8 @@ import fieldops_crm
 fieldops_crm.register(sys.modules[__name__])
 import fieldops_ops
 fieldops_ops.register(sys.modules[__name__])
+import fieldops_tickets
+fieldops_tickets.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

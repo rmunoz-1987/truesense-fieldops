@@ -482,6 +482,12 @@ def register(fo):
             })
         tray = [{'id': r['id'], 'customer': r['customer'] or '', 'title': r['title'] or '',
                  'type': r['job_type'] or 'Job', 'tech': r['tech'] or ''} for r in unsched]
+        extra_tray = getattr(fo, 'ticket_tray_items', None)
+        if callable(extra_tray):
+            try:
+                tray.extend(extra_tray(conn, sub_f or None) or [])
+            except Exception:
+                fo.app.logger.exception('ticket tray failed')
         conn.close()
         days = []
         for i in range(days_n):
@@ -580,6 +586,19 @@ const SKED = %(json)s;
             conn.commit(); conn.close()
             return jsonify({'ok': True})
         job_id = str(d.get('job_id') or '')
+        if job_id.startswith('ticket:') or d.get('ticket_id'):
+            try:
+                tid = int(d.get('ticket_id') or job_id.split(':',1)[1])
+            except (TypeError, ValueError, IndexError):
+                conn.close(); return jsonify({'error':'Bad ticket'}),400
+            place = getattr(fo, 'ticket_place_on_board', None)
+            if not callable(place):
+                conn.close(); return jsonify({'error':'Tickets are not available'}),400
+            job, err = place(conn, tid, d.get('day'), d.get('sub'), d.get('start') or '08:00', d.get('end') or '16:00', fo.me())
+            if err:
+                conn.close(); return jsonify({'error': err}),400
+            conn.commit(); conn.close()
+            return jsonify({'ok': True, 'job_id': job['id'] if job else None})
         slot_id = d.get('id') or None
         if slot_id:
             try:
