@@ -590,6 +590,8 @@ ICONS = {
  'doc':_ico('<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h8"/>'),
  'alert':_ico('<path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/>'),
  'pin':_ico('<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/>'),
+ 'plan':_ico('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10M8 7h.01M12 7h.01M16 7h.01"/>'),
+ 'help':_ico('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.1.9-1.1 1.8M12 17h.01"/>'),
 }
 
 SHELL_CSS = """<style id="shell-css">
@@ -765,6 +767,48 @@ html[data-theme=dark] .leaflet-container img{filter:none}
 .cat-row input{width:100%;margin:0;padding:8px 10px}
 .cat-btns{display:flex;gap:6px;flex-wrap:wrap}
 @media (max-width:800px){.cat-row{grid-template-columns:1fr 1fr}}
+/* Phone and small tablet: slim header + bottom tabs. Desktop top nav is unchanged. */
+.fo-tabs{display:none}
+.fo-search-btn{display:none}
+.fo-phone-only{display:none}
+.fo-more-sheet .fo-more-list a{display:flex;align-items:center;gap:12px;padding:14px 8px;border-bottom:1px solid var(--line);color:var(--ink);text-decoration:none;font-weight:650;min-height:52px}
+.fo-more-sheet .fo-more-list a:last-child{border-bottom:0}
+.fo-more-sheet .fo-more-list a svg{flex:0 0 22px;color:var(--brand)}
+@media print{
+  .fo-tabs,.fo-top,.fo-veil,.fo-sheet{display:none!important}
+}
+@media(max-width:767px){
+  html.fo-shell{--fo-head:58px;--fo-tabs:62px;padding:calc(var(--fo-head) + env(safe-area-inset-top)) 0 calc(var(--fo-tabs) + 18px + env(safe-area-inset-bottom));scroll-padding-top:calc(var(--fo-head) + 12px);scroll-padding-bottom:calc(var(--fo-tabs) + 18px + env(safe-area-inset-bottom))}
+  html.fo-shell body{padding-bottom:0!important}
+  .fo-switch,.fo-links,.fo-word{display:none!important}
+  .fo-tools .fo-fab-btn{display:none!important}
+  .fo-top{grid-template-columns:auto 1fr auto;grid-template-areas:"logo mid tools";padding:6px 12px;padding-top:calc(6px + env(safe-area-inset-top));gap:8px;align-items:center}
+  .fo-search-btn{display:inline-flex;grid-area:mid;justify-self:end}
+  .fo-search{display:none;grid-area:search}
+  .fo-top.search-open{grid-template-areas:"logo mid tools" "search search search"}
+  .fo-top.search-open .fo-search{display:flex}
+  .fo-tabs{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:45;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom));margin:0;align-items:stretch}
+  .fo-tabs a{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0 4px;border-radius:12px;color:var(--muted);text-decoration:none;font-size:.74rem;font-weight:650;min-height:52px;justify-content:center;background:none;border:0;font-family:inherit;cursor:pointer}
+  .fo-tabs a.on{color:var(--brand)}
+  .fo-tabs a.on svg{stroke-width:2.4}
+  .fo-tabs a span.fo-dot{width:22px;height:3px;border-radius:3px;background:transparent;margin-top:1px}
+  .fo-tabs a.on span.fo-dot{background:var(--gold)}
+  .fo-desk-only{display:none!important}
+  .fo-phone-only{display:block}
+  .fo-phone-primary-wrap{margin:0 0 14px}
+  .fo-phone-primary-wrap .big-btn{display:flex;width:100%;box-sizing:border-box;text-decoration:none;justify-content:center}
+  #today .fo-prog,#today .fo-kpis,#today .fo-desk-today{display:none!important}
+  html.fo-shell .mgrid.main,html.fo-shell .mgrid.small{display:none!important}
+  /* Sub phone shell: hide the old in-page header, keep desktop as it is via the 768px rule below. */
+  html.fo-phone-shell{--fo-head:58px;--fo-tabs:62px;padding:calc(var(--fo-head) + env(safe-area-inset-top)) 0 calc(var(--fo-tabs) + 18px + env(safe-area-inset-bottom));background:var(--soft);scroll-padding-top:calc(var(--fo-head) + 12px)}
+  html.fo-phone-shell .header,html.fo-phone-shell #search-box,html.fo-phone-shell body>img[alt="True Sense Security"]{display:none!important}
+  html.fo-phone-shell .fo-tabs{display:flex}
+  html.fo-phone-shell .fo-top{display:grid}
+}
+@media(min-width:768px){
+  html.fo-phone-shell{padding:0}
+  html.fo-phone-shell .fo-top,html.fo-phone-shell .fo-tabs,html.fo-phone-shell .fo-veil,html.fo-phone-shell .fo-sheet{display:none!important}
+}
 </style>"""
 
 
@@ -786,7 +830,63 @@ def initials_of(name):
     if len(parts)==1: return parts[0][:2].upper()
     return (parts[0][0]+parts[-1][0]).upper()
 
+def more_tool_items(office=True):
+    """Links for the More page and the phone More sheet. No money items for subs."""
+    if not office:
+        return [('/floor-plans','Floor Plans','plan'),('/me','My settings','me'),('/agreement','Agreement','pen'),('/my-schedule','My schedule','cal')]
+    items=[
+        ('/sales','Sales','chart'),('/quote','Quote','note'),('/floor-plans','Floor Plans','plan'),
+        ('/schedule','Schedule','cal'),('/plans','Service Plans','repeat'),('/revenue','Revenue','chart'),
+        ('/customers','Customers','clients'),('/history','Job History','clock'),
+        ('/techs','Subs','users'),('/stock','Stock','box'),('/orders','Orders','cart'),('/to-order','To Order','cart'),
+        ('/equipment','Equipment','shield'),('/tickets','Service tickets','alert'),('/compliance','Sub compliance','doc'),
+        ('/checklists','Checklists','check'),('/safety','Safety','alert'),('/agreement','Agreements','pen'),
+        ('/users','Users','users'),('/calendar','Calendar','cal'),('/costing','Job costing','money'),
+        ('/timesheets','Timesheets','clock'),('/change-orders','Change orders','note'),('/settings','Settings','gear'),
+    ]
+    return items
+
+def phone_tab_items(path, office):
+    """At most four phone tabs. Office: Today, Jobs, Customers, More. Subs: My Jobs, Floor Plans, Help."""
+    if office:
+        tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/customers','Customers','clients'),('/more','More','more')]
+        groups={
+            'today':('/',),
+            'jobs':('/jobs','/history','/new-job','/calendar'),
+            'clients':('/customers','/clients','/contacts','/sites','/systems'),
+            'more':('/more','/sales','/quote','/quotes','/catalog','/schedule','/floor-plans','/plans','/revenue','/money','/opportunities','/tasks','/stock','/orders','/tickets','/compliance','/equipment','/techs','/users','/checklists','/safety','/agreement','/to-order','/costing','/timesheets','/change-orders','/reports','/timelog','/settings','/history'),
+        }
+    else:
+        tabs=[('/','My Jobs','jobs'),('/floor-plans','Floor Plans','plan'),('/help','Help','help')]
+        groups={'jobs':('/', '/job/'),'plan':('/floor-plans',),'help':('/help',)}
+    active=None
+    for u,lab,key in tabs:
+        for p_ in groups.get(key,()):
+            if (p_=='/' and path=='/') or (p_!='/' and (path==p_ or path.startswith(p_.rstrip('/')+'/'))):
+                active=key
+                break
+        if active:
+            break
+    html='<nav class="fo-tabs fo-sh" aria-label="Main">'
+    for u,lab,k in tabs:
+        is_on = (k==active)
+        extra=''
+        if k=='more':
+            extra=' onclick="if(window.matchMedia&&window.matchMedia(\'(max-width: 767px)\').matches){foMoreSheet(true);return false}"'
+        html+='<a href="%s" class="%s"%s%s>%s<span>%s</span><span class="fo-dot"></span></a>'%(
+            h(u),'on' if is_on else '',' aria-current="page"' if is_on else '', extra, ICONS[k], h(lab))
+    html+='</nav>'
+    return html
+
+def more_sheet_html(office):
+    items=more_tool_items(office)
+    body=''.join('<a href="%s">%s<span>%s</span></a>'%(h(u),ICONS.get(i,''),h(lab)) for u,lab,i in items)
+    return ('<div class="fo-veil fo-sh" id="fo-more-veil" onclick="foMoreSheet(false)"></div>'
+            '<div class="fo-sheet fo-sh fo-more-sheet" id="fo-more-sheet" role="dialog" aria-label="More">'
+            '<div class="fo-grab"></div><h3>More</h3><div class="fo-more-list">%s</div></div>'%body)
+
 def shell_tabs(path, office):
+
     # Kept for compatibility. Office chrome now uses shell_links().
     if office:
         tabs=[('/','Today','today'),('/jobs','Jobs','jobs'),('/customers','Customers','clients'),('/money','Money','money'),('/more','More','more')]
@@ -828,33 +928,45 @@ def shell_links(path, office):
     return html
 
 def shell_html(path, office, q=''):
+    who=me() or ''
+    search_btn=('<button class="fo-icon-btn ghost fo-search-btn" type="button" aria-label="Search" onclick="foSearch()">%s</button>'%ICONS['search'])
+    search_form=('<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search customers, jobs, notes" aria-label="Search" autocomplete="off"></form>'%(ICONS['search'], h(q)))
+    user_menu=('<details class="fo-user"><summary class="fo-avatar" title="%s">%s</summary><div class="fo-user-menu">'
+               '<a href="/me">My settings</a>%s'
+               '<button type="button" id="fo-theme" onclick="foTheme(document.documentElement.getAttribute(&quot;data-theme&quot;)===&quot;dark&quot;?&quot;light&quot;:&quot;dark&quot;)">Dark mode</button>'
+               '<button type="button" onclick="foLogout()">Log out</button>'
+               '</div></details>'%(h(who), h(initials_of(who)), '<a href="/settings">Office settings</a>' if office else ''))
+    tabs=phone_tab_items(path, office)
+    more=more_sheet_html(office)
+    if not office:
+        top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
+             +search_btn+search_form+'<div class="fo-tools">'+user_menu+'</div></header>')
+        return top, tabs+more
     area=plat_area(path)
     switch=''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if area==k else '',lab) for k,u,lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')))
     links=shell_links(path, office)
-    who=me() or ''
     top=('<header class="fo-top fo-sh"><a class="fo-logo" href="/" aria-label="Home"><img src="/static/logo.png" alt="True Sense Security"><span class="fo-word">Field Ops</span></a>'
          '<nav class="fo-switch" aria-label="Area">%s</nav>'
          '<nav class="fo-links" aria-label="Main">%s</nav>'
-         '<form class="fo-search" action="/search" role="search">%s<input type="search" name="q" value="%s" placeholder="Search customers, jobs, notes" aria-label="Search" autocomplete="off"></form>'
-         '<div class="fo-tools"><button class="fo-icon-btn" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>'
-         '<details class="fo-user"><summary class="fo-avatar" title="%s">%s</summary><div class="fo-user-menu">'
-         '<a href="/me">My settings</a><a href="/settings">Office settings</a>'
-         '<button type="button" id="fo-theme" onclick="foTheme(document.documentElement.getAttribute(&quot;data-theme&quot;)===&quot;dark&quot;?&quot;light&quot;:&quot;dark&quot;)">Dark mode</button>'
-         '<button type="button" onclick="foLogout()">Log out</button>'
-         '</div></details></div></header>')%(switch, links, ICONS['search'], h(q), ICONS['plus'], h(who), h(initials_of(who)))
+         '%s%s'
+         '<div class="fo-tools"><button class="fo-icon-btn fo-fab-btn" type="button" aria-label="Quick add" onclick="foSheet(true)">%s</button>%s</div></header>')%(
+             switch, links, search_btn, search_form, ICONS['plus'], user_menu)
     seg=''
     if office and path in ('/jobs','/schedule','/calendar'):
-        seg='<div class="fo-seg fo-sh">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
+        seg='<div class="fo-seg fo-sh fo-desk-only">'+''.join('<a href="%s" class="%s">%s</a>'%(u,'on' if path==u else '',l) for u,l in (('/jobs','List'),('/schedule','Schedule'),('/calendar','Calendar')))+'</div>'
     items=[('/new-job?t=Install','Install','tool'),('/new-job?t=Service','Service','repeat'),('/new-job?t=Survey','Survey','eye'),('/new-job?t=Office Task','Office Task','note'),
-           ('/customers/new','Company','clients'),('/opportunities/new','Opportunity','pen'),('/stock','Stock Item','box'),('/plans','Service Plan','cal'),('/equipment','Equipment','shield')]
+           ('/customers/new','Company','clients'),('/opportunities/new','Opportunity','pen'),('/stock','Stock Item','box'),('/plans','Service Plan','cal'),('/equipment','Equipment','shield'),
+           ('/sales','Sales','chart'),('/quote','Quote','note'),('/schedule','Schedule','cal')]
     sheet=('<div class="fo-veil fo-sh" id="fo-veil" onclick="foSheet(false)"></div><div class="fo-sheet fo-sh" id="fo-sheet" role="dialog" aria-label="Quick add"><div class="fo-grab"></div><h3>Quick add</h3><div class="fo-grid">'+
            ''.join('<a class="fo-tile" href="%s" data-new="%s" onclick="return foNew(this)">%s%s</a>'%(h(u),h(u.split('t=')[1]) if '?t=' in u else '',ICONS[i],h(l)) for u,l,i in items)+'</div></div>')
-    return top+seg, sheet
+    return top+seg, tabs+sheet+more
 
 SHELL_JS = """<script id="shell-js">
-function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);v.classList.toggle('on',on)}
+function foSheet(on){var s=document.getElementById('fo-sheet'),v=document.getElementById('fo-veil');if(!s)return;s.classList.toggle('on',on);if(v)v.classList.toggle('on',on)}
+function foMoreSheet(on){var s=document.getElementById('fo-more-sheet'),v=document.getElementById('fo-more-veil');if(!s)return;s.classList.toggle('on',!!on);if(v)v.classList.toggle('on',!!on);if(on)foSearch(false)}
+function foSearch(on){var h=document.querySelector('.fo-top');if(!h)return;if(on===undefined)on=!h.classList.contains('search-open');h.classList.toggle('search-open',!!on);if(on){var i=h.querySelector('.fo-search input');if(i)i.focus()}}
 function foNew(a){var t=a.dataset.new;if(t&&typeof quickType==='function'&&document.getElementById('n-id')){foSheet(false);quickType(t);return false}return true}
-document.addEventListener('keydown',function(e){if(e.key==='Escape')foSheet(false)});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){foSheet(false);foMoreSheet(false);foSearch(false)}});
 function foTheme(t){document.documentElement.setAttribute('data-theme',t);fetch('/api/me/theme',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:t})});var b=document.getElementById('fo-theme');if(b)b.textContent=t==='dark'?'Dark mode is on':'Dark mode is off'}
 function foLogout(){if(!confirm('Log out?'))return;try{navigator.serviceWorker.controller&&navigator.serviceWorker.controller.postMessage('logout')}catch(e){}location.href='/logout'}
 function foB64(x){var p='='.repeat((4-x.length%4)%4);var r=atob((x+p).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(r,function(c){return c.charCodeAt(0)})}
@@ -872,9 +984,11 @@ def theme_of(user):
 
 SHELL_SKIP = ('/design/','/hub/','/s/','/p/','/help-photo/','/print/','/agreement/view/','/agreement/copy/','/login','/offline','/uploads/','/logout')
 def apply_shell(html, path):
-    if 'id="shell-css"' in html or not me() or not is_office() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
-    office=True; top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
-    html=html.replace('<html','<html class="fo-shell" data-theme="%s"'%theme_of(me()),1)
+    if 'id="shell-css"' in html or not me() or path.startswith(SHELL_SKIP) or '<body' not in html: return html
+    office=is_office()
+    top,bottom=shell_html(path, office, request.args.get('q','') if path=='/search' else '')
+    cls='fo-shell' if office else 'fo-phone-shell'
+    html=html.replace('<html','<html class="%s" data-theme="%s"'%(cls, theme_of(me())),1)
     html=html.replace('</head>',SHELL_CSS+'</head>',1)
     i=html.find('>',html.find('<body'))+1
     html=html[:i]+top+html[i:]
@@ -912,9 +1026,18 @@ def money_page():
 @app.route('/more')
 def more_page():
     if not is_office(): return redirect('/')
-    return ops_page('More', card_grid([('/techs','Subs','Rates, docs and jobs','users'),('/stock','Stock','Shop and truck parts','box'),('/orders','Orders','Material requests to ADI','cart'),('/to-order','To Order','Parts to buy','cart'),
-        ('/equipment','Equipment','Devices by site','shield'),('/plans','Service Plans','Recurring visits','repeat'),('/tickets','Service tickets','Call and portal intake queue','alert'),('/compliance','Sub compliance','COI, W-9, agreements and 1099 totals','doc'),('/checklists','Checklists','Job templates','check'),
-        ('/safety','Safety','Daily checks and talks','alert'),('/agreement','Agreement','Sub agreement and signatures','pen'),('/users','Users','Office and field logins','users'),('/history','Job History','Completed jobs','clock'),('/schedule','Schedule','Crew board, day week fortnight and month','cal'),('/calendar','Calendar','Month view of the same board','cal'),('/costing','Job costing','Sale, labor, materials and profit','money'),('/timesheets','Timesheets','Weekly approval and sub-pay CSV','clock'),('/change-orders','Change orders','Priced extras the client can accept','note'),('/revenue','Revenue','Sales vs QuickBooks','chart'),('/settings','Settings','Dark mode and account','gear')]), back=False)
+    blurbs={
+        '/sales':'Pipeline and follow-ups','/quote':'Estimates and catalog','/floor-plans':'Job and survey plans',
+        '/schedule':'Crew board, day week fortnight and month','/plans':'Recurring visits','/revenue':'Sales vs QuickBooks',
+        '/customers':'Companies and sites','/history':'Completed jobs','/techs':'Rates, docs and jobs',
+        '/stock':'Shop and truck parts','/orders':'Material requests to ADI','/to-order':'Parts to buy',
+        '/equipment':'Devices by site','/tickets':'Call and portal intake queue','/compliance':'COI, W-9, agreements and 1099 totals',
+        '/checklists':'Job templates','/safety':'Daily checks and talks','/agreement':'Sub agreement and signatures',
+        '/users':'Office and field logins','/calendar':'Month view of the same board','/costing':'Sale, labor, materials and profit',
+        '/timesheets':'Weekly approval and sub-pay CSV','/change-orders':'Priced extras the client can accept','/settings':'Dark mode and account',
+    }
+    items=[(u,lab,blurbs.get(u,lab),ico) for u,lab,ico in more_tool_items(True)]
+    return ops_page('More', card_grid(items), back=False)
 
 def me_settings_body():
     dark=theme_of(me())=='dark'
@@ -940,6 +1063,31 @@ def settings_page():
         except Exception:
             app.logger.exception('quote settings html failed')
     return ops_page('Settings', me_settings_body()+extra+'<button class="big-btn gray" onclick="foLogout()">Log out</button>', back='/more', msg=msg)
+
+@app.route('/help')
+def help_home():
+    if not me(): return redirect('/login')
+    conn=get_db()
+    if is_office():
+        rows=conn.execute("SELECT * FROM jobs WHERE help_flag='open' ORDER BY IFNULL(help_at,'') DESC").fetchall()
+    else:
+        rows=[]
+        for r in conn.execute("SELECT * FROM jobs WHERE status!='completed' ORDER BY IFNULL(help_at,'') DESC"):
+            if can_see(r) and r['help_flag']=='open':
+                rows.append(r)
+    conn.close()
+    body='<p class="muted">Open a job and use Need help to reach the office.</p>'
+    if rows:
+        cards=''
+        for r in rows:
+            title=(r['customer'] or r['title'] or r['id'])
+            note=(r['help_note'] or r['title'] or '')
+            cards+='<a class="fo-act red" href="/?job=%s"><span class="fo-ai">!</span><span class="fo-at"><b>%s</b><small>%s</small></span><span class="fo-ab">Open</span></a>'%(
+                h(r['id']), h(title), h(note[:140]))
+        body+=cards
+    else:
+        body+='<div class="fo-empty">No open help requests.</div>'
+    return ops_page('Help', body, back='/')
 
 @app.route('/me')
 def me_page():
@@ -1069,10 +1217,18 @@ def api_today():
             app.logger.exception('ticket today actions failed')
     rmr_fn=globals().get('plans_rmr')
     rmr_val=rmr_fn(conn) if callable(rmr_fn) else 0
+    surveys=[]
+    seen=set()
+    for r in open_rows:
+        if r['job_type']=='Survey' and r['id'] not in seen:
+            surveys.append(job_dict(r)); seen.add(r['id'])
+    for r in conn.execute("SELECT * FROM jobs WHERE job_type='Survey' AND status='completed' AND IFNULL(hub_approved_at,'')='' ORDER BY completed_at DESC LIMIT 20"):
+        if r['id'] not in seen:
+            surveys.append(job_dict(r)); seen.add(r['id'])
     conn.close()
     hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
     return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
-        'today':today,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm,'money_src':msrc,'rmr':money(rmr_val)},
+        'today':today,'surveys':surveys,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm,'money_src':msrc,'rmr':money(rmr_val)},
         'actions':acts,'live':live,'feed':feed})
 # ---------- end Today ----------
 
@@ -1587,15 +1743,18 @@ canvas{touch-action:none;-webkit-user-select:none;user-select:none;border:2px da
 {% if office %}<main>
 {% if office and view=='today' %}<div id="today">
 <div class="fo-hello"><h1 id="fo-hello">Hello, {{ name }}</h1><div class="muted" id="fo-hello2">Loading your day...</div>
-<div class="fp-today-actions" style="margin-top:10px"><a href="/floor-plans" class="big-btn" style="display:inline-flex;width:auto;min-width:180px;text-decoration:none;padding:12px 18px">Floor Plans</a></div></div>
+<div class="fp-today-actions fo-desk-only" style="margin-top:10px"><a href="/floor-plans" class="big-btn" style="display:inline-flex;width:auto;min-width:180px;text-decoration:none;padding:12px 18px">Floor Plans</a></div>
+<p class="fo-phone-only fo-phone-primary-wrap"><a class="big-btn" href="/new-job">New job</a></p></div>
 <div class="fo-prog" id="fo-prog"><div class="fo-skel" style="height:14px"></div></div>
 <div class="fo-kpis" id="fo-kpis">{% for i in range(4) %}<div class="fo-kpi fo-skel" style="height:108px;border:0"></div>{% endfor %}</div>
 <section><h2 class="fo-h">Needs you</h2><div id="fo-acts">{% for i in range(3) %}<div class="fo-skel" style="height:68px;margin-bottom:10px"></div>{% endfor %}</div>
+<section class="fo-phone-only" id="fo-surveys-wrap"><h2 class="fo-h">Pending surveys</h2><div id="fo-surveys"></div></section>
 <h2 class="fo-h">Today's jobs</h2><div id="fo-tjobs"><div class="fo-skel" style="height:96px"></div></div></section>
-<section><h2 class="fo-h">Subs on the clock</h2><div id="fo-live"></div>
+<section class="fo-desk-today"><h2 class="fo-h">Subs on the clock</h2><div id="fo-live"></div>
 <h2 class="fo-h">Recent activity</h2><div id="fo-feed"></div></section>
 </div>{% endif %}
 <div{% if view in ('new','today') %} style="display:none"{% endif %}>
+<p class="fo-phone-only fo-phone-primary-wrap">{% if office %}<a class="big-btn" href="/new-job">New job</a>{% endif %}</p>
 <div class="tiles tiles4"><button class="tile t-active" data-f="active" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 10h6M9 14h6M9 18h3"/></svg></span><b id="t-active">0</b><span class="tl">Active Jobs</span></button><button class="tile t-help" data-f="help" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01"/></svg></span><b id="t-help">0</b><span class="tl">Needs Help</span></button><button class="tile t-surveys" data-f="surveys" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><b id="t-surveys">0</b><span class="tl">Surveys Pending</span></button><button class="tile t-today" data-f="today" onclick="setF(this.dataset.f)" aria-pressed="false"><span class="ti"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span><b id="t-today">0</b><span class="tl">Scheduled Today</span></button></div>
 <button class="big-btn gray" id="f-all" style="display:none" onclick="setF('')">All Jobs</button>
 <div class="mgrid main"><a href="/new-job" class="mbtn prime"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>New Job</span></a><a href="/floor-plans" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10M8 7h.01M12 7h.01M16 7h.01"/></svg><span>Floor Plans</span></a><a href="/clients" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M17.5 14.5c2 .4 3.4 2 4 4.5"/></svg><span>Clients &amp; Surveys</span></a><a href="/calendar" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg><span>Calendar</span></a><a href="/to-order" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.7 12.5h11.6L22 7H6"/></svg><span>To Order</span></a><a href="/techs" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.2-7 8-7s7 2.5 8 7"/></svg><span>Subs</span></a><a href="/history" class="mbtn"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg><span>Job History</span></a></div>
@@ -1768,7 +1927,8 @@ $id('fo-prog').innerHTML='<div class="fo-bar"><i style="width:'+(p.done/tot*100)
 const k=d.kpi;$id('fo-kpis').innerHTML=[['/jobs?f=today','Jobs today',k.today,spark(k.spark_jobs)+'<i class="fo-cap">Jobs done, 8 weeks</i>'],['/jobs?f=progress','In progress',k.progress,''],['#fo-acts','Waiting on you',k.waiting,''],['/money','Money in '+k.month,k.money,spark(k.spark_money)+'<i class="fo-cap">'+(k.rmr?('RMR '+k.rmr+'/mo. '):'')+esc(k.money_src)+'. Sales trend, 8 weeks</i>']]
 .map(x=>'<a class="fo-kpi'+(x[1]==='Waiting on you'&&x[2]?' hot':'')+'" href="'+x[0]+'"><small>'+esc(x[1])+'</small><b>'+esc(String(x[2]))+'</b>'+x[3]+'</a>').join('');
 $id('fo-acts').innerHTML=d.actions.length?d.actions.map(a=>'<a class="fo-act '+a.tone+'" href="'+esc(a.href)+'"><span class="fo-ai">'+a.icon+'</span><span class="fo-at"><b>'+esc(a.title)+' <em>'+a.n+'</em></b><small>'+esc(a.detail)+'</small></span><span class="fo-ab">'+esc(a.btn)+'</span></a>').join(''):'<div class="fo-act ok"><span class="fo-ai">&#10003;</span><span class="fo-at"><b>All caught up</b><small>Nothing needs you right now.</small></span></div>';
-d.today.sort((x,y)=>{const fx=foFavOn(x.id),fy=foFavOn(y.id);if(fx!==fy)return fx?-1:1;return 0});$id('fo-tjobs').innerHTML=d.today.length?d.today.map(dcard).join(''):'<div class="fo-empty">Nothing scheduled today. Tap + to add a job.</div>';
+d.today.sort((x,y)=>{const fx=foFavOn(x.id),fy=foFavOn(y.id);if(fx!==fy)return fx?-1:1;return 0});if($id('fo-surveys'))$id('fo-surveys').innerHTML=(d.surveys&&d.surveys.length)?d.surveys.map(function(s){return '<a class="fo-act" href="/?job='+encodeURIComponent(s.id)+'"><span class="fo-ai">Sv</span><span class="fo-at"><b>'+esc(s.customer||s.title||s.id)+'</b><small>'+esc((s.title||'')+(s.status_label?(' \u00b7 '+s.status_label):''))+'</small></span><span class="fo-ab">Open</span></a>'}).join(''):'<div class="fo-empty">No pending surveys.</div>';
+$id('fo-tjobs').innerHTML=d.today.length?d.today.map(dcard).join(''):'<div class="fo-empty">Nothing scheduled today.</div>';
 const lv=d.live.filter(x=>x.lat!=null&&x.lng!=null);
 $id('fo-live').innerHTML=(d.live.length?(lv.length?'<div id="fo-map"></div>':'')+d.live.map(x=>'<div class="fo-row" data-id="'+esc(x.job)+'" onclick="openJob(this.dataset.id)"><span class="fo-pulse"></span><b>'+esc(x.sub)+'</b> <span class="muted">at '+esc(x.customer||x.title)+' since '+esc(fwhen(x.since))+(x.lat==null?' (no GPS)':'')+'</span></div>').join(''):'<div class="fo-empty">No one is clocked in right now.</div>');
 if(lv.length&&await loadLeaflet()){if(liveMap){liveMap.remove();liveMap=null}liveMap=L.map('fo-map',{zoomControl:false,attributionControl:true});L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(liveMap);

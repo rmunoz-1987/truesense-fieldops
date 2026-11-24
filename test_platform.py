@@ -112,7 +112,8 @@ class PlatformTests(unittest.TestCase):
         # Field home has no product switcher and no prices
         r = self.c.get('/')
         html = r.get_data(as_text=True)
-        self.assertNotIn('fo-switch', html)
+        self.assertNotIn('class="fo-switch"', html)
+        self.assertNotIn('href="/?area=ops"', html)
         self.assertNotIn('Bayou Camera Shop', html)  # may or may not, skip strict
         # money should not appear as sell prices on field home; switcher must be absent
         self.assertNotIn('Open pipeline', html)
