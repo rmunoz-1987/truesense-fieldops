@@ -41,17 +41,28 @@ def _last_updated(conn, row):
     return max(times) if any(times) else ''
 
 
+def format_local_time(raw):
+    """UTC timestamps as a short Chicago local time, e.g. Nov 24, 7:50 AM CT."""
+    text = (raw or '').strip()
+    if not text:
+        return ''
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import timezone, datetime
+        s = text.replace('Z', '')
+        dt = datetime.fromisoformat(s[:19])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        local = dt.astimezone(ZoneInfo('America/Chicago'))
+        hour = local.strftime('%I').lstrip('0') or '12'
+        ampm = 'AM' if local.hour < 12 else 'PM'
+        return '%s %d, %s:%s %s CT' % (local.strftime('%b'), local.day, hour, local.strftime('%M'), ampm)
+    except Exception:
+        return (text[:16].replace('T', ' ') if text else '')
+
+
 def _nice_when(fo, raw):
-    text = (raw or '')[:19].replace('T', ' ')
-    if len(text) >= 10:
-        day = text[:10]
-        try:
-            if hasattr(fo, 'nice_day'):
-                return fo.nice_day(day) + (text[10:] if len(text) > 10 else '')
-        except Exception:
-            pass
-        return text
-    return text or 'Unknown'
+    return format_local_time(raw) or 'Unknown'
 
 
 def jobs_with_plans(conn, fo, q=''):

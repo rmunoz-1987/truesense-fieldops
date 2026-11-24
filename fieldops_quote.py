@@ -713,6 +713,31 @@ def accept_quote(conn, quote, selected, name, signature, ip, fo=None):
 
 
 
+
+def trailing_duplicate_subtotal_index(lines, subtotal):
+    """Index of a last-line subtotal that just repeats the summary subtotal, or None."""
+    try:
+        want = round(float(subtotal or 0), 2)
+    except (TypeError, ValueError):
+        return None
+    for i in range(len(lines or []) - 1, -1, -1):
+        ln = lines[i] or {}
+        kind = ln.get('kind') or 'item'
+        name = ' '.join(str(ln.get('name') or ln.get('description') or '').split())
+        if kind in ('text', 'description') and not name:
+            continue
+        if kind != 'subtotal':
+            return None
+        try:
+            amt = ln.get('amount') if ln.get('amount') not in (None, '') else ln.get('line_total')
+            if round(float(amt or 0), 2) == want:
+                return i
+        except (TypeError, ValueError):
+            return None
+        return None
+    return None
+
+
 def decorate_client_lines(row, selected=None):
     """Shape stored lines for the client page and print/PDF view."""
     lines = []
@@ -778,6 +803,9 @@ def decorate_client_lines(row, selected=None):
     tax = _rowcol(row, 'qbo_tax_amount', None)
     disc = _rowcol(row, 'qbo_discount_amount', None)
     totals = quote_totals(raw, selected, tax_amount=tax, discount_amount=disc)
+    hide = trailing_duplicate_subtotal_index(raw, totals.get('subtotal'))
+    if hide is not None:
+        lines = [ln for ln in lines if ln.get('idx') != hide]
     rate = _rowcol(row, 'qbo_tax_rate', None)
     return lines, totals, tax_rate_label(rate)
 

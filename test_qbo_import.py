@@ -278,8 +278,14 @@ class QboImportTests(unittest.TestCase):
         self.assertIn('50 Warehouse Rd', html)
         self.assertIn('2026-12-06', html)  # QBO expiration, not a default
         printed = self.c.get('/q/' + tok + '/print')
-        self.assertIn('CR123A 3V lithium battery', printed.get_data(as_text=True))
-        self.assertIn('$264.40', printed.get_data(as_text=True))
+        printed_html = printed.get_data(as_text=True)
+        self.assertIn('CR123A 3V lithium battery', printed_html)
+        self.assertIn('$264.40', printed_html)
+        # Trailing imported QBO subtotal equals the summary; hide it on client and print.
+        for page in (html, printed_html):
+            self.assertNotIn('class="kind-subtotal"', page)
+            self.assertIn('<span>Subtotal</span>', page)
+            self.assertIn('$244.25', page)
 
     def test_update_mode_resyncs_unless_edited(self):
         conn = fo.get_db()

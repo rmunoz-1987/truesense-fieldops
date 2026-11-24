@@ -202,6 +202,26 @@ class FloorPlanFavoritesTests(unittest.TestCase):
         r = self.c.post('/api/favorites', json={'kind': 'catalog', 'item_key': str(cid), 'on': True})
         self.assertEqual(r.status_code, 403)
 
+    def test_updated_time_is_short_chicago_local(self):
+        self.assertEqual(fp.format_local_time('2026-11-24T13:50:52'), 'Nov 24, 7:50 AM CT')
+        self.assertEqual(fp.format_local_time('2026-11-24 13:50:52'), 'Nov 24, 7:50 AM CT')
+        self.assertEqual(fp.format_local_time('2026-07-04T18:05:00'), 'Jul 4, 1:05 PM CT')
+        self.assertEqual(fp.format_local_time(''), '')
+        conn = fo.get_db()
+        conn.execute("UPDATE photos SET uploaded_at=? WHERE job_id=? AND photo_type='plan'",
+                     ('2026-11-24T13:50:52', 'TS-FP-1'))
+        conn.execute("UPDATE plan_meta SET created_at=? WHERE job_id=?",
+                     ('2026-11-24T13:50:52', 'TS-FP-1'))
+        conn.execute("UPDATE jobs SET created_at=? WHERE id=?",
+                     ('2026-11-24T13:50:52', 'TS-FP-1'))
+        conn.commit(); conn.close()
+        self.login()
+        page = self.c.get('/floor-plans').get_data(as_text=True)
+        self.assertIn('Updated Nov 24, 7:50 AM CT', page)
+        self.assertIn('TS-FP-1', page)
+        self.assertNotIn('13:50:52', page)
+        self.assertNotIn('—', page)
+
 
 if __name__ == '__main__':
     unittest.main()

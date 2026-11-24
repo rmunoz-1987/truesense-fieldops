@@ -217,6 +217,71 @@ class QuoteTests(unittest.TestCase):
         self.assertIn('<th class="qty">Qty</th>', printed)
         self.assertIn('<th class="rate">Rate</th>', printed)
 
+    def test_hides_trailing_matching_subtotal_and_keeps_group_subtotals(self):
+        conn = fo.get_db()
+        co = plat.upsert_company(conn, 'Subtotal Layout Co')
+        # Trailing QBO-style subtotal equal to the summary should be hidden
+        # on the client page, print/PDF, and office print.
+        row, err = quote.save_quote(conn, {
+            'title': 'Trailing subtotal', 'company_id': co['id'],
+            'lines': [
+                {'name': 'Materials:Consumables', 'qty': 5, 'cost': 2, 'sell': 3.85,
+                 'description': 'CR123A batteries'},
+                {'name': 'Labor:T&M Labor Standard', 'qty': 1, 'cost': 80, 'sell': 150},
+                {'name': 'Fees:Trip Charge', 'qty': 1, 'cost': 40, 'sell': 75},
+                {'name': 'Subtotal', 'kind': 'subtotal', 'amount': 244.25, 'qbo_line_id': 'st-1'},
+            ],
+        }, created_by='Roland')
+        self.assertIsNone(err)
+        sent = quote.ensure_token(conn, row['id'])
+        token = sent['token']
+        # Mid-list group subtotals stay, even when a later trailing subtotal matches the summary.
+        grouped, err = quote.save_quote(conn, {
+            'title': 'Grouped subtotals', 'company_id': co['id'],
+            'lines': [
+                {'name': 'Lobby cameras', 'qty': 2, 'cost': 100, 'sell': 200},
+                {'name': 'Lobby labor', 'qty': 1, 'cost': 80, 'sell': 150},
+                {'name': 'Lobby subtotal', 'kind': 'subtotal', 'amount': 550},
+                {'name': 'Gate reader', 'qty': 1, 'cost': 80, 'sell': 120},
+                {'name': 'Subtotal', 'kind': 'subtotal', 'amount': 670},
+            ],
+        }, created_by='Roland')
+        self.assertIsNone(err)
+        grouped_tok = quote.ensure_token(conn, grouped['id'])['token']
+        conn.commit(); conn.close()
+
+        lines, totals, _ = quote.decorate_client_lines(row)
+        self.assertEqual(totals['subtotal'], 244.25)
+        self.assertFalse(any((ln.get('kind') == 'subtotal') for ln in lines))
+
+        html = self.c.get('/q/' + token).get_data(as_text=True)
+        printed = self.c.get('/q/' + token + '/print').get_data(as_text=True)
+        self.login()
+        office = self.c.get('/quotes/%d/print' % row['id']).get_data(as_text=True)
+        for page in (html, printed, office):
+            self.assertNotIn('class="kind-subtotal"', page)
+            self.assertIn('<span>Subtotal</span>', page)
+            self.assertIn('$244.25', page)
+            self.assertNotIn('—', page)
+
+        g_lines, g_tot, _ = quote.decorate_client_lines(grouped)
+        self.assertEqual(g_tot['subtotal'], 670)
+        kinds = [(ln.get('name'), ln.get('kind'), ln.get('amount_label')) for ln in g_lines]
+        self.assertEqual(
+            [k for k in kinds if k[1] == 'subtotal'],
+            [('Lobby subtotal', 'subtotal', '$550.00')])
+        self.assertFalse(any(k[0] == 'Subtotal' and k[1] == 'subtotal' for k in kinds))
+        ghtml = self.c.get('/q/' + grouped_tok).get_data(as_text=True)
+        gprint = self.c.get('/q/' + grouped_tok + '/print').get_data(as_text=True)
+        goffice = self.c.get('/quotes/%d/print' % grouped['id']).get_data(as_text=True)
+        for page in (ghtml, gprint, goffice):
+            self.assertIn('class="kind-subtotal"', page)
+            self.assertIn('Lobby subtotal', page)
+            self.assertIn('$550.00', page)
+            self.assertIn('<span>Subtotal</span>', page)
+            self.assertIn('$670.00', page)
+            # The trailing duplicate summary line is gone; mid-list group subtotal remains.
+            self.assertEqual(page.count('class="kind-subtotal"'), 1)
 
 
 if __name__ == '__main__':
