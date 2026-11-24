@@ -60,6 +60,14 @@ def add_activity(conn, kind, body, company_id=None, contact_id=None, opportunity
     cur = conn.execute(
         'INSERT INTO crm_activities (kind,body,company_id,contact_id,opportunity_id,happened_at,created_by,created_at) VALUES (?,?,?,?,?,?,?,?)',
         (kind, body, company_id or None, contact_id or None, opportunity_id or None, when, (created_by or '')[:80], now_iso()))
+    if opportunity_id:
+        try:
+            import fieldops_leads as _leads
+            contacted = not _leads.is_draft_note(body)
+            if contacted:
+                _leads.touch_opportunity(conn, opportunity_id, contacted=True, when=when)
+        except Exception:
+            pass
     return cur.lastrowid, None
 
 

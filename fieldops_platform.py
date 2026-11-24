@@ -29,12 +29,63 @@ CONTACT_ROLES = [
 ]
 CONTACT_ROLE_SET = {k for k, _ in CONTACT_ROLES}
 
-_OPP_DND_JS = r"""<script>
+_OPP_DND_JS = r"""<div id="fo-lost-modal" hidden>
+<div class="fo-lost-box" role="dialog" aria-labelledby="fo-lost-title">
+<h2 id="fo-lost-title">Why was this lost?</h2>
+<p class="muted">Pick a reason. This stays on the opportunity. Nothing is sent to the client.</p>
+<label>Lost reason</label>
+<select id="fo-lost-reason">
+<option value="">Pick a reason</option>
+<option value="price">Price</option>
+<option value="timing">Timing</option>
+<option value="no_fit">No fit</option>
+<option value="no_response">No response</option>
+<option value="competitor">Lost to competitor</option>
+<option value="other">Other</option>
+</select>
+<label>Note</label>
+<textarea id="fo-lost-note" rows="3" placeholder="Required if you pick Other"></textarea>
+<div class="fo-lost-err" id="fo-lost-err"></div>
+<div class="fo-lost-actions">
+<button type="button" class="big-btn" id="fo-lost-ok">Save</button>
+<button type="button" class="big-btn gray" id="fo-lost-cancel">Cancel</button>
+</div></div></div>
+<script>
 (function(){
   const board=document.getElementById('plat-board');
   if(!board) return;
-  window.foOppStage=async function(id,stage){
-    const r=await fetch('/api/opportunities/'+id+'/stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({stage:stage})});
+  window.foAskLost=function(){
+    return new Promise(function(resolve){
+      var box=document.getElementById('fo-lost-modal');
+      if(!box){resolve(null);return;}
+      box.hidden=false;
+      var ok=document.getElementById('fo-lost-ok');
+      var cancel=document.getElementById('fo-lost-cancel');
+      var reason=document.getElementById('fo-lost-reason');
+      var note=document.getElementById('fo-lost-note');
+      var err=document.getElementById('fo-lost-err');
+      if(err) err.textContent='';
+      if(note) note.value='';
+      function close(val){box.hidden=true;if(ok)ok.onclick=null;if(cancel)cancel.onclick=null;resolve(val);}
+      if(cancel) cancel.onclick=function(){close(null)};
+      if(ok) ok.onclick=function(){
+        var r=(reason&&reason.value)||'';
+        var n=(note&&note.value)||'';
+        if(!r){if(err)err.textContent='Pick a lost reason.';return;}
+        if(r==='other' && !String(n).trim()){if(err)err.textContent='Add a short note for Other.';return;}
+        close({lost_reason:r,lost_note:n});
+      };
+    });
+  };
+  window.foOppStage=async function(id,stage,extra){
+    extra=extra||{};
+    if(stage==='lost' && !extra.lost_reason){
+      var info=await window.foAskLost();
+      if(!info) return;
+      extra=info;
+    }
+    var body=Object.assign({stage:stage},extra);
+    const r=await fetch('/api/opportunities/'+id+'/stage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){const e=await r.json().catch(()=>({}));alert(e.error||'Could not move');return}
     location.reload();
   };
@@ -1150,8 +1201,13 @@ def register(fo):
             '<label>Company</label><select name="company_id" required id="opp-co">%s</select>'
             '<div class="plat-row"><div><label>Contact</label><select name="contact_id">%s</select></div>'
             '<div><label>Site</label><select name="site_id">%s</select></div></div>'
-            '<div class="plat-row"><div><label>Stage</label><select name="stage">%s</select></div>'
+            '<div class="plat-row"><div><label>Stage</label><select name="stage" id="opp-stage" onchange="var b=document.getElementById(\'opp-lost-fields\');if(b)b.style.display=this.value===\'lost\'?\'\'\':\'none\'">%s</select></div>'
             '<div><label>Amount $ (office only)</label><input name="amount" type="number" step="0.01" min="0" value="%s"></div></div>'
+            '<div class="plat-row"><div><label>Lead source</label><select name="lead_source">%s</select></div>'
+            '<div><label>Fit grade</label><select name="fit_grade">%s</select></div></div>'
+            '<div id="opp-lost-fields" style="display:%s">'
+            '<div class="plat-row"><div><label>Lost reason</label><select name="lost_reason">%s</select></div></div>'
+            '<label>Lost note</label><textarea name="lost_note" rows="2" placeholder="Required if you pick Other">%s</textarea></div>'
             '<label>Notes (office only)</label><textarea name="notes" rows="3">%s</textarea>'
             '<button class="plat-btn plat-btn-gold" type="submit">%s</button></form>'
             % (h(action), h(vals.get('title') or ''),
@@ -1159,7 +1215,13 @@ def register(fo):
                sel(ct_opts, vals.get('contact_id'), blank='None yet'),
                sel(st_opts, vals.get('site_id'), blank='None yet'),
                sel(OPP_STAGES, vals.get('stage') or 'lead', blank=None),
-               h(str(amt)), h(vals.get('notes') or ''), h(submit))
+               h(str(amt)),
+               sel(fo.LEAD_SOURCES if hasattr(fo,'LEAD_SOURCES') else [('zack','Zack'),('website','Website'),('referral','Referral'),('google','Google'),('repeat','Repeat'),('other','Other')], vals.get('lead_source') or '', blank='None'),
+               sel([('A','A'),('B','B'),('C','C')], vals.get('fit_grade') or '', blank='None'),
+               '' if (vals.get('stage')=='lost') else 'none',
+               sel(fo.LOST_REASONS if hasattr(fo,'LOST_REASONS') else [('price','Price'),('timing','Timing'),('no_fit','No fit'),('no_response','No response'),('competitor','Lost to competitor'),('other','Other')], vals.get('lost_reason') or '', blank='Pick a reason'),
+               h(vals.get('lost_note') or ''),
+               h(vals.get('notes') or ''), h(submit))
         )
 
     def _save_opp(conn, oid=None):
@@ -1195,7 +1257,28 @@ def register(fo):
         when = now_iso()
         won_at = when if stage == 'won' else None
         lost_at = when if stage == 'lost' else None
-        notes = (request.form.get('notes') or '').strip()[:2000]
+        notes = (request.form.get('notes') or '').strip()[:4000]
+        lead_source = (request.form.get('lead_source') or '').strip().lower()
+        if lead_source not in (set(k for k,_ in getattr(fo,'LEAD_SOURCES',())) or set()):
+            # allow empty
+            if lead_source not in ('zack','website','referral','google','repeat','other',''):
+                lead_source = ''
+        lead_source = lead_source or None
+        fit_grade = (request.form.get('fit_grade') or '').strip().upper()
+        if fit_grade not in ('A','B','C'):
+            fit_grade = None
+        lost_reason = (request.form.get('lost_reason') or '').strip()
+        lost_note = (request.form.get('lost_note') or '').strip()[:1000]
+        if stage == 'lost':
+            apply = getattr(fo, 'leads_apply_lost', None)
+            # validate before write; apply_lost also writes stage, so we validate only here
+            if lost_reason not in ('price','timing','no_fit','no_response','competitor','other'):
+                return None, 'Pick a lost reason.'
+            if lost_reason == 'other' and not lost_note:
+                return None, 'Add a short note for Other.'
+        else:
+            lost_reason = None
+            lost_note = None
         if oid:
             existing = conn.execute('SELECT * FROM opportunities WHERE id=?', (oid,)).fetchone()
             if existing and existing['stage'] == 'won' and stage == 'won':
@@ -1203,12 +1286,12 @@ def register(fo):
             if existing and existing['stage'] == 'lost' and stage == 'lost':
                 lost_at = existing['lost_at'] or lost_at
             conn.execute(
-                'UPDATE opportunities SET company_id=?,contact_id=?,site_id=?,title=?,stage=?,amount=?,notes=?,updated_at=?,won_at=?,lost_at=? WHERE id=?',
-                (company_id, contact_id, site_id, title[:200], stage, amount, notes, when, won_at, lost_at, oid))
+                'UPDATE opportunities SET company_id=?,contact_id=?,site_id=?,title=?,stage=?,amount=?,notes=?,updated_at=?,won_at=?,lost_at=?,lead_source=?,fit_grade=?,lost_reason=?,lost_note=? WHERE id=?',
+                (company_id, contact_id, site_id, title[:200], stage, amount, notes, when, won_at, lost_at, lead_source, fit_grade, lost_reason, lost_note, oid))
             return oid, None
         cur = conn.execute(
-            'INSERT INTO opportunities (company_id,contact_id,site_id,title,stage,amount,notes,created_by,created_at,updated_at,won_at,lost_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            (company_id, contact_id, site_id, title[:200], stage, amount, notes, fo.me(), when, when, won_at, lost_at))
+            'INSERT INTO opportunities (company_id,contact_id,site_id,title,stage,amount,notes,created_by,created_at,updated_at,won_at,lost_at,lead_source,fit_grade,lost_reason,lost_note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (company_id, contact_id, site_id, title[:200], stage, amount, notes, fo.me(), when, when, won_at, lost_at, lead_source, fit_grade, lost_reason, lost_note))
         return cur.lastrowid, None
 
     @app.route('/opportunities')
@@ -1263,22 +1346,35 @@ def register(fo):
 
         def card(o):
             where = o.get('site_name') or o.get('site_address') or ''
+            src = ''
+            try:
+                if o.get('lead_source') and hasattr(fo, 'lead_source_label'):
+                    src = fo.lead_source_label(o.get('lead_source'))
+            except Exception:
+                src = o.get('lead_source') or ''
+            badge = ''
+            try:
+                if hasattr(fo, 'leads_fit_badge'):
+                    badge = fo.leads_fit_badge(o.get('fit_grade'))
+            except Exception:
+                badge = ''
             meta = ' · '.join(x for x in (
                 o.get('company') or '',
-                money_amt(o.get('amount')) or '',
+                money_amt(o.get('amount')) if fo.is_office() else '',
                 o.get('contact_name') or '',
                 where,
+                src,
             ) if x)
             stage_opts = ''.join(
                 '<option value="%s"%s>%s</option>' % (sk, ' selected' if sk == o['stage'] else '', h(slab))
                 for sk, slab in OPP_STAGES)
             return (
                 '<div class="plat-card plat-opp" draggable="true" data-id="%d" data-stage="%s">'
-                '<a href="/opportunities/%d"><b>%s</b></a>'
+                '<a href="/opportunities/%d"><b>%s</b></a> %s'
                 '<div class="muted">%s</div>'
                 '<div class="plat-opp-move"><label class="muted">Move to</label>'
                 '<select aria-label="Move opportunity" onchange="foOppStage(%d,this.value)">%s</select></div></div>'
-                % (o['id'], h(o['stage']), o['id'], h(o['title']), h(meta), o['id'], stage_opts)
+                % (o['id'], h(o['stage']), o['id'], h(o['title']), badge, h(meta), o['id'], stage_opts)
             )
 
         show_stages = OPP_STAGES if not stage else [s for s in OPP_STAGES if s[0] == stage]
@@ -1296,7 +1392,7 @@ def register(fo):
         cols += '</div>'
         cols += _OPP_DND_JS
         body = stats + pills + cols
-        actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a>'
+        actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a> <a class="plat-btn plat-btn-ghost" href="/leads">Leads list</a>'
         return page('Opportunities', body, kicker='Sales', actions=actions, area='sales')
 
     @app.route('/opportunities/new', methods=['GET', 'POST'])
@@ -1328,7 +1424,7 @@ def register(fo):
             'SELECT id,name,address,company_id FROM sites WHERE ? IN (0, company_id) ORDER BY name',
             (pre_id,)).fetchall() if pre_id else conn.execute(
             'SELECT id,name,address,company_id FROM sites ORDER BY name').fetchall()
-        vals = {k: request.form.get(k) or '' for k in ('title', 'company_id', 'contact_id', 'site_id', 'stage', 'amount', 'notes')}
+        vals = {k: request.form.get(k) or '' for k in ('title', 'company_id', 'contact_id', 'site_id', 'stage', 'amount', 'notes', 'lead_source', 'fit_grade', 'lost_reason', 'lost_note')}
         if pre_id and not vals['company_id']:
             vals['company_id'] = str(pre_id)
         form = _opp_form(vals, '/opportunities/new', 'Add opportunity', companies, contacts, sites)
@@ -1366,14 +1462,33 @@ def register(fo):
         co = conn.execute('SELECT * FROM companies WHERE id=?', (row['company_id'],)).fetchone()
         site = conn.execute('SELECT * FROM sites WHERE id=?', (row['site_id'],)).fetchone() if row['site_id'] else None
         contact = conn.execute('SELECT * FROM contacts WHERE id=?', (row['contact_id'],)).fetchone() if row['contact_id'] else None
+        def _col(key):
+            try:
+                return row[key] if key in row.keys() else ''
+            except Exception:
+                return ''
         vals = {
             'title': row['title'], 'company_id': row['company_id'], 'contact_id': row['contact_id'] or '',
             'site_id': row['site_id'] or '', 'stage': row['stage'],
             'amount': ('%g' % row['amount']) if row['amount'] else '', 'notes': row['notes'] or '',
+            'lead_source': _col('lead_source') or '', 'fit_grade': _col('fit_grade') or '',
+            'lost_reason': _col('lost_reason') or '', 'lost_note': _col('lost_note') or '',
         }
         form = _opp_form(vals, '/opportunities/%d' % oid, 'Save opportunity', companies, contacts, sites)
         extra = '<div class="plat-panel"><h2>Next step</h2><div class="muted">Start a quote from this opportunity. Prices stay in the office until you share the client link. Nothing is sent from the app.</div>'
         extra += '<a class="plat-btn plat-btn-gold" href="/quotes/new?opportunity_id=%d">Start quote</a>' % oid
+        survey_id = ''
+        try:
+            survey_id = row['survey_job_id'] if 'survey_job_id' in row.keys() else ''
+        except Exception:
+            survey_id = ''
+        if survey_id:
+            extra += ' <a class="plat-btn plat-btn-ghost" href="/?job=%s">Open survey %s</a>' % (urllib.parse.quote(survey_id), h(survey_id))
+        else:
+            extra += (
+                ' <form method="post" action="/opportunities/%d/survey" style="display:inline">'
+                '<button class="plat-btn plat-btn-ghost" type="submit">Start survey</button></form>'
+            ) % oid
         if row['job_id']:
             extra += ' <a class="plat-btn plat-btn-ghost" href="/?job=%s">Open job %s</a>' % (urllib.parse.quote(row['job_id']), h(row['job_id']))
         else:
@@ -1398,6 +1513,8 @@ def register(fo):
                                    contact_id=row['contact_id'], opportunity_id=oid)
             except Exception:
                 fo.app.logger.exception('crm opportunity block failed')
+        if crm:
+            crm = '<div id="lead-notes">' + crm + '</div>'
         return page(row['title'], form + extra + crm, back='/opportunities',
                     kicker=(co['name'] if co else 'Opportunity'), area='sales')
 
@@ -1417,22 +1534,32 @@ def register(fo):
             conn.close()
             return jsonify({'error': 'Not found'}), 404
         when = now_iso()
-        won_at = when if stage == 'won' else (row['won_at'] if stage == row['stage'] else None)
-        lost_at = when if stage == 'lost' else (row['lost_at'] if stage == row['stage'] else None)
-        if stage != 'won':
-            won_at = row['won_at'] if stage == 'won' else None
         if stage == 'won':
             won_at = row['won_at'] or when
             lost_at = None
+            conn.execute(
+                'UPDATE opportunities SET stage=?, updated_at=?, won_at=?, lost_at=?, lost_reason=NULL, lost_note=NULL WHERE id=?',
+                (stage, when, won_at, lost_at, oid))
         elif stage == 'lost':
-            lost_at = row['lost_at'] or when
-            won_at = None
+            reason = (data.get('lost_reason') or '').strip()
+            note = (data.get('lost_note') or '').strip()[:1000]
+            apply = getattr(fo, 'leads_apply_lost', None)
+            if callable(apply):
+                err = apply(conn, oid, reason, note, when=when)
+                if err:
+                    conn.close()
+                    return jsonify({'error': err, 'need': 'lost_reason'}), 400
+            else:
+                if not reason:
+                    conn.close()
+                    return jsonify({'error': 'Pick a lost reason.', 'need': 'lost_reason'}), 400
+                conn.execute(
+                    'UPDATE opportunities SET stage=?, updated_at=?, lost_at=?, won_at=NULL, lost_reason=?, lost_note=? WHERE id=?',
+                    (stage, when, row['lost_at'] or when, reason, note, oid))
         else:
-            won_at = None
-            lost_at = None
-        conn.execute(
-            'UPDATE opportunities SET stage=?, updated_at=?, won_at=?, lost_at=? WHERE id=?',
-            (stage, when, won_at, lost_at, oid))
+            conn.execute(
+                'UPDATE opportunities SET stage=?, updated_at=?, won_at=NULL, lost_at=NULL WHERE id=?',
+                (stage, when, oid))
         conn.commit(); conn.close()
         return jsonify({'ok': True, 'id': oid, 'stage': stage})
 
@@ -1466,11 +1593,15 @@ def register(fo):
             '<div class="plat-stats">'
             '<a class="plat-stat" href="/opportunities"><small>Open pipeline</small><b>%s</b><div class="muted">%d opportunities</div></a>'
             '<a class="plat-stat" href="/opportunities?stage=won"><small>Won</small><b>%s</b><div class="muted">%d</div></a>'
+            '<a class="plat-stat" href="/opportunities?stage=lost"><small>Lost</small><b>%s</b><div class="muted">%d</div></a>'
             '<a class="plat-stat" href="/customers"><small>Companies</small><b>%d</b><div class="muted">Shared customer list</div></a>'
             '</div>' % (
                 h(money(open_amt) if open_amt else str(open_n)), open_n,
-                h(money(totals.get('won') or 0) if totals.get('won') else str(counts.get('won') or 0)),
-                counts.get('won') or 0, n_co)
+                h(str(counts.get('won') or 0)),
+                counts.get('won') or 0,
+                h(str(counts.get('lost') or 0)),
+                counts.get('lost') or 0,
+                n_co)
         )
         body += '<div class="plat-panel"><div class="plat-panel-h"><h2>Recent opportunities</h2><a class="plat-btn plat-btn-ghost" href="/opportunities">View all</a></div>'
         if rows:
@@ -1485,7 +1616,7 @@ def register(fo):
         body += '</div>'
         body += crm_dash
         body += '<p class="muted">This is the Sales home. Customers are the same list you see in Ops and Quote. Signing or accepting a quote moves that opportunity to Won.</p>'
-        actions = '<a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a> <a class="plat-btn plat-btn-ghost" href="/tasks">Tasks</a>'
+        actions = '<a class="plat-btn plat-btn-gold" href="/leads">Leads</a> <a class="plat-btn plat-btn-gold" href="/opportunities/new">+ Opportunity</a> <a class="plat-btn plat-btn-ghost" href="/tasks">Tasks</a>'
         return page('Sales', body, kicker='Field Ops', actions=actions, area='sales')
 
     @app.route('/quote')

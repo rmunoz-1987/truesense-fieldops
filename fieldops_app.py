@@ -774,6 +774,26 @@ html.fo-estimator .fo-switch,html.fo-estimator .fo-fab-btn{display:none!importan
 .plat-opp.dragging{opacity:.45}
 .plat-opp .plat-opp-move{display:flex;flex-direction:column;align-items:stretch;gap:4px;margin-top:8px}
 .plat-opp .plat-opp-move select{width:100%;font-size:.85rem;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:#fff}
+
+.fit-badge{display:inline-block;min-width:1.6em;padding:2px 8px;border-radius:999px;font-size:.8rem;font-weight:800;letter-spacing:.02em;text-align:center;vertical-align:middle}
+.fit-A{background:#dce8c8;color:#31510a}
+.fit-B{background:#f3e3b5;color:#6a4d00}
+.fit-C{background:#eadfce;color:#5a4630}
+.lead-list{display:flex;flex-direction:column;gap:12px;margin:12px 0 20px}
+.lead-card .lead-btns{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.lead-card .lead-btns .big-btn,.lead-card .lead-survey-form .big-btn{display:block;width:100%;box-sizing:border-box;text-align:center;text-decoration:none;margin:0}
+.lead-card .lead-survey-form{margin:0}
+.lead-filters{flex-wrap:wrap;margin-bottom:8px}
+#fo-lost-modal{position:fixed;inset:0;background:rgba(17,17,17,.4);z-index:80;display:flex;align-items:flex-end;justify-content:center;padding:16px}
+#fo-lost-modal[hidden]{display:none!important}
+@media(min-width:768px){#fo-lost-modal{align-items:center}}
+.fo-lost-box{background:#fff;border-radius:14px;padding:20px;max-width:420px;width:100%;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+.fo-lost-box h2{margin:0 0 10px;font-size:1.25rem}
+.fo-lost-box label{display:block;margin:10px 0 4px;font-weight:600}
+.fo-lost-box select,.fo-lost-box textarea{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:8px;font:inherit}
+.fo-lost-box .fo-lost-actions{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+.fo-lost-box .fo-lost-actions .big-btn{width:100%;margin:0}
+.fo-lost-err{color:#b00020;min-height:1.2em;margin:6px 0 0}
 .plat-ghost{position:fixed;z-index:80;pointer-events:none;width:200px;opacity:.92;box-shadow:0 8px 24px rgba(0,0,0,.18)}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
@@ -862,7 +882,7 @@ def initials_of(name):
 def more_tool_groups(office=True, estimator=False):
     """Grouped More links as icon + label rows. No money items for subs."""
     if estimator:
-        return [('Work', [('/floor-plans','Floor Plans','plan'),('/sales','Sales pipeline','chart'),('/catalog','Catalog','box')])]
+        return [('Work', [('/floor-plans','Floor Plans','plan'),('/leads','Leads','pen'),('/sales','Sales pipeline','chart'),('/catalog','Catalog','box')])]
     if not office:
         return [('For you', [('/floor-plans','Floor Plans','plan'),('/me','My settings','me'),('/agreement','Agreement','pen'),('/my-schedule','My schedule','cal')])]
     return [
@@ -873,7 +893,7 @@ def more_tool_groups(office=True, estimator=False):
             ('/to-order','To Order','cart'),('/checklists','Checklists','check'),('/safety','Safety','alert'),
         ]),
         ('Sales', [
-            ('/sales','Sales','chart'),('/quote','Quote','note'),('/change-orders','Change orders','note'),
+            ('/leads','Leads','pen'),('/sales','Sales','chart'),('/quote','Quote','note'),('/change-orders','Change orders','note'),
         ]),
         ('Office', [
             ('/revenue','Revenue','chart'),('/reports','Reports','money'),('/qbo','QuickBooks','qbo'),
@@ -894,7 +914,7 @@ def more_path_prefixes(office=True, estimator=False):
     for u,_,_ in more_tool_items(office, estimator=estimator):
         if u not in prefs:
             prefs.append(u)
-    extras=('/quotes','/catalog','/opportunities','/tasks') if estimator else ('/quotes','/catalog','/money','/opportunities','/tasks')
+    extras=('/quotes','/catalog','/opportunities','/tasks','/leads') if estimator else ('/quotes','/catalog','/money','/opportunities','/tasks','/leads')
     for extra in extras:
         if extra not in prefs:
             prefs.append(extra)
@@ -976,19 +996,20 @@ def shell_tabs(path, office):
 
 def shell_links(path, office, estimator=False):
     if estimator:
-        main=[('/','Today'),('/quote','Quotes'),('/customers','Customers'),('/sales','Sales'),('/floor-plans','Floor Plans'),('/catalog','Catalog')]
+        main=[('/','Today'),('/quote','Quotes'),('/customers','Customers'),('/sales','Sales'),('/leads','Leads'),('/floor-plans','Floor Plans'),('/catalog','Catalog')]
         def est_on(u):
             if u=='/' and path=='/': return True
             if u!='/' and (path==u or path.startswith(u.rstrip('/')+'/')): return True
             if u=='/customers' and path.startswith(('/clients','/contacts','/sites','/systems')): return True
             if u=='/quote' and path.startswith('/quotes'): return True
             if u=='/sales' and path.startswith(('/opportunities','/tasks')): return True
+            if u=='/leads' and path.startswith('/leads'): return True
             return False
         return ''.join('<a href="%s" class="%s"%s>%s</a>'%(h(u),'on' if est_on(u) else '',' aria-current="page"' if est_on(u) else '',h(lab)) for u,lab in main)
     area=plat_area(path)
     more=[('/stock','Stock'),('/orders','Orders'),('/plans','Service plans'),('/tickets','Service tickets'),('/compliance','Sub compliance'),('/equipment','Equipment'),('/techs','Subs'),('/users','Users'),('/checklists','Checklists'),('/safety','Safety'),('/agreement','Agreements'),('/to-order','To order'),('/money','Money'),('/costing','Job costing'),('/timesheets','Timesheets'),('/change-orders','Change orders'),('/reports','Reports'),('/timelog','Time log'),('/settings','Settings')]
     if area=='sales':
-        main=[('/sales','Home'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
+        main=[('/sales','Home'),('/leads','Leads'),('/opportunities','Opportunities'),('/tasks','Tasks'),('/customers','Customers')]
     elif area=='quote':
         main=[('/quote','Estimates'),('/catalog','Catalog'),('/customers','Customers')]
     else:
@@ -1255,6 +1276,12 @@ def estimator_today_payload():
             follow.append({'id': r['id'], 'title': r['note'] or 'Follow-up', 'detail': 'Due '+str(r['due'] or ''), 'href': href})
     except Exception:
         follow=[]
+    try:
+        leads_fn=globals().get('leads_followup_items')
+        if callable(leads_fn):
+            follow.extend(leads_fn(conn, ti) or [])
+    except Exception:
+        app.logger.exception('leads estimator followups failed')
     conn.close()
     return {'quotes': quotes, 'surveys': surveys, 'followups': follow}
 
@@ -1328,6 +1355,13 @@ def api_today():
                 acts.append(a)
         except Exception:
             app.logger.exception('crm today actions failed')
+    leads_fn=globals().get('leads_today_actions')
+    if callable(leads_fn):
+        try:
+            for a in (leads_fn(conn, ti) or []):
+                acts.append(a)
+        except Exception:
+            app.logger.exception('leads today actions failed')
     tix_fn=globals().get('tickets_today_actions')
     if callable(tix_fn):
         try:
@@ -1778,6 +1812,8 @@ def init_db():
         _plat.init_and_migrate(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
         snap = os.path.join(BACKUP_DIR, 'fieldops-pre-platform-v2.db')
         print('PLATFORM_MIGRATE backup=%s' % ('yes' if os.path.exists(snap) else 'no'), flush=True)
+        import fieldops_leads as _leads
+        _leads.init_schema(conn)
     except Exception:
         app.logger.exception('platform migrate failed')
         raise
@@ -7125,6 +7161,8 @@ import fieldops_quote
 fieldops_quote.register(sys.modules[__name__])
 import fieldops_crm
 fieldops_crm.register(sys.modules[__name__])
+import fieldops_leads
+fieldops_leads.register(sys.modules[__name__])
 import fieldops_ops
 fieldops_ops.register(sys.modules[__name__])
 import fieldops_tickets

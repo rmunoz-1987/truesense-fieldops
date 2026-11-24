@@ -16,7 +16,7 @@ ALLOW_EXACT = {
 
 ALLOW_PREFIXES = (
     '/static/', '/uploads/', '/quotes', '/quote', '/customers/', '/contacts/',
-    '/sites/', '/systems', '/clients', '/sales', '/opportunities', '/tasks',
+    '/sites/', '/systems', '/clients', '/sales', '/opportunities', '/tasks', '/leads',
     '/activities', '/floor-plans', '/design/', '/me', '/search',
     '/api/me/theme', '/api/favorites', '/api/followups', '/api/today',
     '/api/quick', '/api/opportunities/', '/api/push/',
