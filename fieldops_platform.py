@@ -343,6 +343,45 @@ def rename_company(conn, company_id, new_name):
     return conn.execute('SELECT * FROM companies WHERE id=?', (company_id,)).fetchone(), None
 
 
+
+SHARED_PATHS = ('/customers', '/clients', '/contacts', '/sites', '/search', '/systems')
+SKIP_AREA_PATHS = ('/login', '/logout', '/hub/', '/s/', '/uploads/', '/healthz', '/static/', '/sw.js', '/offline', '/api/', '/manifest.webmanifest')
+
+def is_estimate_path(path):
+    path = path or ''
+    if path == '/quote' or path.startswith('/quote/'):
+        return True
+    # Only the job or portal estimate routes, never a shared path that happens to contain the letters.
+    if path.startswith('/job/') or path.startswith('/hub/'):
+        return path.rstrip('/').endswith('/estimate') or '/estimate/' in path
+    return False
+
+def is_shared_path(path):
+    path = path or ''
+    return any(path == p or path.startswith(p + '/') for p in SHARED_PATHS)
+
+def area_from_request(path, saved=None, area_arg=None):
+    """Return (area, sticky). sticky True means remember this area for shared pages.
+
+    Shared pages (Customers, contacts, sites, search, systems) keep the last
+    remembered area and default to Ops. Visiting Today, Jobs, Sales, or Quote
+    updates the remembered area so Customers cannot jump to Quote after a later
+    Ops page.
+    """
+    if area_arg in ('ops', 'sales', 'quote'):
+        return area_arg, True
+    path = path or '/'
+    if path.startswith(('/sales', '/opportunities', '/opportunity')):
+        return 'sales', True
+    if is_estimate_path(path):
+        return 'quote', True
+    if is_shared_path(path):
+        return (saved if saved in ('ops', 'sales', 'quote') else 'ops'), False
+    if any(path == p or path.startswith(p) for p in SKIP_AREA_PATHS):
+        return (saved if saved in ('ops', 'sales', 'quote') else 'ops'), False
+    return 'ops', True
+
+
 # ---------- Flask pages (registered from fieldops_app) ----------
 
 def register(fo):
@@ -364,17 +403,9 @@ def register(fo):
 
     def area_of(path=None):
         path = path or (request.path if request else '/')
-        a = (request.args.get('area') if request else None) or ''
-        if a in ('ops', 'sales', 'quote'):
-            return a
-        if path.startswith(('/sales', '/opportunities', '/opportunity')):
-            return 'sales'
-        if path.startswith('/quote') or path.endswith('/estimate') or path.startswith('/job/') and '/estimate' in path:
-            return 'quote'
         saved = (session.get('fo_area') if session else None) or ''
-        if path.startswith(('/customers', '/contacts', '/sites', '/search', '/systems')) and saved in ('ops', 'sales', 'quote'):
-            return saved
-        return 'ops'
+        area_arg = (request.args.get('area') if request else None) or ''
+        return area_from_request(path, saved, area_arg)[0]
 
     def set_area(a):
         if a in ('ops', 'sales', 'quote'):
@@ -382,14 +413,23 @@ def register(fo):
 
     @app.before_request
     def _plat_area():
-        a = request.args.get('area')
-        if a in ('ops', 'sales', 'quote'):
-            session['fo_area'] = a
+        if not fo.me() or not fo.is_office():
+            return
+        area, sticky = area_from_request(
+            request.path, session.get('fo_area'), request.args.get('area'))
+        if sticky:
+            session['fo_area'] = area
 
     fo.plat_area_of = area_of
 
     def page(title, body, back=None, kicker='', actions='', msg='', area=None):
-        set_area(area or area_of())
+        if area in ('ops', 'sales', 'quote'):
+            set_area(area)
+        else:
+            # Shared record pages keep the remembered area. Do not overwrite it here.
+            path = request.path if request else '/'
+            if not is_shared_path(path):
+                set_area(area_of())
         act = actions or ''
         if back:
             act = ('<a class="plat-btn plat-btn-ghost" href="%s">Back</a>' % h(back)) + act

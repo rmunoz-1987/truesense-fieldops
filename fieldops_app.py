@@ -593,9 +593,6 @@ html.fo-shell .tile{border-radius:16px;box-shadow:var(--shadow);border-color:var
 @keyframes fo-pl{70%{box-shadow:0 0 0 10px rgba(46,125,50,0)}100%{box-shadow:0 0 0 0 rgba(46,125,50,0)}}
 .fo-kpi.hot b{color:#b3261e}.fo-cap{display:block;font-style:normal;color:var(--muted);font-size:.72rem;margin-top:2px}
 .fo-empty{background:#fff;border:1px dashed var(--line);border-radius:var(--r);padding:16px;color:var(--muted);text-align:center}
-@keyframes fo-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-html.fo-shell body>*:not(.fo-sh){animation:fo-in .28s ease both}
-
 html.fo-shell body:has(.plat-head) > a.fo-back,html.fo-shell body:has(.plat-head) > h1{display:none!important}
 /* Platform record pages */
 .plat-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px 20px;margin:8px 0 18px}
@@ -683,14 +680,10 @@ def plat_area(path=''):
             return sys.modules[__name__].plat_area_of(path)
     except Exception:
         pass
-    a = (request.args.get('area') if request else None) or ''
-    if a in ('ops','sales','quote'): return a
-    if path.startswith(('/sales','/opportunities','/opportunity')): return 'sales'
-    if path.startswith('/quote') or '/estimate' in path: return 'quote'
+    import fieldops_platform as _plat
     saved = (session.get('fo_area') if session else None) or ''
-    if path.startswith(('/customers','/contacts','/sites','/search','/systems')) and saved in ('ops','sales','quote'):
-        return saved
-    return 'ops'
+    area_arg = (request.args.get('area') if request else None) or ''
+    return _plat.area_from_request(path, saved, area_arg)[0]
 
 def initials_of(name):
     parts=[x for x in (name or '').split() if x]
@@ -728,7 +721,7 @@ def shell_links(path, office):
         if u=='/customers' and path.startswith(('/clients','/contacts','/sites','/systems')): return True
         if u=='/jobs' and path.startswith(('/history','/calendar','/new-job')): return True
         if u=='/opportunities' and path.startswith('/opportunity'): return True
-        if u=='/quote' and '/estimate' in path: return True
+        if u=='/quote' and (path.startswith('/quote') or path.startswith('/job/') and path.rstrip('/').endswith('/estimate')): return True
         if u=='/sales' and path=='/sales': return True
         return False
     html=''.join('<a href="%s" class="%s"%s>%s</a>'%(h(u),'on' if on_url(u) else '',' aria-current="page"' if on_url(u) else '',h(lab)) for u,lab in main)

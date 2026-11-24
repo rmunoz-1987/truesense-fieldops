@@ -138,5 +138,43 @@ class PlatformTests(unittest.TestCase):
         self.assertIn('Front door cameras', html)
         self.assertIn('$4,200.00', html)
 
+
+    def _switcher(self, html):
+        self.assertIn('fo-switch', html)
+        for area, href, lab in (('ops','/?area=ops','Ops'),('sales','/sales','Sales'),('quote','/quote','Quote')):
+            if 'href="%s" class="on">%s</a>'%(href,lab) in html:
+                return area
+        self.fail('no selected product in switcher')
+
+    def test_shared_customers_keep_area(self):
+        """Customers is shared. Default Ops. Visiting Jobs after Quote must not leave Quote stuck."""
+        self.login('Roland', 'TestPass1234')
+        html=self.c.get('/customers').get_data(as_text=True)
+        self.assertEqual(self._switcher(html), 'ops')
+        self.assertNotIn('fo-in', html)
+        self.assertNotIn('animation:fo-in', html)
+        conn=fo.get_db()
+        co=conn.execute('SELECT id FROM companies ORDER BY id LIMIT 1').fetchone()
+        self.assertIsNotNone(co)
+        cid=co['id']; conn.close()
+        html=self.c.get('/customers/%d'%cid).get_data(as_text=True)
+        self.assertEqual(self._switcher(html), 'ops')
+        self.assertNotIn('class="on">Quote</a>', html)
+
+        self.c.get('/sales')
+        self.assertEqual(self._switcher(self.c.get('/customers').get_data(as_text=True)), 'sales')
+        self.assertEqual(self._switcher(self.c.get('/customers/%d'%cid).get_data(as_text=True)), 'sales')
+
+        self.c.get('/quote')
+        self.assertEqual(self._switcher(self.c.get('/customers').get_data(as_text=True)), 'quote')
+        # An Ops page must clear Quote so Customers does not jump back to it
+        self.c.get('/jobs')
+        self.assertEqual(self._switcher(self.c.get('/jobs').get_data(as_text=True)), 'ops')
+        self.assertEqual(self._switcher(self.c.get('/customers').get_data(as_text=True)), 'ops')
+        self.assertEqual(self._switcher(self.c.get('/customers/%d'%cid).get_data(as_text=True)), 'ops')
+        html=self.c.get('/customers/%d'%cid).get_data(as_text=True)
+        self.assertNotIn('class="on">Quote</a>', html)
+        self.assertNotIn('animation:fo-in', html)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
