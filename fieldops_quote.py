@@ -79,6 +79,12 @@ def set_default_terms(conn, text):
 
 
 def quote_number(row):
+    try:
+        doc = (row['qbo_doc_number'] or '') if 'qbo_doc_number' in row.keys() else ''
+    except Exception:
+        doc = ''
+    if doc:
+        return doc
     return 'Q-%d' % row['id']
 
 
@@ -93,6 +99,12 @@ def estimate_date(row):
 
 
 def valid_until(row, days=VALID_DAYS):
+    try:
+        exp = (row['qbo_expiration'] or '') if 'qbo_expiration' in row.keys() else ''
+    except Exception:
+        exp = ''
+    if exp:
+        return str(exp)[:10]
     d = estimate_date(row)
     if not d:
         return ''
@@ -123,6 +135,38 @@ def clarifications_of(row):
     except Exception:
         text = ''
     return (text or '').strip()
+
+
+def _rowcol(row, key, default=''):
+    try:
+        if key in row.keys() and row[key] is not None:
+            return row[key]
+    except Exception:
+        pass
+    return default
+
+
+def customer_memo_of(row):
+    return (_rowcol(row, 'qbo_customer_memo') or '').strip()
+
+
+def bill_to_of(row):
+    return (_rowcol(row, 'qbo_bill_to') or '').strip()
+
+
+def ship_to_of(row):
+    return (_rowcol(row, 'qbo_ship_to') or '').strip()
+
+
+def tax_rate_label(rate):
+    try:
+        rate = float(rate)
+    except (TypeError, ValueError):
+        return ''
+    if not rate:
+        return ''
+    text = ('%g' % rate)
+    return text + '%'
 
 
 
@@ -186,7 +230,10 @@ def init_schema(conn):
     )''')
     conn.execute('CREATE INDEX IF NOT EXISTS ix_quotes_opp ON quotes(opportunity_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS ix_quotes_token ON quotes(token)')
-    for col in ('terms_text TEXT', 'clarifications TEXT', 'sent_at TEXT', 'terms_agreed_at TEXT'):
+    for col in ('terms_text TEXT', 'clarifications TEXT', 'sent_at TEXT', 'terms_agreed_at TEXT',
+                'qbo_customer_memo TEXT', 'qbo_bill_to TEXT', 'qbo_ship_to TEXT', 'qbo_expiration TEXT',
+                'qbo_tax_rate REAL', 'qbo_tax_amount REAL', 'qbo_discount_amount REAL', 'qbo_subtotal REAL',
+                'qbo_import_hash TEXT', 'qbo_imported_at TEXT'):
         _add_col(conn, 'quotes', col)
     try:
         seed_default_terms(conn)
@@ -203,9 +250,11 @@ def lines_of(row):
     return data if isinstance(data, list) else []
 
 
-def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='', source='', plan_key=''):
+def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='', source='', plan_key='',
+                description='', kind='item', amount=None, taxable=False, qbo_line_id=''):
+    kind = (kind or 'item') or 'item'
     try:
-        qty = float(qty or 0)
+        qty = float(qty if qty is not None else 0)
     except (TypeError, ValueError):
         qty = 0
     try:
@@ -213,40 +262,121 @@ def freeze_line(name, qty, cost, sell, optional=False, catalog_id=None, unit='',
     except (TypeError, ValueError):
         cost = 0
     try:
-        sell = float(sell or 0)
+        sell = float(sell or 0) if sell is not None else 0
     except (TypeError, ValueError):
         sell = 0
-    if sell <= 0 and cost > 0:
+    if kind == 'item' and sell <= 0 and cost > 0 and not description and amount in (None, '', 0, 0.0):
         sell = sell_from_cost(cost)
-    qty = max(0, qty)
+    qty = qty if kind in ('text', 'subtotal', 'group', 'tax', 'discount') else max(0, qty)
+    desc = description if isinstance(description, str) else ('' if description is None else str(description))
+    name = (name or '').strip()
+    if not name and desc:
+        name = desc.split('\n', 1)[0][:300]
+    line_total = None
+    if amount is not None and amount != '':
+        try:
+            line_total = round(float(amount), 2)
+        except (TypeError, ValueError):
+            line_total = None
+    if line_total is None:
+        if kind == 'discount':
+            line_total = -abs(round(qty * sell if sell and qty else sell, 2))
+        elif kind in ('tax', 'subtotal', 'group'):
+            line_total = round(float(sell or 0), 2)
+        elif kind == 'text':
+            line_total = 0.0
+        else:
+            line_total = round(qty * sell, 2)
+    # Keep rate precision (some QBO unit prices are more than 2 decimals).
+    if kind == 'item':
+        sell_out = round(sell, 6) if sell else 0
+    else:
+        sell_out = round(sell, 2)
     out = {
-        'name': (name or '')[:200],
+        'name': name[:300],
+        'description': desc,
         'qty': qty,
         'unit': (unit or '')[:20],
         'cost': round(cost, 2),
-        'sell': round(sell, 2),
+        'sell': sell_out,
         'optional': bool(optional),
         'catalog_id': catalog_id,
-        'line_total': round(qty * sell, 2),
+        'line_total': line_total,
+        'kind': kind,
+        'taxable': bool(taxable),
     }
+    if amount is not None and amount != '':
+        try:
+            out['amount'] = round(float(amount), 2)
+        except (TypeError, ValueError):
+            out['amount'] = line_total
+    else:
+        out['amount'] = line_total
+    if qbo_line_id:
+        out['qbo_line_id'] = str(qbo_line_id)
     if source:
         out['source'] = source
         out['plan_key'] = plan_key or ''
     return out
 
 
-def quote_totals(lines, selected=None):
+def line_amount(ln):
+    kind = ln.get('kind') or 'item'
+    if kind in ('text', 'description', 'group', 'subtotal'):
+        return 0.0
+    if kind == 'tax':
+        return 0.0
+    if kind == 'discount':
+        return 0.0
+    if ln.get('amount') not in (None, ''):
+        try:
+            return round(float(ln['amount']), 2)
+        except (TypeError, ValueError):
+            pass
+    try:
+        return round(float(ln.get('qty') or 0) * float(ln.get('sell') or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def quote_totals(lines, selected=None, tax_amount=None, discount_amount=None):
     """selected is a set of optional line indexes the client ticked. None means all required plus no add-ons."""
     base = 0
     addons = 0
-    for i, ln in enumerate(lines):
-        amt = round(float(ln.get('qty') or 0) * float(ln.get('sell') or 0), 2)
+    discount = 0.0 if discount_amount is None else abs(float(discount_amount or 0))
+    tax = 0.0 if tax_amount is None else float(tax_amount or 0)
+    saw_tax = tax_amount is not None
+    saw_disc = discount_amount is not None
+    for i, ln in enumerate(lines or []):
+        kind = ln.get('kind') or 'item'
+        if kind == 'tax':
+            if not saw_tax:
+                tax += float(ln.get('amount') or ln.get('sell') or ln.get('line_total') or 0)
+            continue
+        if kind == 'discount':
+            if not saw_disc:
+                discount += abs(float(ln.get('amount') or ln.get('sell') or 0))
+            continue
+        if kind not in ('item', ''):
+            continue
+        amt = line_amount(ln)
         if ln.get('optional'):
             if selected is not None and i in selected:
                 addons += amt
         else:
             base += amt
-    return {'base': round(base, 2), 'addons': round(addons, 2), 'total': round(base + addons, 2)}
+    subtotal = round(base + addons, 2)
+    discount = round(discount, 2)
+    tax = round(tax, 2)
+    total = round(subtotal - discount + tax, 2)
+    return {
+        'base': round(base, 2),
+        'addons': round(addons, 2),
+        'subtotal': subtotal,
+        'discount': discount,
+        'tax': tax,
+        'total': total,
+    }
 
 
 def import_catalog_csv(conn, text, created_by=''):
@@ -328,16 +458,27 @@ def save_quote(conn, data, quote_id=None, created_by=''):
         return None, 'Add at least one line.'
     frozen = []
     for ln in lines:
+        kind = ln.get('kind') or 'item'
         name = (ln.get('name') or '').strip()
-        if not name:
+        desc = ln.get('description') or ''
+        if not name and not desc and kind == 'item':
             continue
+        qty = ln.get('qty')
+        if qty is None:
+            qty = 0 if kind != 'item' else 1
         frozen.append(freeze_line(
-            name, ln.get('qty') or 1, ln.get('cost') or 0, ln.get('sell') or 0,
+            name, qty, ln.get('cost') or 0, ln.get('sell') or 0,
             optional=bool(ln.get('optional')), catalog_id=ln.get('catalog_id'), unit=ln.get('unit') or '',
-            source=ln.get('source') or '', plan_key=ln.get('plan_key') or ''))
+            source=ln.get('source') or '', plan_key=ln.get('plan_key') or '',
+            description=desc, kind=kind, amount=ln.get('amount'),
+            taxable=bool(ln.get('taxable')), qbo_line_id=ln.get('qbo_line_id') or ''))
     if not frozen:
         return None, 'Add at least one line.'
-    tot = quote_totals(frozen)['base']  # stored total is the required base; add-ons apply at accept
+    tot = quote_totals(
+        frozen,
+        tax_amount=data.get('tax_amount'),
+        discount_amount=data.get('discount_amount'),
+    )['total']
     when = now_iso()
     if quote_id:
         row = conn.execute('SELECT * FROM quotes WHERE id=?', (quote_id,)).fetchone()
@@ -489,6 +630,70 @@ def accept_quote(conn, quote, selected, name, signature, ip, fo=None):
     return conn.execute('SELECT * FROM quotes WHERE id=?', (quote['id'],)).fetchone(), None
 
 
+
+def decorate_client_lines(row, selected=None):
+    """Shape stored lines for the client page and print/PDF view."""
+    lines = []
+    raw = lines_of(row)
+    for i, ln in enumerate(raw):
+        item = dict(ln)
+        item['idx'] = i
+        kind = item.get('kind') or 'item'
+        item['kind'] = kind
+        qv = item.get('qty')
+        if kind in ('text', 'subtotal', 'group', 'tax', 'discount') or qv in (None, ''):
+            item['qty_label'] = '' if kind != 'item' else ''
+        else:
+            try:
+                qf = float(qv)
+                item['qty_label'] = ('%g' % qf)
+            except (TypeError, ValueError):
+                item['qty_label'] = str(qv)
+        if kind == 'item':
+            item['show_rate'] = True
+            item['rate'] = item.get('sell') or 0
+            amt = line_amount(item)
+            item['amt_value'] = amt
+            item['amount_label'] = money(amt)
+        elif kind == 'text':
+            item['show_rate'] = False
+            item['rate'] = 0
+            item['amt_value'] = 0
+            item['amount_label'] = ''
+        elif kind == 'subtotal':
+            item['show_rate'] = False
+            item['rate'] = 0
+            amt = item.get('amount') or item.get('line_total') or 0
+            item['amt_value'] = 0
+            item['amount_label'] = money(amt)
+        elif kind == 'discount':
+            item['show_rate'] = False
+            amt = abs(float(item.get('amount') or item.get('sell') or 0))
+            item['amt_value'] = 0
+            item['amount_label'] = money(amt)
+        elif kind == 'tax':
+            item['show_rate'] = False
+            amt = float(item.get('amount') or item.get('sell') or 0)
+            item['amt_value'] = 0
+            item['amount_label'] = money(amt)
+        elif kind == 'group':
+            item['show_rate'] = False
+            amt = item.get('amount') or 0
+            item['amt_value'] = 0
+            item['amount_label'] = money(amt) if amt else ''
+        else:
+            item['show_rate'] = True
+            item['rate'] = item.get('sell') or 0
+            item['amt_value'] = line_amount(item)
+            item['amount_label'] = money(item['amt_value'])
+        lines.append(item)
+    tax = _rowcol(row, 'qbo_tax_amount', None)
+    disc = _rowcol(row, 'qbo_discount_amount', None)
+    totals = quote_totals(raw, selected, tax_amount=tax, discount_amount=disc)
+    rate = _rowcol(row, 'qbo_tax_rate', None)
+    return lines, totals, tax_rate_label(rate)
+
+
 def parse_lines_from_form(form, catalog=None):
     """Read repeated line fields name_i, qty_i, cost_i, sell_i, optional_i, catalog_id_i."""
     lines = []
@@ -500,22 +705,30 @@ def parse_lines_from_form(form, catalog=None):
     opts = form.getlist('line_optional') if hasattr(form, 'getlist') else []
     cids = form.getlist('line_catalog_id') if hasattr(form, 'getlist') else []
     units = form.getlist('line_unit') if hasattr(form, 'getlist') else []
+    descs = form.getlist('line_description') if hasattr(form, 'getlist') else []
+    kinds = form.getlist('line_kind') if hasattr(form, 'getlist') else []
+    amts = form.getlist('line_amount') if hasattr(form, 'getlist') else []
+    taxes = form.getlist('line_taxable') if hasattr(form, 'getlist') else []
     opt_set = set(opts)
     for i, name in enumerate(names):
         name = (name or '').strip()
-        if not name:
+        desc = descs[i] if i < len(descs) else ''
+        kind = (kinds[i] if i < len(kinds) else 'item') or 'item'
+        if not name and not (desc or '').strip() and kind == 'item':
             continue
         qty = qtys[i] if i < len(qtys) else 1
         cost = costs[i] if i < len(costs) else 0
         sell = sells[i] if i < len(sells) else 0
         cid = cids[i] if i < len(cids) else ''
         unit = units[i] if i < len(units) else ''
+        amount = amts[i] if i < len(amts) else ''
+        taxable = (taxes[i] if i < len(taxes) else '') in ('1', 'on', 'true', 'True')
         optional = (str(i) in opt_set) or (form.get('line_optional_%d' % i) == '1')
-        # checkbox arrays often send 'on' for that index via hidden flags
         lines.append({
             'name': name, 'qty': qty, 'cost': cost, 'sell': sell,
             'optional': optional, 'catalog_id': int(cid) if str(cid).isdigit() else None,
-            'unit': unit,
+            'unit': unit, 'description': desc, 'kind': kind,
+            'amount': amount or None, 'taxable': taxable,
         })
     return lines
 
@@ -742,20 +955,30 @@ def register(fo):
                 h(vals.get('clarifications') or ''))
         )
         for i, ln in enumerate(lines):
+            sell_val = ln.get('sell')
+            sell_s = ('%.6g' % float(sell_val)) if sell_val not in (None, '') else ''
+            amt_s = '' if ln.get('amount') in (None, '') else ('%g' % ln.get('amount'))
             form += (
                 '<div class="plat-panel" style="margin:8px 0;padding:12px" data-line>'
-                '<label>Item</label><input name="line_name" value="%s" required>'
+                '<label>Item</label><input name="line_name" value="%s">'
+                '<label>Description</label><textarea name="line_description" rows="3">%s</textarea>'
                 '<div class="plat-row"><div><label>Qty</label><input name="line_qty" type="number" step="any" min="0" value="%s"></div>'
                 '<div><label>Cost $</label><input name="line_cost" type="number" step="0.01" min="0" value="%s"></div>'
-                '<div><label>Sell $</label><input name="line_sell" type="number" step="0.01" min="0" value="%s"></div></div>'
+                '<div><label>Rate $</label><input name="line_sell" type="number" step="any" min="0" value="%s"></div></div>'
                 '<input type="hidden" name="line_catalog_id" value="%s">'
                 '<input type="hidden" name="line_unit" value="%s">'
+                '<input type="hidden" name="line_kind" value="%s">'
+                '<input type="hidden" name="line_amount" value="%s">'
+                '<input type="hidden" name="line_taxable" value="%s">'
                 '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="line_optional" value="%d"%s style="width:auto"> Optional add-on the client can tick</label>'
                 '</div>' % (
-                    h(ln.get('name') or ''), ln.get('qty') if ln.get('qty') not in (None, '') else 1,
+                    h(ln.get('name') or ''), h(ln.get('description') or ''),
+                    ln.get('qty') if ln.get('qty') not in (None, '') else 1,
                     (('%g' % ln['cost']) if ln.get('cost') not in (None, '') else ''),
-                    (('%g' % ln['sell']) if ln.get('sell') not in (None, '') else ''),
+                    sell_s,
                     h(str(ln.get('catalog_id') or '')), h(ln.get('unit') or ''),
+                    h(ln.get('kind') or 'item'), h(amt_s),
+                    '1' if ln.get('taxable') else '',
                     i, ' checked' if ln.get('optional') else ''))
         form += (
             '</div>'
@@ -767,11 +990,13 @@ def register(fo):
             '<script>function foAddBlank(){const box=document.getElementById("quote-lines");'
             'const n=box.querySelectorAll("[data-line]").length;'
             'const d=document.createElement("div");d.className="plat-panel";d.style.cssText="margin:8px 0;padding:12px";d.setAttribute("data-line","");'
-            'd.innerHTML=\'<label>Item</label><input name="line_name" required>'
+            'd.innerHTML=\'<label>Item</label><input name="line_name">'
+            + '<label>Description</label><textarea name="line_description" rows="3"></textarea>'
             + '<div class="plat-row"><div><label>Qty</label><input name="line_qty" type="number" step="any" min="0" value="1"></div>'
             + '<div><label>Cost $</label><input name="line_cost" type="number" step="0.01" min="0"></div>'
-            + '<div><label>Sell $</label><input name="line_sell" type="number" step="0.01" min="0"></div></div>'
+            + '<div><label>Rate $</label><input name="line_sell" type="number" step="any" min="0"></div></div>'
             + '<input type="hidden" name="line_catalog_id"><input type="hidden" name="line_unit">'
+            + '<input type="hidden" name="line_kind" value="item"><input type="hidden" name="line_amount"><input type="hidden" name="line_taxable">'
             + '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="line_optional" value="\'+n+\'" style="width:auto"> Optional add-on the client can tick</label>\';'
             'box.appendChild(d)}'
             'function foAddCat(){const s=document.getElementById("cat-pick");if(!s.value)return;'
@@ -779,11 +1004,13 @@ def register(fo):
             'const n=box.querySelectorAll("[data-line]").length;'
             'const d=document.createElement("div");d.className="plat-panel";d.style.cssText="margin:8px 0;padding:12px";d.setAttribute("data-line","");'
             'const name=o.textContent.split(" · ")[0];'
-            'd.innerHTML=\'<label>Item</label><input name="line_name" required value="\'+name.replace(/"/g,"&quot;")+\'">'
+            'd.innerHTML=\'<label>Item</label><input name="line_name" value="\'+name.replace(/"/g,"&quot;")+\'">'
+            + '<label>Description</label><textarea name="line_description" rows="3"></textarea>'
             + '<div class="plat-row"><div><label>Qty</label><input name="line_qty" type="number" step="any" min="0" value="1"></div>'
             + '<div><label>Cost $</label><input name="line_cost" type="number" step="0.01" min="0" value="\'+o.dataset.cost+\'"></div>'
-            + '<div><label>Sell $</label><input name="line_sell" type="number" step="0.01" min="0" value="\'+o.dataset.sell+\'"></div></div>'
+            + '<div><label>Rate $</label><input name="line_sell" type="number" step="any" min="0" value="\'+o.dataset.sell+\'"></div></div>'
             + '<input type="hidden" name="line_catalog_id" value="\'+s.value+\'"><input type="hidden" name="line_unit" value="\'+(o.dataset.unit||"")+\'">'
+            + '<input type="hidden" name="line_kind" value="item"><input type="hidden" name="line_amount"><input type="hidden" name="line_taxable">'
             + '<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" name="line_optional" value="\'+n+\'" style="width:auto"> Optional add-on the client can tick</label>\';'
             'box.appendChild(d);s.value=""}</script>'
         ) % (cat_opts, h(submit))
@@ -1004,8 +1231,14 @@ h2{font-size:1.05rem;color:#5f5b16;margin:22px 0 8px;border-bottom:2px solid #a4
 .ok{background:#e8f5e9;border:2px solid #2e7d32;border-radius:12px;padding:14px;font-weight:700;font-size:1.1rem;color:#1b5e20}
 table{width:100%;border-collapse:collapse;table-layout:fixed}
 td,th{border-bottom:1px solid #eee;padding:10px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
-th:nth-child(2),td:nth-child(2){width:16%;text-align:center}
-th:nth-child(3),td:nth-child(3){width:26%;text-align:right;white-space:nowrap}
+th.qty,td.qty{width:10%;text-align:center}
+th.rate,td.rate,th.amt,td.amt{width:16%;text-align:right;white-space:nowrap}
+.desc{white-space:pre-wrap;font-size:.95rem;margin:4px 0 0;color:#333;line-height:1.45}
+tr.kind-text td{border-bottom:1px solid #eee}
+tr.kind-subtotal td,tr.kind-tax td,tr.kind-discount td{font-weight:700;background:#fafaf6}
+tr.kind-tax td{background:#f3f0e0}
+.breakdown{margin:10px 0 0;display:grid;grid-template-columns:1fr auto;gap:4px 16px;justify-items:end}
+.breakdown span{justify-self:start}
 input[type=text]{width:100%;padding:14px;border:1px solid #ddd;border-radius:10px;font-size:1rem;margin:8px 0}
 .addon-lab{display:flex;align-items:flex-start;gap:8px;margin:0}
 .addon-lab input{width:22px;height:22px;margin:0;flex:0 0 22px}
@@ -1044,6 +1277,13 @@ details.terms[open] summary:after{content:"Hide"}
 </header>
 <h1>{{ q.title }}</h1>
 {% if company %}<div>Prepared for <b>{{ company }}</b></div>{% endif %}
+{% if bill_to or ship_to %}
+<div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+  {% if bill_to %}<div><div class="muted">Bill to</div><div class="pre">{{ bill_to }}</div></div>{% endif %}
+  {% if ship_to %}<div><div class="muted">Ship to / job site</div><div class="pre">{{ ship_to }}</div></div>{% endif %}
+</div>
+{% endif %}
+{% if customer_memo %}<h2>Message</h2><div class="card pre">{{ customer_memo }}</div>{% endif %}
 {% if q.notes %}<h2>Scope</h2><div class="card pre">{{ q.notes }}</div>{% endif %}
 {% if accepted %}
 <div class="ok">Approved by {{ q.accepted_name }} on {{ q.accepted_at[:10] }}. Total {{ money(q.total) }}.</div>
@@ -1051,16 +1291,22 @@ details.terms[open] summary:after{content:"Hide"}
 <h2>Estimate</h2>
 <div class="card">
 <table>
-<tr><th>Item</th><th>Qty</th><th>Price</th></tr>
+<tr><th>Item</th><th class="qty">Qty</th><th class="rate">Rate</th><th class="amt">Amount</th></tr>
 {% for ln in lines %}
-<tr>
-<td>{% if ln.optional and not accepted %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" form="est-form" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% if ln.optional %} <em class="addon-tag">Add-on</em>{% endif %}{% endif %}</td>
-<td>{{ ln.qty_label }}</td>
-<td data-amt="{{ ln.line_total }}">{{ money(ln.line_total) }}</td>
+<tr class="kind-{{ ln.kind or 'item' }}">
+<td>{% if ln.optional and not accepted and ln.kind == 'item' %}<label class="addon-lab"><input type="checkbox" name="addon" value="{{ ln.idx }}" form="est-form" {% if ln.idx in selected %}checked{% endif %} onchange="foTot()"> <span>{{ ln.name }}</span> <em class="addon-tag">Add-on</em></label>{% else %}{{ ln.name }}{% if ln.optional %} <em class="addon-tag">Add-on</em>{% endif %}{% endif %}{% if ln.description and ln.description != ln.name %}<div class="desc">{{ ln.description }}</div>{% endif %}</td>
+<td class="qty">{{ ln.qty_label }}</td>
+<td class="rate">{% if ln.show_rate %}{{ money(ln.rate) }}{% endif %}</td>
+<td class="amt" data-amt="{{ ln.amt_value }}" data-kind="{{ ln.kind }}">{{ ln.amount_label }}</td>
 </tr>
 {% endfor %}
 </table>
-<div class="totals">
+<div class="totals" data-tax="{{ totals.tax }}" data-discount="{{ totals.discount }}">
+  <div class="breakdown">
+    <span>Subtotal</span><b id="sub">{{ money(totals.subtotal) }}</b>
+    {% if totals.discount %}<span>Discount</span><b id="disc">{{ money(totals.discount) }}</b>{% endif %}
+    {% if totals.tax or tax_rate %}<span>Sales tax{% if tax_rate %} ({{ tax_rate }}){% endif %}</span><b id="tax">{{ money(totals.tax) }}</b>{% endif %}
+  </div>
   <div class="total" id="tot">{{ money(totals.total) }}</div>
   <div class="deposit">Deposit due to schedule (50%): <b id="dep">{{ money(deposit) }}</b></div>
   <div class="muted" id="tot-note">This is the total for the items above{% if has_addons and not accepted %}, including any optional add-ons you tick{% endif %}. The balance is due upon completion, net 15.</div>
@@ -1098,7 +1344,7 @@ c.addEventListener("pointermove",function(e){if(!on)return;var q=p(e);x.lineTo(q
 c.addEventListener("pointerup",function(){on=false})})();
 function estClear(){var c=document.getElementById("est-pad");c.getContext("2d").clearRect(0,0,c.width,c.height);estDrawn=false}
 function estSubmit(){var terms=document.querySelector("input[name=agree_terms]");if(terms&&!terms.checked){alert("Please agree to the terms and conditions");return false}if(!estDrawn){alert("Please sign in the box");return false}document.getElementById("est-sig").value=document.getElementById("est-pad").toDataURL("image/png");return true}
-function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var d=t*0.5;document.getElementById("dep").textContent="$"+d.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
+function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){var box=tr.querySelector("input[name=addon]");var cell=tr.querySelector("[data-amt]");if(!cell)return;var kind=cell.getAttribute("data-kind")||"item";if(kind!=="item")return;if(box&&!box.checked)return;t+=parseFloat(cell.getAttribute("data-amt")||0)});var box=document.querySelector(".totals");var tax=parseFloat((box&&box.getAttribute("data-tax"))||0);var disc=parseFloat((box&&box.getAttribute("data-discount"))||0);var sub=document.getElementById("sub");if(sub)sub.textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});t=t-disc+tax;document.getElementById("tot").textContent="$"+t.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});var d=t*0.5;document.getElementById("dep").textContent="$"+d.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}
 </script>
 {% endif %}
 <div class="foot">True Sense Security &middot; License {{ license }}</div>
@@ -1136,17 +1382,10 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
         else:
             terms = get_default_terms(conn)
         conn.close()
-        lines = []
-        for i, ln in enumerate(lines_of(row)):
-            item = dict(ln); item['idx'] = i
-            qv = item.get('qty') or 0
-            item['qty_label'] = ('%g' % qv)
-            lines.append(item)
-        # After accept, all remaining lines are in; selected = all
         selected = set()
         if row['status'] == 'accepted':
-            selected = set(range(len(lines)))
-        totals = quote_totals(lines, selected if row['status'] == 'accepted' else set())
+            selected = set(range(len(lines_of(row))))
+        lines, totals, rate_label = decorate_client_lines(row, selected if row['status'] == 'accepted' else set())
         from flask import render_template_string
         clar = clarifications_of(row)
         est = estimate_date(row)
@@ -1157,7 +1396,9 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             totals=totals, accepted=row['status'] == 'accepted',
             selected=selected, has_addons=any(ln.get('optional') for ln in lines),
             terms=terms, clarifications=clar, est_date=est, valid_until=until,
-            deposit=dep, number=quote_number(row), license=LICENSE_NO)
+            deposit=dep, number=quote_number(row), license=LICENSE_NO,
+            bill_to=bill_to_of(row), ship_to=ship_to_of(row),
+            customer_memo=customer_memo_of(row), tax_rate=rate_label)
 
     @app.route('/q/<token>/accept', methods=['POST'])
     def quote_client_accept(token):
@@ -1189,14 +1430,8 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
 
     def _render_quote_client(row, company, print_mode=False):
         from flask import render_template_string, Response
-        lines = []
-        for i, ln in enumerate(lines_of(row)):
-            item = dict(ln); item['idx'] = i
-            qv = item.get('qty') or 0
-            item['qty_label'] = ('%g' % qv)
-            lines.append(item)
-        selected = set(range(len(lines))) if row['status'] == 'accepted' else set()
-        totals = quote_totals(lines, selected if row['status'] == 'accepted' else set())
+        selected = set(range(len(lines_of(row)))) if row['status'] == 'accepted' else set()
+        lines, totals, rate_label = decorate_client_lines(row, selected if row['status'] == 'accepted' else set())
         terms = terms_of(row) or ''
         if not terms:
             conn = fo.get_db(); terms = get_default_terms(conn); conn.close()
@@ -1207,7 +1442,9 @@ function foTot(){var t=0;document.querySelectorAll("tr").forEach(function(tr){va
             terms=terms, clarifications=clarifications_of(row),
             est_date=estimate_date(row), valid_until=valid_until(row),
             deposit=deposit_of(totals['total']), number=quote_number(row),
-            license=LICENSE_NO)
+            license=LICENSE_NO,
+            bill_to=bill_to_of(row), ship_to=ship_to_of(row),
+            customer_memo=customer_memo_of(row), tax_rate=rate_label)
         if print_mode:
             html = html.replace('</style>', '@media screen{.print-hint{display:block;text-align:center;margin:8px 0 16px}}@media print{.print-hint{display:none}}</style>')
             html = html.replace('<div class="wrap">', '<div class="wrap"><p class="print-hint noprint"><button class="btn" type="button" onclick="window.print()" style="max-width:280px;margin:0 auto;display:block">Print this estimate</button></p>')
