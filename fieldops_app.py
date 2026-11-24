@@ -1052,10 +1052,12 @@ def api_today():
                 acts.append(a)
         except Exception:
             app.logger.exception('ticket today actions failed')
+    rmr_fn=globals().get('plans_rmr')
+    rmr_val=rmr_fn(conn) if callable(rmr_fn) else 0
     conn.close()
     hr=datetime.now(ZoneInfo('America/Chicago')).hour if ZoneInfo else 9
     return jsonify({'name':nice_name(me()),'hello':'Good morning' if hr<12 else ('Good afternoon' if hr<17 else 'Good evening'),
-        'today':today,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm,'money_src':msrc},
+        'today':today,'prog':prog,'kpi':{'today':len(today),'progress':len(in_prog),'waiting':sum(a['n'] for a in acts),'money':money(month),'month':t.strftime('%B'),'spark_jobs':sj,'spark_money':sm,'money_src':msrc,'rmr':money(rmr_val)},
         'actions':acts,'live':live,'feed':feed})
 # ---------- end Today ----------
 
@@ -1460,6 +1462,8 @@ def init_db():
         _ops.init_schema(conn)
         import fieldops_tickets as _tix
         _tix.init_schema(conn, backup_dir=BACKUP_DIR, db_path=DB_PATH)
+        import fieldops_plans as _plans
+        _plans.init_schema(conn)
     except Exception:
         app.logger.exception('users schema failed')
         raise
@@ -1729,7 +1733,7 @@ async function loadToday(){let d;try{d=await (await fetch('/api/today')).json()}
 $id('fo-hello').textContent=d.hello+', '+d.name;const n=d.kpi.today;$id('fo-hello2').textContent=n?'You have '+n+' job'+(n===1?'':'s')+' today.':'No jobs on the schedule today.';
 const p=d.prog,tot=p.togo+p.active+p.done||1;
 $id('fo-prog').innerHTML='<div class="fo-bar"><i style="width:'+(p.done/tot*100)+'%;background:#2e7d32"></i><i style="width:'+(p.active/tot*100)+'%;background:var(--gold)"></i></div><div class="fo-legend"><span><b>'+p.togo+'</b> to go</span><span><b>'+p.active+'</b> active</span><span><b>'+p.done+'</b> done</span></div>';
-const k=d.kpi;$id('fo-kpis').innerHTML=[['/jobs?f=today','Jobs today',k.today,spark(k.spark_jobs)+'<i class="fo-cap">Jobs done, 8 weeks</i>'],['/jobs?f=progress','In progress',k.progress,''],['#fo-acts','Waiting on you',k.waiting,''],['/money','Money in '+k.month,k.money,spark(k.spark_money)+'<i class="fo-cap">'+esc(k.money_src)+'. Sales trend, 8 weeks</i>']]
+const k=d.kpi;$id('fo-kpis').innerHTML=[['/jobs?f=today','Jobs today',k.today,spark(k.spark_jobs)+'<i class="fo-cap">Jobs done, 8 weeks</i>'],['/jobs?f=progress','In progress',k.progress,''],['#fo-acts','Waiting on you',k.waiting,''],['/money','Money in '+k.month,k.money,spark(k.spark_money)+'<i class="fo-cap">'+(k.rmr?('RMR '+k.rmr+'/mo. '):'')+esc(k.money_src)+'. Sales trend, 8 weeks</i>']]
 .map(x=>'<a class="fo-kpi'+(x[1]==='Waiting on you'&&x[2]?' hot':'')+'" href="'+x[0]+'"><small>'+esc(x[1])+'</small><b>'+esc(String(x[2]))+'</b>'+x[3]+'</a>').join('');
 $id('fo-acts').innerHTML=d.actions.length?d.actions.map(a=>'<a class="fo-act '+a.tone+'" href="'+esc(a.href)+'"><span class="fo-ai">'+a.icon+'</span><span class="fo-at"><b>'+esc(a.title)+' <em>'+a.n+'</em></b><small>'+esc(a.detail)+'</small></span><span class="fo-ab">'+esc(a.btn)+'</span></a>').join(''):'<div class="fo-act ok"><span class="fo-ai">&#10003;</span><span class="fo-at"><b>All caught up</b><small>Nothing needs you right now.</small></span></div>';
 $id('fo-tjobs').innerHTML=d.today.length?d.today.map(dcard).join(''):'<div class="fo-empty">Nothing scheduled today. Tap + to add a job.</div>';
@@ -3393,13 +3397,29 @@ def plans_page():
             try: em=max(1,min(60,int(f.get('every_months') or 12)))
             except ValueError: em=12
             chk=json.dumps([x.strip() for x in (f.get('checklist') or '').splitlines() if x.strip()])
-            vals=((f.get('client') or '').strip()[:120],(f.get('site') or '').strip()[:200],(f.get('phone') or '').strip()[:40],(f.get('title') or 'Service visit').strip()[:120],em,nd,nice_name(f.get('tech') or '')[:60],max(0,fnum(f.get('price'))),chk,1 if f.get('active','1')=='1' else 0)
-            if a=='add': conn.execute('INSERT INTO service_plans (client,site,phone,title,every_months,next_date,tech,price,checklist,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',vals+(now_local_str(),)); msg='Plan added'
-            else: conn.execute('UPDATE service_plans SET client=?,site=?,phone=?,title=?,every_months=?,next_date=?,tech=?,price=?,checklist=?,active=? WHERE id=?',vals+(f.get('plan_id'),)); msg='Plan saved'
+            kind=(f.get('kind') or 'maintenance').strip()
+            if kind not in ('monitoring','inspection','maintenance'): kind='maintenance'
+            client=(f.get('client') or '').strip()[:120]; site=(f.get('site') or '').strip()[:200]
+            cid=sid=None
+            try:
+                import fieldops_platform as plat
+                if client:
+                    co=plat.upsert_company(conn, client, phone=(f.get('phone') or ''))
+                    cid=co['id'] if co else None
+                    if cid and site:
+                        srow=plat.upsert_site(conn, cid, address=site)
+                        sid=srow['id'] if srow else None
+            except Exception:
+                pass
+            vals=(client,site,(f.get('phone') or '').strip()[:40],(f.get('title') or 'Service visit').strip()[:120],em,nd,nice_name(f.get('tech') or '')[:60],max(0,fnum(f.get('price'))),chk,1 if f.get('active','1')=='1' else 0,kind,cid,sid)
+            if a=='add': conn.execute('INSERT INTO service_plans (client,site,phone,title,every_months,next_date,tech,price,checklist,active,created_at,kind,company_id,site_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',vals[:10]+(now_local_str(),)+vals[10:]); msg='Plan added'
+            else: conn.execute('UPDATE service_plans SET client=?,site=?,phone=?,title=?,every_months=?,next_date=?,tech=?,price=?,checklist=?,active=?,kind=?,company_id=?,site_id=? WHERE id=?',vals+(f.get('plan_id'),)); msg='Plan saved'
             conn.commit()
         elif a=='run': msg='Made %d visits'%run_plans(conn)
     plans=conn.execute('SELECT * FROM service_plans ORDER BY active DESC, next_date').fetchall()
-    eid=request.args.get('edit'); ed=conn.execute('SELECT * FROM service_plans WHERE id=?',(eid,)).fetchone() if eid else None; conn.close()
+    eid=request.args.get('edit'); ed=conn.execute('SELECT * FROM service_plans WHERE id=?',(eid,)).fetchone() if eid else None
+    rmr_fn=globals().get('plans_rmr'); rmr=rmr_fn(conn) if callable(rmr_fn) else 0
+    conn.close()
     subs=sub_logins()
     def form(p):
         g=lambda k,d='': h((p[k] if p else d) or d)
@@ -3407,14 +3427,16 @@ def plans_page():
         except Exception: chk=''
         return ('<form method="post"><input type="hidden" name="action" value="%s"><input type="hidden" name="plan_id" value="%s">'%('edit' if p else 'add',g('id'))+
             '<label>Client</label><input name="client" value="%s" required><label>Site address</label><input name="site" value="%s"><label>Client phone</label><input name="phone" value="%s">'%(g('client'),g('site'),g('phone'))+
-            '<label>Visit name</label><input name="title" value="%s" placeholder="Camera checkup"><div class="row"><div><label>Every how many months</label><input name="every_months" type="number" min="1" max="60" value="%s"></div><div><label>Next visit</label><input name="next_date" type="date" value="%s" required></div></div>'%(g('title','Service visit'),g('every_months','12'),g('next_date'))+
+            '<label>Visit name</label><input name="title" value="%s" placeholder="Camera checkup">'%(g('title','Service visit'))+
+            '<div class="row"><div><label>Kind</label><select name="kind">%s</select></div><div><label>Every how many months</label><input name="every_months" type="number" min="1" max="60" value="%s"></div><div><label>Next visit</label><input name="next_date" type="date" value="%s" required></div></div>'%(''.join('<option value="%s"%s>%s</option>'%(k,' selected' if (p and (p['kind'] if 'kind' in p.keys() else '') or 'maintenance')==k else '',lab) for k,lab in (('maintenance','Maintenance'),('inspection','Inspection'),('monitoring','Monitoring'))),g('every_months','12'),g('next_date'))+
             '<div class="row"><div><label>Sub</label><select name="tech">%s</select></div><div><label>Price per visit $</label><input name="price" type="number" step="0.01" min="0" value="%s"></div></div>'%(''.join('<option%s>%s</option>'%(' selected' if p and ckey(p['tech'])==ckey(n) else '',h(n)) for n in subs),('%g'%p['price']) if p and p['price'] else '')+
             '<label>Checklist, one per line (optional)</label><textarea name="checklist" rows="3">%s</textarea>'%h(chk)+
             '<label>Status</label><select name="active"><option value="1"%s>Active</option><option value="0"%s>Paused</option></select><button class="big-btn">%s</button></form>'%('' if p and not p['active'] else ' selected',' selected' if p and not p['active'] else '','Save Plan' if p else 'Add Plan'))
-    body='<div class="muted">Visits are made automatically %d days before the due date and land on the sub list. Approving the visit makes an invoice draft with the plan price. Nothing is sent.</div>'%PLAN_LEAD_DAYS
+    body='<div class="muted">Due visits (within %d days) become unscheduled tickets in the schedule tray, and a QuickBooks invoice draft is queued at the plan price. Drafts only. Nothing is sent. Price stays in the office.</div>'%PLAN_LEAD_DAYS
+    body+='<div class="plat-panel" style="margin:12px 0"><b>RMR</b> <span style="font-size:1.4rem;font-weight:800;margin-left:8px">%s</span> <span class="muted">/ month from active plans</span></div>'%money(rmr)
     if ed: body+='<h2>Edit plan</h2>'+form(ed)+'<a class="big-btn gray" href="/plans">Cancel</a>'
-    body+='<h2>Plans</h2>'+(''.join('<a class="card" href="/plans?edit=%d"><b>%s</b> %s<div>%s</div><div class="muted">%s</div><div class="muted">Every %d months &middot; next %s &middot; %s &middot; %s%s</div></a>'%(
-        p['id'],h(p['title']),'<span class="okf">Active</span>' if p['active'] else '<span class="flag">Paused</span>',h(p['client']),h(p['site']),p['every_months'] or 12,h(nice_day(p['next_date'] or '')),h(p['tech'] or 'any sub'),money(p['price']),(' &middot; last visit '+h(p['last_job_id'])) if p['last_job_id'] else '') for p in plans) or '<div class="card">No plans yet.</div>')
+    body+='<h2>Plans</h2>'+(''.join('<a class="card" href="/plans?edit=%d"><b>%s</b> %s <span class="plat-pill">%s</span><div>%s</div><div class="muted">%s</div><div class="muted">Every %d months &middot; next %s &middot; %s &middot; %s%s</div></a>'%(
+        p['id'],h(p['title']),'<span class="okf">Active</span>' if p['active'] else '<span class="flag">Paused</span>',h((p['kind'] if 'kind' in p.keys() and p['kind'] else 'maintenance') or 'maintenance'),h(p['client']),h(p['site']),p['every_months'] or 12,h(nice_day(p['next_date'] or '')),h(p['tech'] or 'any sub'),money(p['price']),(' &middot; last visit '+h(p['last_job_id'])) if p['last_job_id'] else '') for p in plans) or '<div class="card">No plans yet.</div>')
     body+='<form method="post"><input type="hidden" name="action" value="run"><button class="big-btn gray">Make due visits now</button></form>'
     if not ed: body+='<h2>New plan</h2>'+form(None)
     return ops_page('Service Plans', body, msg=msg)
@@ -6752,6 +6774,8 @@ import fieldops_tickets
 fieldops_tickets.register(sys.modules[__name__])
 import fieldops_compliance
 fieldops_compliance.register(sys.modules[__name__])
+import fieldops_plans
+fieldops_plans.register(sys.modules[__name__])
 
 if __name__=='__main__':
     serve()

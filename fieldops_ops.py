@@ -874,7 +874,7 @@ function foSubmit(){if(!drawn){alert("Please sign in the box");return false}docu
     def qbo_extra(conn):
         drafts = list(conn.execute(
             '''SELECT d.*, j.customer, j.title AS job_title FROM qbo_drafts d
-               JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT 80'''))
+               LEFT JOIN jobs j ON j.id=d.job_id ORDER BY d.id DESC LIMIT 80'''))
         jobs = list(conn.execute("SELECT id,customer,title,sale_amount FROM jobs ORDER BY created_at DESC LIMIT 200"))
         opts = ''.join('<option value="%s">%s · %s</option>' % (h(j['id']), h(j['id']), h(j['customer'] or j['title'] or '')) for j in jobs)
         html = '<div class="plat-panel" style="margin-top:18px"><h2>Deposit, progress and final drafts</h2>'
