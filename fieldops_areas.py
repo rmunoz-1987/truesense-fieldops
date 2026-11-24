@@ -201,12 +201,19 @@ def areas_payload(conn, row, fo=None, present=False, walk=False, plan_base=''):
         quote_id = q['id'] if q else None
     except Exception:
         quote_id = None
+    items = []
+    try:
+        for r in conn.execute('SELECT id, name FROM catalog_items WHERE active=1 ORDER BY name COLLATE NOCASE'):
+            items.append({'id': r['id'], 'name': r['name']})
+    except Exception:
+        items = []
     return {
         'area_notes': notes_of(conn, job_id),
         'area_photos': by_fn,
         'area_counts': {fn: sum(1 for d in devs if d.get('plan') == fn)
                         for fn in {d.get('plan') for d in devs if d.get('plan')}},
         'catalog_map': catalog_map(conn),
+        'catalog_items': items,
         'quote_id': quote_id,
         'present': bool(present),
         'walk': bool(walk),

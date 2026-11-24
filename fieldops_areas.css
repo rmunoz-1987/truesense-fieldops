@@ -31,15 +31,23 @@ body.pd-present #pd-addarea,body.pd-present #pd-moveareas,body.pd-present .pd-no
 body.pd-present .pd-cam,body.pd-present .pd-ph button,body.pd-present #pd-plancard .edit-only{display:none!important}
 body.pd-present .pd-notes .pd-muted.present-show{display:block}
 body.pd-present .pd-top .pd-title{font-weight:800}
+.pd-leg{min-width:0;width:100%;box-sizing:border-box}
+.pd-leg span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pd-leg b{flex:none;margin-left:8px;font-weight:800;min-width:1.25em;text-align:right}
+.pd-leg-edit{flex:none;width:36px;height:36px;border:1px solid #e3e2d8;border-radius:10px;background:#fff;color:#111;cursor:pointer;font-size:16px;line-height:1}
+.pd-leg-edit:active{transform:scale(.97)}
 @media(min-width:900px){
   html,body{height:100%;overflow:hidden}
   .pd-top{flex:none}
-  .pd-main{display:grid;grid-template-columns:200px minmax(0,1fr) 300px;grid-template-rows:auto minmax(0,1fr);height:calc(100vh - 58px);min-height:0}
-  .pd-areas{display:flex;flex-direction:column;grid-column:1;grid-row:1 / span 2;border-right:1px solid #ecebe4;background:#f7f7f3;padding:10px 8px;overflow:auto}
+  .pd-main{display:grid;grid-template-columns:minmax(140px,180px) minmax(0,1fr) minmax(0,280px);grid-template-rows:auto minmax(0,1fr);height:calc(100vh - 58px);min-height:0;width:100%;max-width:100%;overflow:hidden}
+  .pd-areas{display:flex;flex-direction:column;grid-column:1;grid-row:1 / span 2;border-right:1px solid #ecebe4;background:#f7f7f3;padding:10px 8px;overflow:auto;min-width:0}
   .pd-areabar{display:none}
-  .pd-toolrow{grid-column:2;grid-row:1}
-  .pd-view{grid-column:2;grid-row:2;height:auto!important;min-height:0;border-bottom:0}
-  .pd-side{grid-column:3;grid-row:1 / span 2;border-left:1px solid #ecebe4;overflow:auto;padding:10px;height:auto}
+  .pd-toolrow{grid-column:2;grid-row:1;min-width:0}
+  .pd-view{grid-column:2;grid-row:2;height:auto!important;min-height:0;border-bottom:0;min-width:0}
+  .pd-side{grid-column:3;grid-row:1 / span 2;border-left:1px solid #ecebe4;padding:10px;height:auto;min-width:0;width:auto!important;max-width:100%;overflow-x:hidden;overflow-y:auto;box-sizing:border-box}
+  .pd-side .pd-card{min-width:0;max-width:100%;overflow:hidden;box-sizing:border-box}
+  .pd-tray{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;overflow:hidden!important;width:100%}
+  .pd-tool{width:auto!important;min-width:0;max-width:100%;box-sizing:border-box}
   #pd-plancard{display:none}
   .pd-areas h3{margin:0 8px 8px;font-size:11px;letter-spacing:.08em;color:#666;font-weight:800}
   .pd-alist{display:flex;flex-direction:column;gap:6px}
@@ -54,5 +62,8 @@ body.pd-present .pd-top .pd-title{font-weight:800}
   body.pd-present .pd-areas{display:flex}
 }
 @media(min-width:1100px){
-  .pd-main{grid-template-columns:220px minmax(0,1fr) 320px}
+  .pd-main{grid-template-columns:minmax(160px,200px) minmax(0,1fr) minmax(0,300px)}
+}
+@media(min-width:1280px){
+  .pd-main{grid-template-columns:220px minmax(0,1fr) minmax(0,320px)}
 }

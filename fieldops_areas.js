@@ -192,9 +192,44 @@
     renderAreas();
   };
 
+  function paintLegend(){
+    const L = $('pd-legend');
+    if (!L) return;
+    const all = {}, here = {};
+    DEV.forEach(d => all[d.type] = (all[d.type]||0)+1);
+    planDevs().forEach(d => here[d.type] = (here[d.type]||0)+1);
+    if (!DEV.length){ L.innerHTML = '<h3>Legend</h3><div class="pd-muted">No devices yet</div>'; return; }
+    const canEdit = !!(EDIT && D.office && !D.present);
+    L.innerHTML = '<h3>Legend</h3>' + TYPES.filter(t => all[t[0]]).map(t => {
+      const n = here[t[0]] || 0;
+      const edit = canEdit ? '<button type="button" class="pd-leg-edit" data-type="'+esc(t[0])+'" aria-label="Edit '+esc(t[0])+'">&#9998;</button>' : '';
+      return '<div class="pd-leg">'+symHtml(t[0],26)+'<span>'+esc(t[0])+'</span><b>'+n+'</b>'+edit+'</div>';
+    }).join('');
+    L.querySelectorAll('.pd-leg-edit').forEach(b => b.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); mapSymbol(b.dataset.type); });
+  }
+  const _legend = legend;
+  legend = function(){ paintLegend(); };
+
+  async function mapSymbol(typ){
+    const items = D.catalog_items || [];
+    const cur = (CMAP[typ] || {}).name || '';
+    const names = items.map(c => c.name);
+    const pick = prompt('Catalog item for '+typ+(cur?' (now '+cur+')':'' )+'\n\nLeave blank to clear the mapping.', cur || typ);
+    if (pick === null) return;
+    const hit = items.find(c => c.name.toLowerCase() === pick.trim().toLowerCase()) || items.find(c => (c.name||'').toLowerCase().indexOf(pick.trim().toLowerCase())>=0);
+    const catalog_id = pick.trim() ? (hit ? hit.id : 0) : 0;
+    if (pick.trim() && !catalog_id){ alert('No catalog item matches that name.'); return; }
+    try{
+      const d = await postJSON(API+'/areas/map-symbol', {type: typ, catalog_id: catalog_id}, 'Symbol map');
+      if (d.catalog_map) Object.assign(CMAP, d.catalog_map);
+      paintLegend();
+    }catch(e){ alert(e.message||'Could not save the mapping'); }
+  }
+
   const prevSide = window.PD_SIDE;
   window.PD_SIDE = function(){
     if (prevSide) prevSide();
+    paintLegend();
     renderAreas();
     renderNotes();
     renderScaleBtn();
